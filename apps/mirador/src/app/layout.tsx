@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { publicSans, robotoMono } from "@/lib/fonts";
 import "./globals.css";
 
@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   title: "mirador — rama inspector",
   description:
     "Live SSR preview & inspector for the rama git-graph layout engine.",
+};
+
+export const viewport: Viewport = {
+  colorScheme: "dark",
+  themeColor: "#0a0a0a",
 };
 
 export default function RootLayout({
@@ -16,7 +21,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${publicSans.variable} ${robotoMono.variable} h-full antialiased`}
+      className={`dark ${publicSans.variable} ${robotoMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-sans">{children}</body>
     </html>
