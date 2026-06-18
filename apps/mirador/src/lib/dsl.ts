@@ -16,7 +16,7 @@
  * a friendly message; the caller keeps the last good graph rendered.
  */
 
-import type { Commit, CommitGraph } from "@/lib/rama-stub";
+import type { Commit, CommitGraph } from "rama";
 
 export interface ParseError {
   line: number;

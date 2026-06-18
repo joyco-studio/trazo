@@ -14,20 +14,16 @@
  *     debounced. No server round-trip per keystroke.
  *   - Parse errors keep the LAST GOOD graph on screen and surface a friendly
  *     inline message.
- *
- * SWAP AT INTEGRATION: `layout` comes from "@/lib/rama-stub". Change that import
- * to "rama" and this island uses the real engine with no other change.
  */
 
+import { layout, type PositionedGraph } from "rama";
+import { Graph } from "rama/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import { Graph } from "@/components/graph";
 import { Badge } from "@/components/ui/badge";
 import { Cluster, Filler } from "@/components/ui/cluster";
 import { Textarea } from "@/components/ui/textarea";
 import { parseDsl, type ParseError } from "@/lib/dsl";
-// SWAP AT INTEGRATION: replace "@/lib/rama-stub" with "rama".
-import { layout, type PositionedGraph } from "@/lib/rama-stub";
 
 const DEBOUNCE_MS = 140;
 

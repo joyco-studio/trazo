@@ -8,10 +8,9 @@
  * The <Inspector> client island hydrates over the same markup and takes over for
  * live, in-browser edits. Because both call the SAME `layout()` + `<Graph>` with
  * the SAME seed, the server HTML and the first client render are identical.
- *
- * SWAP AT INTEGRATION: `layout` is imported from "@/lib/rama-stub" — change to
- * "rama" to use the real engine. The graph in `<Inspector>` swaps with it.
  */
+
+import { layout } from "rama";
 
 import { Inspector } from "@/components/inspector";
 import { Badge } from "@/components/ui/badge";
@@ -19,8 +18,6 @@ import { Cluster, Filler } from "@/components/ui/cluster";
 import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { parseDsl, SEED_PROGRAM } from "@/lib/dsl";
-// SWAP AT INTEGRATION: replace "@/lib/rama-stub" with "rama".
-import { layout } from "@/lib/rama-stub";
 
 export default function Home() {
   // Pure, server-side layout of the seed program. Deterministic → the client

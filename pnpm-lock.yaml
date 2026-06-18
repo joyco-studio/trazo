@@ -74,6 +74,9 @@ importers:
       radix-ui:
         specifier: ^1.6.0
         version: 1.6.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      rama:
+        specifier: workspace:*
+        version: link:../../packages/rama
       react:
         specifier: 19.2.4
         version: 19.2.4
