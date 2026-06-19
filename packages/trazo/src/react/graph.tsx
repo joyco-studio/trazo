@@ -70,11 +70,17 @@ function roleColor(tokenKey: string): string {
   return ROLE_VARS[role] ?? ROLE_VARS.neutral;
 }
 
+/** Neutral edge color (the default for flow edges) — a light, on-brand gray. */
+const EDGE_ACCENT =
+  "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))";
+
 /**
- * Resolve any token color key. Flow keys are prefixed `role-` and map onto the
- * semantic palette; everything else (git) maps onto the lane palette.
+ * Resolve any token color key. `"accent"` → the neutral edge gray; `role-*` →
+ * the semantic palette (flow colored edges/nodes); everything else (git) → the
+ * lane palette.
  */
 function nodeColor(tokenKey: string): string {
+  if (tokenKey === "accent") return EDGE_ACCENT;
   return tokenKey.startsWith("role-") ? roleColor(tokenKey) : laneColor(tokenKey);
 }
 
@@ -90,11 +96,14 @@ const LABEL_SIZE = 13;
 const EDGE_WIDTH = 2.5;
 /** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
 const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
-/** Page background, used as the git commit-square border so it reads as a chip. */
+/** Page background, used as node borders so chips read as lifted off the lines. */
 const BG = "var(--color-background, var(--background, #0a0a0a))";
-/** Muted surface for the sliced-corner label badge behind git commit labels. */
-const MUTED = "var(--color-muted, var(--muted, #1a1a1a))";
-/** Dim foreground for secondary text (hash, author). */
+/** Accent surface for the sliced-corner git label badge (hub Badge accent variant). */
+const ACCENT = "var(--color-accent, var(--accent, #2a2a2a))";
+/** Accent foreground — primary text on the accent badge. */
+const ACCENT_FG =
+  "var(--color-accent-foreground, var(--accent-foreground, #fafafa))";
+/** Dim foreground for secondary badge text (hash, author), on the accent badge. */
 const MUTED_FG =
   "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))";
 
@@ -247,7 +256,7 @@ function renderNodeShape(
         rx={shape === "stadium" ? h / 2 : 0}
         ry={shape === "stadium" ? h / 2 : 0}
         fill={fill}
-        stroke={FG}
+        stroke={BG}
         strokeWidth={1}
       />
     );
@@ -269,7 +278,7 @@ function renderNodeShape(
         className={boxClass}
         points={points}
         fill={fill}
-        stroke={FG}
+        stroke={BG}
         strokeWidth={1}
       />
     );
@@ -295,7 +304,7 @@ function renderNodeShape(
       className={boxClass}
       d={d}
       fill={fill}
-      stroke={FG}
+      stroke={BG}
       strokeWidth={1}
     />
   );
@@ -345,7 +354,7 @@ function renderNodeLabel(
       <path
         data-slot="label-badge"
         d={badgePath(badgeX, badgeY, badgeW, BADGE_H)}
-        fill={MUTED}
+        fill={ACCENT}
         stroke={BG}
         strokeWidth={1}
       />
@@ -362,7 +371,7 @@ function renderNodeLabel(
             {node.hash}{" "}
           </tspan>
         ) : null}
-        <tspan fill={FG}>{node.message}</tspan>
+        <tspan fill={ACCENT_FG}>{node.message}</tspan>
         {node.author !== undefined ? (
           <tspan data-slot="label-author" fill={MUTED_FG}>
             {"  "}

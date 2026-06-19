@@ -9,8 +9,9 @@
  *
  *   flow TD | flow LR          set the layout direction (top-down / left-right).
  *                              Optional; defaults to TD. Must precede edges.
- *   <node> --> <node>          a directed edge. Each side is a node ref (below).
- *   <node> -->|label| <node>   a directed edge carrying a label.
+ *   <node> --> <node>          a directed edge (neutral accent line, default).
+ *   <node> ==> <node>          a COLORED edge — takes its source box's color.
+ *   <node> -->|label| <node>   a directed edge carrying a label (==> too).
  *   <node>                     declare a node on its own line (optional — nodes
  *                              are also auto-declared the first time they appear
  *                              in an edge).
@@ -159,11 +160,16 @@ export function parseFlow(source: string): FlowParseResult {
     }
     if (/^flow(?:chart)?$/i.test(raw)) continue; // bare `flow` keyword, no dir
 
-    // Edge: <ref> --> [|label|] <ref>
-    const arrowIdx = raw.indexOf("-->");
+    // Edge: <ref> --> [|label|] <ref>  (neutral accent line, default)
+    //   or: <ref> ==> [|label|] <ref>  (colored — takes the source box color)
+    const coloredIdx = raw.indexOf("==>");
+    const plainIdx = raw.indexOf("-->");
+    const arrowIdx = coloredIdx !== -1 ? coloredIdx : plainIdx;
     if (arrowIdx !== -1) {
+      const colored = coloredIdx !== -1;
       const left = parseNodeRef(raw.slice(0, arrowIdx));
-      if (!left) return fail(lineNumber, "left side of --> is not a valid node");
+      const arrow = colored ? "==>" : "-->";
+      if (!left) return fail(lineNumber, `left side of ${arrow} is not a valid node`);
       let afterArrow = raw.slice(arrowIdx + 3).trimStart();
 
       // optional |label|
@@ -176,7 +182,7 @@ export function parseFlow(source: string): FlowParseResult {
       }
 
       const right = parseNodeRef(afterArrow);
-      if (!right) return fail(lineNumber, "right side of --> is not a valid node");
+      if (!right) return fail(lineNumber, `right side of ${arrow} is not a valid node`);
       if (right.rest.trim() !== "") {
         return fail(lineNumber, `unexpected “${right.rest.trim()}” after the edge target`);
       }
@@ -187,6 +193,7 @@ export function parseFlow(source: string): FlowParseResult {
         from: left.ref.id,
         to: right.ref.id,
         ...(edgeLabel !== undefined ? { label: edgeLabel } : {}),
+        ...(colored ? { colored: true } : {}),
       });
       continue;
     }
@@ -210,12 +217,13 @@ export function parseFlow(source: string): FlowParseResult {
  */
 export const SEED_FLOW = `# playground — flowchart mode
 # nodes: id["box"] ([stadium]) {diamond} [(cylinder)] ; optional :role
+# edges: --> neutral (default)   ==> colored (source box color)
 flow TD
 
-A(["Request arrives"]):primary --> B["getCart() started"]:pending
-A --> C["getFlags() started"]:pending
+A(["Request arrives"]):primary ==> B["getCart() started"]:pending
+A ==> C["getFlags() started"]:pending
 A --> D["Render shell immediately"]:streamed
-B --> E["Stream data as promises settle"]:good
+B ==> E["Stream data as promises settle"]:good
 C --> E
 D --> E
 `;

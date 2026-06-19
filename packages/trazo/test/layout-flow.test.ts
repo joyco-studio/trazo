@@ -116,9 +116,21 @@ describe("layoutFlow()", () => {
     }
   });
 
-  it("flow edge color keys start with 'role-'", () => {
+  it("edges default to the neutral accent color", () => {
     const { edges } = layoutFlow(fixture);
-    for (const e of edges) expect(e.color).toMatch(/^role-/);
+    for (const e of edges) expect(e.color).toBe("accent");
+  });
+
+  it("colored edges take the source role color key", () => {
+    const { edges } = layoutFlow({
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A", role: "primary" },
+        { id: "b", label: "B" },
+      ],
+      edges: [{ from: "a", to: "b", colored: true }],
+    });
+    expect(edges[0]?.color).toBe("role-primary");
   });
 
   it("laneCount reports the layer count (>= number of ranks)", () => {

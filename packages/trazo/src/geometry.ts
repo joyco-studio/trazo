@@ -19,6 +19,26 @@ import { measure } from "./measure.js";
 const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
 
 /**
+ * Letter-spacing applied to rendered labels (em). The renderer sets
+ * `letter-spacing: 0.02em` for the uppercase JOYCO look, but `measure` only
+ * sums glyph advances — so labels would overflow their box/badge by ~tracking
+ * per character. `measureLabel` re-adds that tracking to the reserved width.
+ */
+const LABEL_TRACKING_EM = 0.02;
+
+/**
+ * Measure a rendered label's width INCLUDING the uppercase letter-spacing the
+ * renderer applies. `text` should already be the displayed (uppercased) string.
+ * Width = glyph advances + (chars - 1) * tracking. Pure + deterministic.
+ */
+export function measureLabel(text: string, size = LABEL_FONT.size): number {
+  const base = measure(text, { family: LABEL_FONT.family, size });
+  const chars = [...text].length;
+  const tracking = chars > 1 ? (chars - 1) * LABEL_TRACKING_EM * size : 0;
+  return base + tracking;
+}
+
+/**
  * Git node visual geometry, shared between the layout (for bounds math) and the
  * renderer (for drawing), so the computed `width` always reserves room for the
  * label and nothing is cropped. Git commit markers are SQUARES of side
@@ -59,9 +79,9 @@ export function sizeShape(
   const nodeHeight = options?.nodeHeight ?? SIZE_DEFAULTS.nodeHeight;
   const labelPadX = options?.labelPadX ?? SIZE_DEFAULTS.labelPadX;
 
-  // Labels render UPPERCASE (JOYCO style), which is wider than the authored
-  // case — measure the uppercased text so the shape reserves the right width.
-  const labelWidth = label ? measure(label.toUpperCase(), LABEL_FONT) : 0;
+  // Labels render UPPERCASE (JOYCO style) with letter-spacing — measure the
+  // uppercased text WITH tracking so the shape reserves the right width.
+  const labelWidth = label ? measureLabel(label.toUpperCase()) : 0;
   const boxW = Math.max(minNodeWidth, labelWidth + labelPadX * 2);
   const h = nodeHeight;
 

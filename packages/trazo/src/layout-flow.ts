@@ -41,10 +41,10 @@ import type {
   PositionedNode,
   SemanticRole,
 } from "./types.js";
-import { measure } from "./measure.js";
 import {
   entryAnchor,
   exitAnchor,
+  measureLabel,
   pathThrough,
   polylineMidpoint,
   sizeShape,
@@ -59,9 +59,6 @@ const DEFAULTS = {
   nodeHeight: 36,
   labelPadX: 16,
 } as const;
-
-/** Font used to size edge labels — Public Sans, hub body size. */
-const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
 
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
 const ORDERING_SWEEPS = 4;
@@ -302,8 +299,8 @@ export function layoutFlow(
     };
     if (n.label !== undefined) {
       node.label = n.label;
-      // Labels render uppercase (JOYCO style); measure the uppercased text.
-      node.labelWidth = measure(n.label.toUpperCase(), LABEL_FONT);
+      // Labels render uppercase (JOYCO style) with tracking; measure both.
+      node.labelWidth = measureLabel(n.label.toUpperCase());
     }
     return node;
   });
@@ -358,12 +355,13 @@ export function layoutFlow(
       to: e.to,
       path: pathThrough(points, edgeStyle),
       kind: "flow",
-      color: roleColorKey(fromV.role),
+      // Default edges are neutral accent; opt in to the source role's color.
+      color: e.colored ? roleColorKey(fromV.role) : "accent",
     };
     if (e.label !== undefined) {
       edge.label = e.label;
       edge.labelPoint = polylineMidpoint(points);
-      edge.labelWidth = measure(e.label, LABEL_FONT);
+      edge.labelWidth = measureLabel(e.label.toUpperCase());
     }
     return edge;
   });

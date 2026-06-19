@@ -106,6 +106,12 @@ export interface FlowEdge {
   from: NodeId;
   to: NodeId;
   label?: string;
+  /**
+   * When true, the edge takes the color of its source node's role; otherwise
+   * it renders in the neutral accent color (the default). Lets a chart mix
+   * colored and neutral connectors.
+   */
+  colored?: boolean;
 }
 
 /** The full input for a flow layout. `kind` discriminates from `CommitGraph`. */

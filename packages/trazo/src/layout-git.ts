@@ -32,9 +32,9 @@ import type {
   PositionedGraph,
   PositionedNode,
 } from "./types.js";
-import { measure } from "./measure.js";
 import {
   curveBetween,
+  measureLabel,
   NODE_HALF,
   LABEL_GAP,
   LABEL_BADGE_PAD,
@@ -46,9 +46,6 @@ const DEFAULTS = {
   nodeRadius: 6,
   padding: 16,
 } as const;
-
-/** Font used to size commit-message labels — Public Sans, hub body size. */
-const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
 
 /** Number of distinct lane color token keys before cycling. Renderer maps these. */
 function laneColorKey(lane: number): string {
@@ -259,7 +256,7 @@ export function layoutGit(
       const hashPart = commit.hash ? `${commit.hash} ` : "";
       const authorPart = commit.author ? `  ${commit.author}` : "";
       const full = `${hashPart}${commit.message}${authorPart}`.toUpperCase();
-      node.labelWidth = measure(full, LABEL_FONT);
+      node.labelWidth = measureLabel(full);
     }
     nodeById.set(commit.id, node);
     return node;
