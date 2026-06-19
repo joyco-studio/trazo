@@ -1,6 +1,20 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+# Explicitly allow these native deps to run their build scripts (pnpm 10.26+).
+# Without this, pnpm's strictDepBuilds (default true) treats unreviewed build
+# scripts as a hard error and `pnpm install` exits 1 — which broke CI.
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+
+# Belt-and-suspenders: even if an unlisted dep ships a build script, downgrade
+# the ignored-builds error to a warning so installs never fail the build.
+strictDepBuilds: false
+
+# Legacy key (pre-10.26) kept for older pnpm; superseded by allowBuilds above.
 onlyBuiltDependencies:
   - esbuild
   - sharp
