@@ -8,9 +8,15 @@ below is a styling decision encoded there.
 
 - **Git commits are SQUARES, not dots** — no radius, centered on x/y.
 - **Flowchart boxes have no corner radius** (stadium keeps its pill caps).
-- **Node borders are the page background color** so a node reads as a chip
-  lifted off the lane/edge lines passing behind it. (Git squares and flow
-  box/stadium/diamond/cylinder all use `stroke = BG`.)
+- **Node borders are the surface color** so a node reads as a chip lifted off
+  the lane/edge lines passing behind it. (Git squares and flow
+  box/stadium/diamond/cylinder all use `stroke = BG`.) `BG` resolves
+  `var(--trazo-bg, var(--color-background, …))` — so if the graph is drawn on a
+  non-`--background` surface (a `--card`/`--muted` panel), set `--trazo-bg` to
+  that surface on a wrapper or the seam shows as a ring. The playground's preview
+  pane is `bg-card`, so it sets `[--trazo-bg:var(--color-card)]`.
+- **The git label badge has no border** (fill only) — only the squares/boxes use
+  the `BG` chip-lift stroke.
 - **Edges turn abruptly** — straight, then a sharp **45° diagonal elbow**
   (`edgeStyle: "elbow45"`, default) or a **90° right-angle** (`"orthogonal"`).
   No eased curves. Miter joins, slightly heavier stroke.

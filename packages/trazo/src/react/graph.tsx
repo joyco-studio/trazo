@@ -13,7 +13,13 @@
 
 import type { GraphProps } from "./types.js";
 import type { PositionedEdge, PositionedNode, SemanticRole } from "../types.js";
-import { NODE_HALF, LABEL_GAP, LABEL_BADGE_PAD, BADGE_H } from "../geometry.js";
+import {
+  NODE_HALF,
+  LABEL_GAP,
+  LABEL_BADGE_PAD,
+  BADGE_H,
+  badgeWidth,
+} from "../geometry.js";
 import type { JSX } from "react";
 
 /**
@@ -98,8 +104,16 @@ const EDGE_WIDTH = 2.5;
 const BOX_STROKE = 2;
 /** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
 const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
-/** Page background, used as node borders so chips read as lifted off the lines. */
-const BG = "var(--color-background, var(--background, #0a0a0a))";
+/**
+ * The surface the graph is drawn on, used as node borders so chips read as
+ * lifted off the lines passing behind them. The chip-lift only works when this
+ * matches the ACTUAL backdrop — so a consuming app that renders the graph on a
+ * non-`--background` surface (e.g. a `--card`/`--muted` panel) can point the
+ * border at it via `--trazo-bg` without the engine knowing app token names.
+ * Falls back to the theme background, then a raw token, then a hard-coded hex.
+ */
+const BG =
+  "var(--trazo-bg, var(--color-background, var(--background, #0a0a0a)))";
 /** Accent surface for the sliced-corner git label badge (hub Badge accent variant). */
 const ACCENT = "var(--color-accent, var(--accent, #2a2a2a))";
 /** Accent foreground — primary text on the accent badge. */
@@ -360,7 +374,7 @@ function renderNodeLabel(
   // corner from the engine-computed `labelAnchor` (which encodes the chart
   // orientation + labelSide). When `labelAnchor` is absent (older engine
   // output) we fall back to the legacy right-of-square placement.
-  const badgeW = (node.labelWidth ?? 0) + BADGE_PAD_X * 2;
+  const badgeW = badgeWidth(node.labelWidth ?? 0);
   const badgeX = node.labelAnchor?.x ?? node.x + NODE_HALF + LABEL_GAP;
   const badgeY = node.labelAnchor?.y ?? node.y - BADGE_H / 2;
   const textX = badgeX + BADGE_PAD_X;
@@ -372,8 +386,6 @@ function renderNodeLabel(
         data-slot="label-badge"
         d={badgePath(badgeX, badgeY, badgeW, BADGE_H)}
         fill={ACCENT}
-        stroke={BG}
-        strokeWidth={1}
       />
       <text
         x={textX}

@@ -29,12 +29,17 @@ const LABEL_TRACKING_EM = 0.02;
 /**
  * Measure a rendered label's width INCLUDING the uppercase letter-spacing the
  * renderer applies. `text` should already be the displayed (uppercased) string.
- * Width = glyph advances + (chars - 1) * tracking. Pure + deterministic.
+ *
+ * CSS `letter-spacing` adds its tracking AFTER every glyph (including the last),
+ * so an N-glyph run gains N — not N-1 — units of tracking on top of the summed
+ * advances. Reserving only (N-1) left the badge ~one glyph of tracking short and
+ * the final characters overflowed its right edge. Width = advances + N*tracking.
+ * Pure + deterministic.
  */
 export function measureLabel(text: string, size = LABEL_FONT.size): number {
   const base = measure(text, { family: LABEL_FONT.family, size });
   const chars = [...text].length;
-  const tracking = chars > 1 ? (chars - 1) * LABEL_TRACKING_EM * size : 0;
+  const tracking = chars > 0 ? chars * LABEL_TRACKING_EM * size : 0;
   return base + tracking;
 }
 
@@ -48,9 +53,25 @@ export const NODE_HALF = 5;
 export const LABEL_GAP = 10;
 /** Horizontal padding inside the sliced-corner git label badge (each side). */
 export const LABEL_BADGE_PAD = 10;
+/**
+ * Extra padding (px) on the RIGHT of the git label badge, on top of
+ * `LABEL_BADGE_PAD`. The badge's bottom-right corner is chamfered, so the last
+ * characters sit closer to the edge than on the left — this buys them room.
+ */
+export const LABEL_BADGE_PAD_RIGHT_EXTRA = 8;
 /** Height (px) of the sliced-corner git label badge. Shared so the layout can
  * reserve bounds for above/below placement and the renderer draws to match. */
 export const BADGE_H = 22;
+
+/**
+ * Full width (px) of the git label badge for a measured `labelWidth`: the text
+ * advance plus left pad + right pad (right gets the chamfer-clearance extra).
+ * Single source of truth so the layout's bounds/anchor math and the renderer's
+ * drawn rect never drift.
+ */
+export function badgeWidth(labelWidth: number): number {
+  return labelWidth + LABEL_BADGE_PAD * 2 + LABEL_BADGE_PAD_RIGHT_EXTRA;
+}
 
 /** Defaults for shape sizing; callers may override width/height bases. */
 export interface ShapeSizeOptions {

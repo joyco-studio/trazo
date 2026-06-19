@@ -38,9 +38,9 @@ import type {
 import {
   curveBetween,
   measureLabel,
+  badgeWidth,
   NODE_HALF,
   LABEL_GAP,
-  LABEL_BADGE_PAD,
   BADGE_H,
 } from "./geometry.js";
 
@@ -222,8 +222,8 @@ function edgePath(
 
 /**
  * Top-left corner of the label badge for a placed commit, given the chart
- * orientation and which side the badge sits on. The badge is `labelWidth +
- * 2*LABEL_BADGE_PAD` wide and `BADGE_H` tall.
+ * orientation and which side the badge sits on. The badge is `badgeWidth(...)`
+ * wide and `BADGE_H` tall.
  *
  *  - vertical:   badge sits beside the square (right → after it on x, left →
  *    before it), vertically centered on the square.
@@ -239,7 +239,7 @@ function badgeAnchor(
   orientation: GitOrientation,
   side: GitLabelSide,
 ): Point {
-  const badgeW = labelWidth + LABEL_BADGE_PAD * 2;
+  const badgeW = badgeWidth(labelWidth);
   if (orientation === "horizontal") {
     // Centered on the square's x; below (right) or above (left) on y.
     const x = center.x - badgeW / 2;
@@ -379,7 +379,7 @@ export function layoutGit(
     maxX = Math.max(maxX, node.x + NODE_HALF);
     maxY = Math.max(maxY, node.y + NODE_HALF);
     if (node.labelAnchor !== undefined && node.labelWidth !== undefined) {
-      const badgeW = node.labelWidth + LABEL_BADGE_PAD * 2;
+      const badgeW = badgeWidth(node.labelWidth);
       maxX = Math.max(maxX, node.labelAnchor.x + badgeW);
       maxY = Math.max(maxY, node.labelAnchor.y + BADGE_H);
     }

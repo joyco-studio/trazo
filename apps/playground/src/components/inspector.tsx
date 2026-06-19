@@ -332,7 +332,12 @@ export function Inspector({
           </span>
         </Cluster>
 
-        <div className="bg-card relative min-h-[55vh] flex-1 lg:min-h-0">
+        {/* The preview surface is `bg-card`, not the page background — so point
+            the <Graph> node-border token (`--trazo-bg`) at the card color too,
+            or the bg-colored chip seam shows as a ring against this panel. */}
+        <div
+          className="bg-card relative min-h-[55vh] flex-1 lg:min-h-0 [--trazo-bg:var(--color-card)]"
+        >
           <GraphViewport contentWidth={graph.width} contentHeight={graph.height}>
             <Graph
               graph={graph}
