@@ -1,5 +1,5 @@
 {
-  "name": "rama-mirador",
+  "name": "trazo-monorepo",
   "private": true,
   "packageManager": "pnpm@11.1.3",
   "scripts": {
