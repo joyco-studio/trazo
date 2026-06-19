@@ -14,10 +14,14 @@ import type { PositionedGraph } from "../types.js";
 export interface GraphClassNames {
   /** The lane/edge connector paths. */
   edge?: string;
-  /** The commit node dots. */
+  /** The commit node dots (git) / shape outlines (flow). */
   node?: string;
-  /** The commit message labels. */
+  /** The commit message labels / centered flow node labels. */
   label?: string;
+  /** The box-like flow node shapes (rect/stadium/diamond/cylinder). */
+  nodeBox?: string;
+  /** The flow edge labels. */
+  edgeLabel?: string;
 }
 
 export interface GraphProps {

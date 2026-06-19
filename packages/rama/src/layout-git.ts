@@ -32,6 +32,7 @@ import type {
   PositionedNode,
 } from "./types.js";
 import { measure } from "./measure.js";
+import { curveBetween } from "./geometry.js";
 
 const DEFAULTS = {
   laneWidth: 28,
@@ -198,25 +199,20 @@ function assignLanes(ordered: Commit[]): {
  * vertical line when the lane doesn't change, a smooth cubic curve when it
  * does (control points at the vertical midpoint so it eases between columns).
  * Edge *kind* is decided by the caller from DAG structure, not geometry.
+ *
+ * The curve itself is the shared `curveBetween` helper in geometry.ts: same-lane
+ * commits share an x, so it returns a straight `L`; lane-changing edges (always
+ * across different rows) get the cubic ease — byte-identical to the prior
+ * inline implementation.
  */
 function edgePath(from: PositionedNode, to: PositionedNode): string {
-  const x1 = from.x;
-  const y1 = from.y;
-  const x2 = to.x;
-  const y2 = to.y;
-
-  if (from.lane === to.lane) {
-    return `M ${x1} ${y1} L ${x2} ${y2}`;
-  }
-
-  const midY = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y });
 }
 
 /**
  * Lay out a commit DAG into positioned nodes and SVG edge paths.
  */
-export function layout(
+export function layoutGit(
   input: CommitGraph,
   options?: LayoutOptions,
 ): PositionedGraph {
