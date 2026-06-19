@@ -220,8 +220,8 @@ export const SEED_FLOW = `# playground — flowchart mode
 # edges: --> neutral (default)   ==> colored (source box color)
 flow TD
 
-A(["Request arrives"]):primary ==> B["getCart() started"]:pending
-A ==> C["getFlags() started"]:pending
+A(["Request arrives"]):primary --> B["getCart() started"]:pending
+A --> C["getFlags() started"]:pending
 A --> D["Render shell immediately"]:streamed
 B ==> E["Stream data as promises settle"]:good
 C --> E
