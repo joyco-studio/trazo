@@ -12,7 +12,7 @@
  */
 
 import type { GraphProps } from "./types.js";
-import type { PositionedNode, SemanticRole } from "../types.js";
+import type { PositionedEdge, PositionedNode, SemanticRole } from "../types.js";
 import { NODE_HALF, LABEL_GAP, LABEL_BADGE_PAD } from "../geometry.js";
 import type { JSX } from "react";
 
@@ -131,6 +131,18 @@ function badgePath(x: number, y: number, w: number, h: number): string {
 }
 
 /**
+ * Order edges for painting so neutral (accent) edges draw first and colored
+ * edges draw on top — where they overlap, the colored one wins visually. A
+ * stable partition (input order preserved within each group) keeps the output
+ * deterministic.
+ */
+function orderEdgesByPaint(edges: PositionedEdge[]): PositionedEdge[] {
+  const accent = edges.filter((e) => e.color === "accent");
+  const colored = edges.filter((e) => e.color !== "accent");
+  return [...accent, ...colored];
+}
+
+/**
  * Render a `PositionedGraph` as an inline `<svg>`. Pure: same `graph` → same
  * markup, on server or client.
  */
@@ -152,7 +164,7 @@ export function Graph(props: GraphProps): JSX.Element {
       <title>{label}</title>
 
       <g data-slot="edges" aria-hidden="true">
-        {graph.edges.map((edge) => (
+        {orderEdgesByPaint(graph.edges).map((edge) => (
           <path
             key={`${edge.from}->${edge.to}`}
             data-slot="edge"
