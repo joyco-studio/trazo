@@ -101,7 +101,7 @@ export function Graph(props: GraphProps): JSX.Element {
 
   return (
     <svg
-      data-slot="rama-graph"
+      data-slot="trazo-graph"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
       viewBox={`0 0 ${graph.width} ${graph.height}`}

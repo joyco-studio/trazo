@@ -28,7 +28,7 @@
  * caller keeps the last good graph rendered.
  */
 
-import type { FlowDirection, FlowGraph, FlowNode, NodeShape, SemanticRole } from "rama";
+import type { FlowDirection, FlowGraph, FlowNode, NodeShape, SemanticRole } from "trazo";
 
 export interface FlowParseError {
   line: number;

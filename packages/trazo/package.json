@@ -1,7 +1,7 @@
 {
-  "name": "rama",
+  "name": "trazo",
   "version": "0.0.0",
-  "description": "Deterministic git-graph layout engine. Pure TS core + optional React SVG renderers.",
+  "description": "Deterministic code-to-diagram layout engine (flowcharts + git graphs). Pure TS core + optional React SVG renderers.",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",

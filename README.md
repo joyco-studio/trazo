@@ -22,10 +22,10 @@ A pnpm + turbo monorepo with two pieces:
 
 | Package | What it is |
 | --- | --- |
-| **[`packages/rama`](packages/rama)** | The engine. A pure-TS layout core (`layout`, `layoutGit`, `layoutFlow`, `measure`) + optional React SVG renderer (`rama/react`). No DOM, no canvas, no `window` — runs in Node, deterministic, SSR-safe. |
+| **[`packages/trazo`](packages/trazo)** | The engine. A pure-TS layout core (`layout`, `layoutGit`, `layoutFlow`, `measure`) + optional React SVG renderer (`trazo/react`). No DOM, no canvas, no `window` — runs in Node, deterministic, SSR-safe. |
 | **[`apps/mirador`](apps/mirador)** | The inspector. A Next.js app: pseudo-code on the left, a live server-rendered diagram on the right. Flowchart and git modes, on-brand JOYCO chrome. |
 
-`rama` is the library you'd ship; `mirador` is how you author and preview against it.
+`trazo` is the library you'd ship; `Trazo Playground` is how you author and preview against it.
 
 ## The idea
 
@@ -38,7 +38,7 @@ A pnpm + turbo monorepo with two pieces:
   widths are byte-identical server- and client-side.
 - **SSR-first.** The `<Graph>` renderer is a pure function of its props with no
   hooks or effects, so it renders as a React Server Component (zero client JS, for
-  static illustrations) **and** hydrated (for mirador's live preview), producing
+  static illustrations) **and** hydrated (for Trazo Playground's live preview), producing
   identical markup either way.
 - **On-brand by default.** joyco-blue primary with semantic role colors, square
   commit nodes, hard 45° edge elbows, uppercase labels, the bento console
@@ -49,7 +49,7 @@ A pnpm + turbo monorepo with two pieces:
 
 ```bash
 pnpm install
-pnpm build          # turbo: builds rama, then mirador
+pnpm build          # turbo: builds trazo, then the playground
 pnpm --filter mirador dev
 ```
 
@@ -60,8 +60,8 @@ graphs. View-source on the page to confirm the `<svg>` is in the initial HTML.
 ### Using the engine directly
 
 ```ts
-import { layoutFlow, layoutGit } from "rama";
-import { Graph } from "rama/react"; // optional — React is a peer dep
+import { layoutFlow, layoutGit } from "trazo";
+import { Graph } from "trazo/react"; // optional — React is a peer dep
 
 const flow = layoutFlow({
   kind: "flow",
@@ -75,7 +75,7 @@ const flow = layoutFlow({
 // <Graph graph={flow} /> renders it as an inline <svg>, server or client.
 ```
 
-See [`packages/rama/README.md`](packages/rama/README.md) for the full contract.
+See [`packages/trazo/README.md`](packages/trazo/README.md) for the full contract.
 
 ## Scripts
 
@@ -83,9 +83,9 @@ Run from the repo root (turbo fans out across the workspace):
 
 | Command | Does |
 | --- | --- |
-| `pnpm build` | Build `rama` → `mirador` in dependency order |
+| `pnpm build` | Build `trazo` → `Trazo Playground` in dependency order |
 | `pnpm dev` | Run dev servers |
-| `pnpm test` | Run the `rama` test suite (layout determinism, flow, measure) |
+| `pnpm test` | Run the `trazo` test suite (layout determinism, flow, measure) |
 | `pnpm typecheck` | Type-check every package |
 | `pnpm lint` | Lint every package |
 

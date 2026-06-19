@@ -1,5 +1,5 @@
 /**
- * Prop types for the "rama/react" renderers (FROZEN).
+ * Prop types for the "trazo/react" renderers (FROZEN).
  *
  * Styling follows the JOYCO data-slot convention: the root carries a single
  * `className`; inner elements expose `data-slot` so a parent can style them via
@@ -27,7 +27,7 @@ export interface GraphClassNames {
 export interface GraphProps {
   /** Fully resolved layout from `layout()`. The component does not compute geometry. */
   graph: PositionedGraph;
-  /** Single className on the root `<svg>` (data-slot="rama-graph"). */
+  /** Single className on the root `<svg>` (data-slot="trazo-graph"). */
   className?: string;
   /** Optional type-safe per-slot class overrides. */
   classNames?: GraphClassNames;

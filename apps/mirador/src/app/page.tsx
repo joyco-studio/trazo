@@ -11,7 +11,7 @@
  */
 
 import Image from "next/image";
-import { layoutFlow } from "rama";
+import { layoutFlow } from "trazo";
 
 import { Inspector } from "@/components/inspector";
 import { Badge } from "@/components/ui/badge";
@@ -59,10 +59,10 @@ export default function Home() {
 
         <Cluster align="center" className="bg-card gap-2 px-4">
           <h1 className="text-sm font-semibold tracking-wide uppercase">
-            mirador
+            Trazo
           </h1>
           <Badge variant="muted" size="sm">
-            rama inspector
+            playground
           </Badge>
         </Cluster>
 

@@ -1,5 +1,5 @@
 /**
- * rama — public contract (FROZEN core, additively extended for flow graphs).
+ * trazo — public contract (FROZEN core, additively extended for flow graphs).
  *
  * These types are the seam between the layout engine (Track A) and any renderer
  * or app (Track B). Both build against this file; the implementation lives

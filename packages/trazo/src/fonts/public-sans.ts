@@ -7,7 +7,7 @@
  * `size / unitsPerEm`. This module is PURE DATA — no fs, no fetch, no
  * opentype — so it ships safely to the browser and runs in Node.
  *
- * Regenerate with: pnpm --filter rama gen:glyphs
+ * Regenerate with: pnpm --filter trazo gen:glyphs
  *
  * Source: Public Sans (default/Regular instance) — https://github.com/google/fonts/raw/main/ofl/publicsans/PublicSans%5Bwght%5D.ttf
  */

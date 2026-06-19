@@ -74,9 +74,6 @@ importers:
       radix-ui:
         specifier: ^1.6.0
         version: 1.6.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      rama:
-        specifier: workspace:*
-        version: link:../../packages/rama
       react:
         specifier: 19.2.4
         version: 19.2.4
@@ -92,6 +89,9 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
+      trazo:
+        specifier: workspace:*
+        version: link:../../packages/trazo
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -133,7 +133,7 @@ importers:
         specifier: ^5
         version: 5.9.3
 
-  packages/rama:
+  packages/trazo:
     devDependencies:
       '@types/opentype.js':
         specifier: ^1.3.10

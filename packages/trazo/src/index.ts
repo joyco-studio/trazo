@@ -1,5 +1,5 @@
 /**
- * rama core entry (".") — public API.
+ * trazo core entry (".") — public API.
  *
  * Re-exports the pure, deterministic layout engines and the glyph-table-backed
  * text measurer behind their frozen signatures. No DOM, canvas, or `window`

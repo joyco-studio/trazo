@@ -16,7 +16,7 @@
  * a friendly message; the caller keeps the last good graph rendered.
  */
 
-import type { Commit, CommitGraph } from "rama";
+import type { Commit, CommitGraph } from "trazo";
 
 export interface ParseError {
   line: number;

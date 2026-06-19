@@ -1,8 +1,8 @@
 /**
- * rama React entry ("./react") — FROZEN public API.
+ * trazo React entry ("./react") — FROZEN public API.
  *
- * React is an OPTIONAL peer dependency: importing "rama" never pulls React in;
- * only "rama/react" does. Apps that just call `layout()`/`measure()` on a
+ * React is an OPTIONAL peer dependency: importing "trazo" never pulls React in;
+ * only "trazo/react" does. Apps that just call `layout()`/`measure()` on a
  * server pay nothing for React.
  *
  * Renderer purity contract — `<Graph>` is a PURE FUNCTION of its props:

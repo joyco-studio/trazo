@@ -17,8 +17,8 @@
  *     keeps its own source so toggling never loses your work.
  */
 
-import { layoutFlow, layoutGit, type PositionedGraph } from "rama";
-import { Graph } from "rama/react";
+import { layoutFlow, layoutGit, type PositionedGraph } from "trazo";
+import { Graph } from "trazo/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";

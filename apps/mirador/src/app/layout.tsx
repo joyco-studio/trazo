@@ -3,9 +3,9 @@ import { publicSans, robotoMono } from "@/lib/fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "mirador — rama inspector",
+  title: "Trazo Playground",
   description:
-    "Live SSR preview & inspector for the rama git-graph layout engine.",
+    "Live SSR preview & playground for the trazo code-to-diagram engine.",
 };
 
 export const viewport: Viewport = {
