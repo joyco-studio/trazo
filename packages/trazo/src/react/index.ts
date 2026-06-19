@@ -10,7 +10,7 @@
  *     browser globals) so the hub can emit graph illustrations as pure SSR with
  *     zero client JS, and
  *  2. hydrated on the client, where it renders byte-identically to the server
- *     output so mirador's live preview can swap it in without a mismatch.
+ *     output so playground's live preview can swap it in without a mismatch.
  *
  * The JSX implementation lives in `./graph.tsx` (a `.tsx` so JSX compiles);
  * this frozen `.ts` entry only re-exports it behind the contract signature.

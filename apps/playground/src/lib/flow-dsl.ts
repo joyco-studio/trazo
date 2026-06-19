@@ -1,5 +1,5 @@
 /**
- * mirador flow DSL — a tiny, forgiving line-based language for describing a
+ * playground flow DSL — a tiny, forgiving line-based language for describing a
  * flowchart, parsed into a rama `FlowGraph`. It mirrors the Mermaid subset the
  * JOYCO logs actually use (boxes, stadium terminals, diamonds, cylinders,
  * directed edges, optional edge labels), so log illustrations can be authored
@@ -208,7 +208,7 @@ export function parseFlow(source: string): FlowParseResult {
  * back into a single streaming node. Produces a multi-layer graph with mixed
  * shapes and semantic roles so the first paint is a non-trivial illustration.
  */
-export const SEED_FLOW = `# mirador — flowchart mode
+export const SEED_FLOW = `# playground — flowchart mode
 # nodes: id["box"] ([stadium]) {diamond} [(cylinder)] ; optional :role
 flow TD
 

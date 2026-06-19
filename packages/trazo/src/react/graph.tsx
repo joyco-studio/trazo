@@ -26,7 +26,7 @@ import type { JSX } from "react";
  * tree-shaken unless a utility references them, so a renderer that relied on
  * them alone went colorless. The fallback chain resolves to the raw token
  * (`--x`, which survives) and finally a hard-coded hex, so illustrations are
- * never colorless in ANY consuming app (mirador, the hub, anywhere).
+ * never colorless in ANY consuming app (playground, the hub, anywhere).
  */
 const LANE_VARS = [
   "var(--color-joyco-blue, var(--joyco-blue, #002cea))",

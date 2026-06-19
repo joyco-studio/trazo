@@ -23,7 +23,7 @@ A pnpm + turbo monorepo with two pieces:
 | Package | What it is |
 | --- | --- |
 | **[`packages/trazo`](packages/trazo)** | The engine. A pure-TS layout core (`layout`, `layoutGit`, `layoutFlow`, `measure`) + optional React SVG renderer (`trazo/react`). No DOM, no canvas, no `window` — runs in Node, deterministic, SSR-safe. |
-| **[`apps/mirador`](apps/mirador)** | The inspector. A Next.js app: pseudo-code on the left, a live server-rendered diagram on the right. Flowchart and git modes, on-brand JOYCO chrome. |
+| **[`apps/playground`](apps/playground)** | The inspector. A Next.js app: pseudo-code on the left, a live server-rendered diagram on the right. Flowchart and git modes, on-brand JOYCO chrome. |
 
 `trazo` is the library you'd ship; `Trazo Playground` is how you author and preview against it.
 
@@ -50,7 +50,7 @@ A pnpm + turbo monorepo with two pieces:
 ```bash
 pnpm install
 pnpm build          # turbo: builds trazo, then the playground
-pnpm --filter mirador dev
+pnpm --filter playground dev
 ```
 
 Open <http://localhost:3000>. It boots on **flowchart** mode by default — type in

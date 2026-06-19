@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Inspector — the client island that makes mirador "live".
+ * Inspector — the client island that makes playground "live".
  *
- * Architecture (the whole point of mirador):
+ * Architecture (the whole point of playground):
  *   - The SERVER already rendered the editor + the graph for the seed program
  *     into the initial HTML (see app/page.tsx). This island hydrates over that
  *     markup, seeded with the SAME source + server-computed layout, so the

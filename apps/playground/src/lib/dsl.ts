@@ -1,5 +1,5 @@
 /**
- * mirador DSL — a tiny, forgiving line-based language for describing a commit
+ * playground DSL — a tiny, forgiving line-based language for describing a commit
  * DAG, parsed into a rama `CommitGraph`.
  *
  * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
