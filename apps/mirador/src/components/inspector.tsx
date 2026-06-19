@@ -63,6 +63,10 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
   const lineCount = useMemo(() => source.split("\n").length, [source]);
 
   return (
+    // Two bento panes. The wrapper is transparent; the gap-px seams reveal the
+    // page's bg-muted field between the solid (bg-card / bg-muted) cells. The
+    // root Cluster's own Filler is hidden — only the inner header-bar Fillers
+    // do work.
     <Cluster
       direction="row"
       align="stretch"
@@ -75,7 +79,7 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
         align="stretch"
         className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2"
       >
-        <Cluster bg="muted" className="px-4 py-2 text-muted-foreground">
+        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground px-3 py-2">
           <Badge variant="muted" size="sm">
             editor
           </Badge>
@@ -98,12 +102,12 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
           autoCorrect="off"
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? "dsl-error" : undefined}
-          className="bg-card min-h-[60vh] flex-1 resize-none rounded-none border-0 px-4 py-4 font-mono text-sm leading-relaxed shadow-none focus-visible:ring-0 lg:min-h-0"
+          className="bg-card min-h-[55vh] flex-1 resize-none rounded-none border-0 px-4 py-4 font-mono text-sm leading-relaxed shadow-none focus-visible:ring-0 lg:min-h-0"
         />
 
-        <div aria-live="polite" className="min-h-9">
+        <div aria-live="polite" className="contents">
           {error ? (
-            <Cluster bg="muted" className="bg-destructive/15 px-4 py-2">
+            <Cluster align="center" className="bg-destructive/15 px-3 py-2">
               <Badge variant="destructive" size="sm">
                 line&nbsp;{error.line}
               </Badge>
@@ -115,9 +119,11 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
               </p>
             </Cluster>
           ) : (
-            <Cluster bg="muted" className="text-muted-foreground px-4 py-2">
+            <Cluster align="center" className="bg-card text-muted-foreground px-3 py-2">
+              <span className="bg-mint-green/15 text-mint-green inline-block size-2 rounded-full" aria-hidden="true" />
               <p className="font-mono text-xs">
-                ok — {graph.nodes.length} commits, {graph.laneCount} lanes
+                {graph.nodes.length} nodes · {graph.edges.length} edges ·{" "}
+                {graph.laneCount} lanes
               </p>
             </Cluster>
           )}
@@ -130,9 +136,9 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
         align="stretch"
         className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2"
       >
-        <Cluster bg="muted" className="px-4 py-2 text-muted-foreground">
+        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground px-3 py-2">
           <Badge variant="muted" size="sm">
-            graph
+            preview
           </Badge>
           <Filler />
           <span className="font-mono text-xs tabular-nums">
@@ -140,8 +146,8 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
           </span>
         </Cluster>
 
-        <div className="bg-card min-h-[60vh] flex-1 overflow-auto p-6 lg:min-h-0">
-          <Graph graph={graph} />
+        <div className="bg-card grid min-h-[55vh] flex-1 place-items-center overflow-auto p-8 lg:min-h-0">
+          <Graph graph={graph} className="max-h-full w-auto" />
         </div>
       </Cluster>
     </Cluster>
