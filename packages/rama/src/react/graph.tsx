@@ -15,19 +15,26 @@ import type { GraphProps } from "./types.js";
 import type { JSX } from "react";
 
 /**
- * Lane color palette: the five JOYCO chart tokens plus the three brand tokens,
- * cycled so adjacent lanes stay visually distinct. Pure string lookup →
- * identical on server/client.
+ * Lane color palette: joyco-blue leads as the primary, followed by vivid brand
+ * + chart tokens for contrast, cycled so adjacent lanes stay distinct. Pure
+ * string lookup → identical on server/client.
+ *
+ * Each entry is a LAYERED fallback: `var(--color-x, var(--x, #hex))`. In
+ * Tailwind v4 the `--color-*` aliases live inside `@theme inline` and are
+ * tree-shaken unless a utility references them, so a renderer that relied on
+ * them alone went colorless. The fallback chain resolves to the raw token
+ * (`--x`, which survives) and finally a hard-coded hex, so illustrations are
+ * never colorless in ANY consuming app (mirador, the hub, anywhere).
  */
 const LANE_VARS = [
-  "var(--color-chart-1)",
-  "var(--color-chart-2)",
-  "var(--color-chart-3)",
-  "var(--color-chart-4)",
-  "var(--color-chart-5)",
-  "var(--color-joyco-blue)",
-  "var(--color-mustard-yellow)",
-  "var(--color-mint-green)",
+  "var(--color-joyco-blue, var(--joyco-blue, #002cea))",
+  "var(--color-mint-green, var(--mint-green, #36b37e))",
+  "var(--color-mustard-yellow, var(--mustard-yellow, #e6a700))",
+  "var(--color-chart-3, var(--chart-3, #2dd4bf))",
+  "var(--color-chart-4, var(--chart-4, #a78bfa))",
+  "var(--color-chart-5, var(--chart-5, #f472b6))",
+  "var(--color-chart-1, var(--chart-1, #1447e6))",
+  "var(--color-chart-2, var(--chart-2, #00bba7))",
 ] as const;
 
 function laneColor(tokenKey: string): string {
@@ -38,6 +45,12 @@ function laneColor(tokenKey: string): string {
   const idx = ((safe % LANE_VARS.length) + LANE_VARS.length) % LANE_VARS.length;
   return LANE_VARS[idx] as string;
 }
+
+/** Foreground (strokes, labels), with the same layered fallback as the palette. */
+const FG = "var(--color-foreground, var(--foreground, #ededed))";
+/** Label font stack, falling back to the raw token then a system sans. */
+const LABEL_FONT =
+  "var(--font-sans, var(--font-public-sans, ui-sans-serif, system-ui, sans-serif))";
 
 /** Label font size (px) — matches the size `layout()` measured labels against. */
 const LABEL_SIZE = 13;
@@ -95,7 +108,7 @@ export function Graph(props: GraphProps): JSX.Element {
               cy={node.y}
               r={NODE_RADIUS}
               fill={laneColor(node.color)}
-              stroke="var(--color-foreground)"
+              stroke={FG}
               strokeWidth={1}
             />
             {node.message !== undefined ? (
@@ -105,8 +118,8 @@ export function Graph(props: GraphProps): JSX.Element {
                 x={node.x + NODE_RADIUS + LABEL_GAP}
                 y={node.y}
                 dominantBaseline="central"
-                fill="var(--color-foreground)"
-                fontFamily="var(--font-sans)"
+                fill={FG}
+                fontFamily={LABEL_FONT}
                 fontSize={LABEL_SIZE}
               >
                 {node.message}
