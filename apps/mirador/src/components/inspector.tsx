@@ -17,12 +17,19 @@
  *     keeps its own source so toggling never loses your work.
  */
 
-import { layoutFlow, layoutGit, type PositionedGraph } from "trazo";
-import { Graph } from "trazo/react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  type EdgeStyle,
+  layoutFlow,
+  layoutGit,
+  type PositionedGraph,
+} from "trazo";
+import { Graph } from "trazo/react";
 
+import { GraphViewport } from "@/components/graph-viewport";
 import { Badge } from "@/components/ui/badge";
 import { Cluster, Filler } from "@/components/ui/cluster";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { parseDsl, type ParseError, SEED_PROGRAM } from "@/lib/dsl";
@@ -33,18 +40,25 @@ const DEBOUNCE_MS = 140;
 type Mode = "git" | "flow";
 
 /** Parse + lay out a source string for a given mode; returns graph + error. */
-function build(mode: Mode, source: string): {
+function build(
+  mode: Mode,
+  source: string,
+  edgeStyle: EdgeStyle,
+): {
   graph: PositionedGraph | null;
   error: ParseError | null;
 } {
   if (mode === "flow") {
     const { graph, error } = parseFlow(source);
     if (graph.nodes.length === 0) return { graph: null, error };
-    return { graph: layoutFlow(graph, { direction: directionOf(graph) }), error };
+    return {
+      graph: layoutFlow(graph, { direction: directionOf(graph), edgeStyle }),
+      error,
+    };
   }
   const { graph, error } = parseDsl(source);
   if (graph.commits.length === 0) return { graph: null, error };
-  return { graph: layoutGit(graph), error };
+  return { graph: layoutGit(graph, { edgeStyle }), error };
 }
 
 export interface InspectorProps {
@@ -71,25 +85,38 @@ export function Inspector({
   // The active mode's graph is seeded from the server; the other lays out lazily.
   const [graph, setGraph] = useState<PositionedGraph>(initialGraph);
   const [error, setError] = useState<ParseError | null>(null);
+  // Edge routing. Defaults to "elbow45" — the same default the server used for
+  // `initialGraph`, so the first client render matches the SSR markup.
+  const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>("elbow45");
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const source = sources[mode];
 
-  const recompute = useCallback((nextMode: Mode, nextSource: string) => {
-    const { graph: next, error: nextError } = build(nextMode, nextSource);
-    setError(nextError);
-    if (next) setGraph(next); // keep last good graph when parse yields nothing
-  }, []);
+  const recompute = useCallback(
+    (nextMode: Mode, nextSource: string, nextEdgeStyle: EdgeStyle) => {
+      const { graph: next, error: nextError } = build(
+        nextMode,
+        nextSource,
+        nextEdgeStyle,
+      );
+      setError(nextError);
+      if (next) setGraph(next); // keep last good graph when parse yields nothing
+    },
+    [],
+  );
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const next = event.target.value;
       setSources((prev) => ({ ...prev, [mode]: next }));
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => recompute(mode, next), DEBOUNCE_MS);
+      debounceRef.current = setTimeout(
+        () => recompute(mode, next, edgeStyle),
+        DEBOUNCE_MS,
+      );
     },
-    [mode, recompute],
+    [mode, recompute, edgeStyle],
   );
 
   const handleMode = useCallback(
@@ -97,9 +124,19 @@ export function Inspector({
       const m = next as Mode;
       setMode(m);
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(m, sources[m]); // immediate, no debounce on an explicit switch
+      recompute(m, sources[m], edgeStyle); // immediate on an explicit switch
     },
-    [recompute, sources],
+    [recompute, sources, edgeStyle],
+  );
+
+  const handleEdgeStyle = useCallback(
+    (elbow45: boolean) => {
+      const next: EdgeStyle = elbow45 ? "elbow45" : "orthogonal";
+      setEdgeStyle(next);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      recompute(mode, source, next); // re-layout immediately on toggle
+    },
+    [recompute, mode, source],
   );
 
   const lineCount = useMemo(() => source.split("\n").length, [source]);
@@ -182,22 +219,36 @@ export function Inspector({
         align="stretch"
         className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2"
       >
-        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground px-3 py-2">
+        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground gap-3 px-3 py-2">
           <Badge variant="muted" size="sm">
             preview
           </Badge>
           <Filler />
+          {/* Edge-style toggle: on = 45° diagonals, off = 90° orthogonal. */}
+          <label className="flex cursor-pointer items-center gap-2">
+            <span className="font-mono text-xs tracking-wide uppercase">45°</span>
+            <Switch
+              checked={edgeStyle === "elbow45"}
+              onCheckedChange={handleEdgeStyle}
+              aria-label="Toggle 45° edges (off = 90° orthogonal)"
+            />
+          </label>
+          <span
+            aria-hidden="true"
+            className="bg-border h-4 w-px self-center"
+          />
           <span className="font-mono text-xs tabular-nums">
             {Math.round(graph.width)}×{Math.round(graph.height)}
           </span>
         </Cluster>
 
-        <div className="bg-card grid min-h-[55vh] flex-1 place-items-center overflow-auto p-8 lg:min-h-0">
-          <Graph
-            graph={graph}
-            title={mode === "flow" ? "Flowchart" : "Commit graph"}
-            className="max-h-full w-auto"
-          />
+        <div className="bg-card relative min-h-[55vh] flex-1 lg:min-h-0">
+          <GraphViewport contentWidth={graph.width} contentHeight={graph.height}>
+            <Graph
+              graph={graph}
+              title={mode === "flow" ? "Flowchart" : "Commit graph"}
+            />
+          </GraphViewport>
         </div>
       </Cluster>
     </Cluster>

@@ -37,6 +37,7 @@ export type {
   PositionedNode,
   PositionedEdge,
   EdgeKind,
+  EdgeStyle,
   PositionedGraph,
   LayoutOptions,
   GitLayoutOptions,
