@@ -12,7 +12,7 @@
  *    Bézier between layers) from an ordered point list.
  */
 
-import type { FlowDirection, NodeShape, Point } from "./types.js";
+import type { EdgeStyle, FlowDirection, NodeShape, Point } from "./types.js";
 import { measure } from "./measure.js";
 
 /** Font used to size flow-node labels — Public Sans, hub body size. */
@@ -26,6 +26,8 @@ const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
  */
 export const NODE_HALF = 5;
 export const LABEL_GAP = 10;
+/** Horizontal padding inside the sliced-corner git label badge (each side). */
+export const LABEL_BADGE_PAD = 10;
 
 /** Defaults for shape sizing; callers may override width/height bases. */
 export interface ShapeSizeOptions {
@@ -124,55 +126,51 @@ export function entryAnchor(
 }
 
 /**
- * Build the segment(s) from `from` to `to` in the JOYCO hard-edged style: run
- * straight along the dominant axis, then turn ABRUPTLY at exactly 45° to shift
- * across, then straight again — no easing. Returns the `L`/`M` commands AFTER
- * the implicit start point (caller emits the `M`).
- *
- * Given a vertical-dominant step (git/flow TD: |dy| ≥ |dx|): go straight to the
- * point `|dx|` before the target along y, cut a 45° diagonal of length `|dx|`
- * in both axes to land on the target's column, then straight to the target.
- * Horizontal-dominant (flow LR) is the mirror. Collinear → a single `L`.
+ * Build the turn segment(s) from `from` to `to` (the `L` commands after an
+ * already-emitted point), in the chosen edge style:
+ *  - "elbow45": straight along the dominant axis, then a sharp 45° diagonal to
+ *    shift across, then straight — no easing.
+ *  - "orthogonal": straight along the dominant axis to the target's cross
+ *    coordinate, then a 90° turn straight into the target.
+ * Collinear points → a single `L`.
  */
-function elbow45(from: Point, to: Point): string {
+function turn(from: Point, to: Point, style: EdgeStyle): string {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-
   if (dx === 0 || dy === 0) {
     return `L ${to.x} ${to.y}`;
   }
 
+  if (style === "orthogonal") {
+    // Right-angle elbow. Pivot on the dominant axis so the bend reads cleanly:
+    // vertical-dominant → go down to target y, then across; mirror for LR.
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      return `L ${from.x} ${to.y} L ${to.x} ${to.y}`;
+    }
+    return `L ${to.x} ${from.y} L ${to.x} ${to.y}`;
+  }
+
+  // elbow45
   const adx = Math.abs(dx);
   const ady = Math.abs(dy);
   const sx = Math.sign(dx);
   const sy = Math.sign(dy);
-
   if (ady >= adx) {
-    // vertical-dominant: straight down, 45° diagonal of size adx, straight down.
     const kneeY = to.y - sy * adx;
     return `L ${from.x} ${kneeY} L ${to.x} ${to.y}`;
   }
-  // horizontal-dominant: straight across, 45° diagonal of size ady, straight.
   const kneeX = to.x - sx * ady;
   return `L ${kneeX} ${from.y} L ${to.x} ${to.y}`;
 }
 
 /**
- * Build the SVG `d` path for a git edge between two placed points using the
- * abrupt 45° elbow style (straight → sharp 45° turn → straight). Collinear
- * points yield a single straight line. The flow layout reuses the same style
- * via {@link pathThrough}.
+ * Build the SVG `d` path for an edge through an ordered list of points (the
+ * exit anchor, any dummy/waypoints, and the entry anchor), using the chosen
+ * turn style between consecutive points. Callers add perpendicular stub points
+ * at each end (see {@link withStubs}) so edges always leave/enter a node face
+ * at 90° before any turn. Pure function of its inputs.
  */
-export function curveBetween(from: Point, to: Point): string {
-  return `M ${from.x} ${from.y} ${elbow45(from, to)}`;
-}
-
-/**
- * Build an SVG `d` path through an ordered list of points (start anchor →
- * dummy points → end anchor), each hop using the same abrupt 45° elbow style
- * as {@link curveBetween}. Pure function of the input points.
- */
-export function pathThrough(points: Point[]): string {
+export function pathThrough(points: Point[], style: EdgeStyle = "elbow45"): string {
   if (points.length === 0) return "";
   const first = points[0] as Point;
   if (points.length === 1) return `M ${first.x} ${first.y}`;
@@ -181,10 +179,25 @@ export function pathThrough(points: Point[]): string {
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1] as Point;
     const cur = points[i] as Point;
-    d += ` ${elbow45(prev, cur)}`;
+    d += ` ${turn(prev, cur, style)}`;
   }
   return d;
 }
+
+/**
+ * Two-point convenience: an edge straight from `from` to `to` in the given
+ * style (used by the git layout, whose lanes are a regular grid). Perpendicular
+ * stubs are unnecessary for git dots/squares (they are points), so this is a
+ * direct two-point {@link pathThrough}.
+ */
+export function curveBetween(
+  from: Point,
+  to: Point,
+  style: EdgeStyle = "elbow45",
+): string {
+  return pathThrough([from, to], style);
+}
+
 
 /** Midpoint of an ordered polyline (by segment-length-weighted arc midpoint). */
 export function polylineMidpoint(points: Point[]): Point {

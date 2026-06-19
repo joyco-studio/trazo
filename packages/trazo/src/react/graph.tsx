@@ -13,7 +13,7 @@
 
 import type { GraphProps } from "./types.js";
 import type { PositionedNode, SemanticRole } from "../types.js";
-import { NODE_HALF, LABEL_GAP } from "../geometry.js";
+import { NODE_HALF, LABEL_GAP, LABEL_BADGE_PAD } from "../geometry.js";
 import type { JSX } from "react";
 
 /**
@@ -90,6 +90,36 @@ const LABEL_SIZE = 13;
 const EDGE_WIDTH = 2.5;
 /** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
 const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
+/** Page background, used as the git commit-square border so it reads as a chip. */
+const BG = "var(--color-background, var(--background, #0a0a0a))";
+/** Muted surface for the sliced-corner label badge behind git commit labels. */
+const MUTED = "var(--color-muted, var(--muted, #1a1a1a))";
+/** Dim foreground for secondary text (hash, author). */
+const MUTED_FG =
+  "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))";
+
+/** Sliced-corner badge metrics (matches the hub Badge: TL + BR chamfer). */
+const BADGE_CHAMFER = 6;
+const BADGE_PAD_X = LABEL_BADGE_PAD;
+const BADGE_H = 22;
+
+/**
+ * SVG path for a sliced-corner badge rect (hub Badge geometry): top-left and
+ * bottom-right corners cut at `c` px, top-right and bottom-left square. Origin
+ * at (x,y), size w×h.
+ */
+function badgePath(x: number, y: number, w: number, h: number): string {
+  const c = BADGE_CHAMFER;
+  return [
+    `M ${x + c} ${y}`,
+    `L ${x + w} ${y}`,
+    `L ${x + w} ${y + h - c}`,
+    `L ${x + w - c} ${y + h}`,
+    `L ${x} ${y + h}`,
+    `L ${x} ${y + c}`,
+    "Z",
+  ].join(" ");
+}
 
 /**
  * Render a `PositionedGraph` as an inline `<svg>`. Pure: same `graph` → same
@@ -179,7 +209,9 @@ function renderNodeShape(
 ): JSX.Element {
   const shape = node.shape;
   if (shape === undefined || shape === "dot") {
-    // JOYCO commits are SQUARES, not dots — no radius, centered on x/y.
+    // JOYCO commits are SQUARES, not dots — no radius, centered on x/y. The
+    // border is the page background so the chip reads as lifted off the lane
+    // line passing behind it.
     return (
       <rect
         data-slot="node"
@@ -190,8 +222,8 @@ function renderNodeShape(
         width={NODE_HALF * 2}
         height={NODE_HALF * 2}
         fill={nodeColor(node.color)}
-        stroke={FG}
-        strokeWidth={1}
+        stroke={BG}
+        strokeWidth={2}
       />
     );
   }
@@ -299,19 +331,45 @@ function renderNodeLabel(
   }
 
   if (node.message === undefined) return null;
+
+  // Git label = a sliced-corner badge (hub Badge geometry) holding an optional
+  // mono hash, the subject, and an optional trailing author. The badge width
+  // comes from the measured labelWidth reserved by the layout.
+  const badgeX = node.x + NODE_HALF + LABEL_GAP;
+  const badgeY = node.y - BADGE_H / 2;
+  const badgeW = (node.labelWidth ?? 0) + BADGE_PAD_X * 2;
+  const textX = badgeX + BADGE_PAD_X;
+
   return (
-    <text
-      data-slot="label"
-      className={labelClass}
-      x={node.x + NODE_HALF + LABEL_GAP}
-      y={node.y}
-      dominantBaseline="central"
-      fill={FG}
-      fontFamily={LABEL_FONT}
-      fontSize={LABEL_SIZE}
-      style={UPPERCASE}
-    >
-      {node.message}
-    </text>
+    <g data-slot="label" className={labelClass}>
+      <path
+        data-slot="label-badge"
+        d={badgePath(badgeX, badgeY, badgeW, BADGE_H)}
+        fill={MUTED}
+        stroke={BG}
+        strokeWidth={1}
+      />
+      <text
+        x={textX}
+        y={node.y}
+        dominantBaseline="central"
+        fontFamily={LABEL_FONT}
+        fontSize={LABEL_SIZE}
+        style={UPPERCASE}
+      >
+        {node.hash !== undefined ? (
+          <tspan data-slot="label-hash" fill={MUTED_FG}>
+            {node.hash}{" "}
+          </tspan>
+        ) : null}
+        <tspan fill={FG}>{node.message}</tspan>
+        {node.author !== undefined ? (
+          <tspan data-slot="label-author" fill={MUTED_FG}>
+            {"  "}
+            {node.author}
+          </tspan>
+        ) : null}
+      </text>
+    </g>
   );
 }

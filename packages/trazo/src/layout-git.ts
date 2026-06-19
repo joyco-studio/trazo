@@ -26,13 +26,19 @@ import type {
   CommitGraph,
   CommitId,
   EdgeKind,
+  EdgeStyle,
   LayoutOptions,
   PositionedEdge,
   PositionedGraph,
   PositionedNode,
 } from "./types.js";
 import { measure } from "./measure.js";
-import { curveBetween, NODE_HALF, LABEL_GAP } from "./geometry.js";
+import {
+  curveBetween,
+  NODE_HALF,
+  LABEL_GAP,
+  LABEL_BADGE_PAD,
+} from "./geometry.js";
 
 const DEFAULTS = {
   laneWidth: 28,
@@ -205,8 +211,12 @@ function assignLanes(ordered: Commit[]): {
  * across different rows) get the cubic ease — byte-identical to the prior
  * inline implementation.
  */
-function edgePath(from: PositionedNode, to: PositionedNode): string {
-  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y });
+function edgePath(
+  from: PositionedNode,
+  to: PositionedNode,
+  style: EdgeStyle,
+): string {
+  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y }, style);
 }
 
 /**
@@ -220,6 +230,7 @@ export function layoutGit(
   const rowHeight = options?.rowHeight ?? DEFAULTS.rowHeight;
   const nodeRadius = options?.nodeRadius ?? DEFAULTS.nodeRadius;
   const padding = options?.padding ?? DEFAULTS.padding;
+  const edgeStyle = options?.edgeStyle ?? "elbow45";
 
   const ordered = orderCommits(input.commits);
   const { laneOf, laneCount } = assignLanes(ordered);
@@ -237,12 +248,18 @@ export function layoutGit(
       color: laneColorKey(lane),
     };
     if (commit.branch !== undefined) node.branch = commit.branch;
+    if (commit.author !== undefined) node.author = commit.author;
+    if (commit.hash !== undefined) node.hash = commit.hash;
     if (commit.message !== undefined) {
       node.message = commit.message;
-      // Labels render UPPERCASE (JOYCO style) via the renderer's CSS, which is
-      // wider than the authored case — so measure the uppercased text to
-      // reserve the correct width and avoid cropping.
-      node.labelWidth = measure(commit.message.toUpperCase(), LABEL_FONT);
+      // The rendered label badge reads "<hash> <message>" (uppercase, JOYCO
+      // style — wider than authored case). Plus the author trails it. Measure
+      // the full uppercased label text so the width reserved (and the badge)
+      // never crops. Author adds a separate trailing run.
+      const hashPart = commit.hash ? `${commit.hash} ` : "";
+      const authorPart = commit.author ? `  ${commit.author}` : "";
+      const full = `${hashPart}${commit.message}${authorPart}`.toUpperCase();
+      node.labelWidth = measure(full, LABEL_FONT);
     }
     nodeById.set(commit.id, node);
     return node;
@@ -256,7 +273,7 @@ export function layoutGit(
       const parentId = commit.parents[p] as CommitId;
       const to = nodeById.get(parentId);
       if (!to) continue; // parent not in graph (shallow boundary) → no edge
-      const path = edgePath(from, to);
+      const path = edgePath(from, to, edgeStyle);
       // Edge kind from DAG structure:
       //  - a non-first parent of a multi-parent commit is a merge-in;
       //  - any other lane-changing edge (a line diverging from its parent's
@@ -291,7 +308,9 @@ export function layoutGit(
   let rightmost = laneRight;
   for (const node of nodes) {
     if (node.labelWidth === undefined) continue;
-    const labelRight = node.x + NODE_HALF + LABEL_GAP + node.labelWidth;
+    // Label renders inside a sliced badge → reserve its padding both sides.
+    const labelRight =
+      node.x + NODE_HALF + LABEL_GAP + node.labelWidth + LABEL_BADGE_PAD * 2;
     if (labelRight > rightmost) rightmost = labelRight;
   }
   const width = rightmost + padding;

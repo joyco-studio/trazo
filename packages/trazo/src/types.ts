@@ -49,6 +49,10 @@ export interface Commit {
   branch?: string;
   /** Optional human label (commit subject) — drives `measure`-based sizing. */
   message?: string;
+  /** Optional author name (rendered as a secondary label). */
+  author?: string;
+  /** Optional short hash (rendered mono before the subject). */
+  hash?: string;
 }
 
 /**
@@ -139,6 +143,10 @@ export interface PositionedNode {
   color: string;
   branch?: string;
   message?: string;
+  /** Git: optional author name (secondary label). */
+  author?: string;
+  /** Git: optional short hash (mono prefix on the label). */
+  hash?: string;
   /**
    * Measured pixel width of `message`/`label` (via `measure`), if present.
    * Renderers use this to size labels without re-measuring. Width is for the
@@ -214,7 +222,18 @@ export interface LayoutOptions {
   nodeRadius?: number;
   /** Outer padding around the whole graph (px). */
   padding?: number;
+  /** Edge connector style. Default "elbow45". */
+  edgeStyle?: EdgeStyle;
 }
+
+/**
+ * How edges turn between nodes:
+ *  - "elbow45": straight, then a sharp 45° diagonal, then straight (default).
+ *  - "orthogonal": straight, then a 90° right-angle elbow, then straight.
+ * In both styles an edge always LEAVES and ENTERS a node perpendicular to the
+ * node's face (a short straight stub) before any turn.
+ */
+export type EdgeStyle = "elbow45" | "orthogonal";
 
 /** Alias for {@link LayoutOptions} — the git-specific layout options. */
 export type GitLayoutOptions = LayoutOptions;
@@ -238,6 +257,8 @@ export interface FlowLayoutOptions {
   nodeHeight?: number;
   /** Horizontal padding (px) added around a node's measured label. */
   labelPadX?: number;
+  /** Edge connector style. Default "elbow45". */
+  edgeStyle?: EdgeStyle;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

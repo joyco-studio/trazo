@@ -97,6 +97,9 @@ export function layoutFlow(
   const layerGap = options?.layerGap ?? DEFAULTS.layerGap;
   const nodeGap = options?.nodeGap ?? DEFAULTS.nodeGap;
   const padding = options?.padding ?? DEFAULTS.padding;
+  const edgeStyle = options?.edgeStyle ?? "elbow45";
+  // Short perpendicular stub off each node face before any turn (px).
+  const stub = 12;
   const sizeOpts = {
     minNodeWidth: options?.minNodeWidth ?? DEFAULTS.minNodeWidth,
     nodeHeight: options?.nodeHeight ?? DEFAULTS.nodeHeight,
@@ -331,12 +334,29 @@ export function layoutFlow(
 
     const middle = chain.map((id) => (vById.get(id) as Vertex).center);
     const orderedMiddle = fromIsLower ? middle : [...middle].reverse();
-    const points: Point[] = [exit, ...orderedMiddle, entry];
+    // Perpendicular stubs off the exit and entry faces so the edge always
+    // leaves/enters at 90° before any 45°/orthogonal turn. The stub points are
+    // inserted just inside each anchor; the middle (dummy) points route the rest.
+    const exitStub =
+      direction === "TD"
+        ? { x: exit.x, y: exit.y + stub }
+        : { x: exit.x + stub, y: exit.y };
+    const entryStub =
+      direction === "TD"
+        ? { x: entry.x, y: entry.y - stub }
+        : { x: entry.x - stub, y: entry.y };
+    const points: Point[] = [
+      exit,
+      exitStub,
+      ...orderedMiddle,
+      entryStub,
+      entry,
+    ];
 
     const edge: PositionedEdge = {
       from: e.from,
       to: e.to,
-      path: pathThrough(points),
+      path: pathThrough(points, edgeStyle),
       kind: "flow",
       color: roleColorKey(fromV.role),
     };
