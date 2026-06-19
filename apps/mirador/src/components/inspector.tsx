@@ -4,69 +4,103 @@
  * Inspector — the client island that makes mirador "live".
  *
  * Architecture (the whole point of mirador):
- *   - The SERVER already rendered the editor + the graph for SEED_PROGRAM into
- *     the initial HTML (see app/page.tsx). This island hydrates over that markup.
- *   - `useState` is seeded with the SAME SEED_PROGRAM, and the initial layout is
- *     computed from it with the SAME `layout()` + `<Graph>` the server used, so
- *     the first client render is byte-identical to the server's → no hydration
- *     mismatch, zero flicker.
- *   - On each edit we re-parse → `layout()` → re-render `<Graph>` IN THE BROWSER,
+ *   - The SERVER already rendered the editor + the graph for the seed program
+ *     into the initial HTML (see app/page.tsx). This island hydrates over that
+ *     markup, seeded with the SAME source + server-computed layout, so the
+ *     first client render is byte-identical → no hydration mismatch, no flicker.
+ *   - On each edit we re-parse → layout() → re-render <Graph> IN THE BROWSER,
  *     debounced. No server round-trip per keystroke.
- *   - Parse errors keep the LAST GOOD graph on screen and surface a friendly
- *     inline message.
+ *   - Parse errors keep the LAST GOOD graph on screen with a friendly inline
+ *     message.
+ *   - A mode toggle switches between the git DSL (commit DAGs) and the flow DSL
+ *     (flowcharts) — the two diagram families the JOYCO logs need. Each mode
+ *     keeps its own source so toggling never loses your work.
  */
 
-import { layout, type PositionedGraph } from "rama";
+import { layoutFlow, layoutGit, type PositionedGraph } from "rama";
 import { Graph } from "rama/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Cluster, Filler } from "@/components/ui/cluster";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { parseDsl, type ParseError } from "@/lib/dsl";
+import { directionOf, parseFlow, SEED_FLOW } from "@/lib/flow-dsl";
 
 const DEBOUNCE_MS = 140;
 
+type Mode = "git" | "flow";
+
+/** Parse + lay out a source string for a given mode; returns graph + error. */
+function build(mode: Mode, source: string): {
+  graph: PositionedGraph | null;
+  error: ParseError | null;
+} {
+  if (mode === "flow") {
+    const { graph, error } = parseFlow(source);
+    if (graph.nodes.length === 0) return { graph: null, error };
+    return { graph: layoutFlow(graph, { direction: directionOf(graph) }), error };
+  }
+  const { graph, error } = parseDsl(source);
+  if (graph.commits.length === 0) return { graph: null, error };
+  return { graph: layoutGit(graph), error };
+}
+
 export interface InspectorProps {
-  /** The seed program — identical to what the server rendered. */
+  /** The git seed program — identical to what the server rendered. */
   initialSource: string;
-  /** The server-computed layout for `initialSource` (avoids a re-layout on mount). */
+  /** The server-computed git layout for `initialSource` (avoids re-layout on mount). */
   initialGraph: PositionedGraph;
 }
 
 export function Inspector({ initialSource, initialGraph }: InspectorProps) {
-  const [source, setSource] = useState(initialSource);
+  const [mode, setMode] = useState<Mode>("git");
+  // One source per mode so switching tabs preserves each editor's content.
+  const [sources, setSources] = useState<Record<Mode, string>>({
+    git: initialSource,
+    flow: SEED_FLOW,
+  });
+  // The git graph is seeded from the server; flow is laid out lazily on switch.
   const [graph, setGraph] = useState<PositionedGraph>(initialGraph);
   const [error, setError] = useState<ParseError | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const recompute = useCallback((nextSource: string) => {
-    const { graph: nextGraph, error: nextError } = parseDsl(nextSource);
+  const source = sources[mode];
+
+  const recompute = useCallback((nextMode: Mode, nextSource: string) => {
+    const { graph: next, error: nextError } = build(nextMode, nextSource);
     setError(nextError);
-    // Keep the last good graph when the parse fails but a partial graph exists.
-    if (nextGraph.commits.length > 0) {
-      setGraph(layout(nextGraph));
-    }
+    if (next) setGraph(next); // keep last good graph when parse yields nothing
   }, []);
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const next = event.target.value;
-      setSource(next);
+      setSources((prev) => ({ ...prev, [mode]: next }));
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => recompute(next), DEBOUNCE_MS);
+      debounceRef.current = setTimeout(() => recompute(mode, next), DEBOUNCE_MS);
     },
-    [recompute],
+    [mode, recompute],
+  );
+
+  const handleMode = useCallback(
+    (next: string) => {
+      const m = next as Mode;
+      setMode(m);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      recompute(m, sources[m]); // immediate, no debounce on an explicit switch
+    },
+    [recompute, sources],
   );
 
   const lineCount = useMemo(() => source.split("\n").length, [source]);
+  const unit = mode === "flow" ? "nodes" : "commits";
 
   return (
     // Two bento panes. The wrapper is transparent; the gap-px seams reveal the
-    // page's bg-muted field between the solid (bg-card / bg-muted) cells. The
-    // root Cluster's own Filler is hidden — only the inner header-bar Fillers
-    // do work.
+    // page's bg-muted field between the solid (bg-card / bg-muted) cells.
     <Cluster
       direction="row"
       align="stretch"
@@ -79,10 +113,13 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
         align="stretch"
         className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2"
       >
-        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground px-3 py-2">
-          <Badge variant="muted" size="sm">
-            editor
-          </Badge>
+        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground gap-3 px-3 py-1.5">
+          <Tabs value={mode} onValueChange={handleMode}>
+            <TabsList>
+              <TabsTrigger value="git">git</TabsTrigger>
+              <TabsTrigger value="flow">flowchart</TabsTrigger>
+            </TabsList>
+          </Tabs>
           <Filler />
           <span className="font-mono text-xs tabular-nums">
             {lineCount} {lineCount === 1 ? "line" : "lines"}
@@ -90,7 +127,7 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
         </Cluster>
 
         <label htmlFor="dsl-editor" className="sr-only">
-          Commit-graph pseudo-code editor
+          {mode === "flow" ? "Flowchart" : "Commit-graph"} pseudo-code editor
         </label>
         <Textarea
           id="dsl-editor"
@@ -120,10 +157,12 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
             </Cluster>
           ) : (
             <Cluster align="center" className="bg-card text-muted-foreground px-3 py-2">
-              <span className="bg-mint-green/15 text-mint-green inline-block size-2 rounded-full" aria-hidden="true" />
+              <span
+                className="bg-mint-green inline-block size-2 rounded-full"
+                aria-hidden="true"
+              />
               <p className="font-mono text-xs">
-                {graph.nodes.length} nodes · {graph.edges.length} edges ·{" "}
-                {graph.laneCount} lanes
+                {graph.nodes.length} {unit} · {graph.edges.length} edges
               </p>
             </Cluster>
           )}
@@ -147,7 +186,11 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
         </Cluster>
 
         <div className="bg-card grid min-h-[55vh] flex-1 place-items-center overflow-auto p-8 lg:min-h-0">
-          <Graph graph={graph} className="max-h-full w-auto" />
+          <Graph
+            graph={graph}
+            title={mode === "flow" ? "Flowchart" : "Commit graph"}
+            className="max-h-full w-auto"
+          />
         </div>
       </Cluster>
     </Cluster>
