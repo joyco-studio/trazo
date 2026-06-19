@@ -178,3 +178,60 @@ describe("layout()", () => {
     expect(long.width).toBeGreaterThan(short.width);
   });
 });
+
+describe("git orientation + labelSide", () => {
+  const idX = (g: ReturnType<typeof layout>, id: string) =>
+    g.nodes.find((n) => n.id === id)?.x ?? 0;
+  const idY = (g: ReturnType<typeof layout>, id: string) =>
+    g.nodes.find((n) => n.id === id)?.y ?? 0;
+
+  it("vertical (default) flows commits down the y-axis", () => {
+    const g = layout(fixture);
+    // Child above parent on y, same lane shares an x.
+    expect(idY(g, "E")).toBeLessThan(idY(g, "C"));
+    expect(idX(g, "E")).toBe(idX(g, "C")); // both lane 0
+  });
+
+  it("horizontal flows commits along the x-axis, lanes stack on y", () => {
+    const g = layout(fixture, { orientation: "horizontal" });
+    // Child before parent on x now, same lane shares a y.
+    expect(idX(g, "E")).toBeLessThan(idX(g, "C"));
+    expect(idY(g, "E")).toBe(idY(g, "C")); // both lane 0
+  });
+
+  it("vertical labelSide:right puts the badge to the right of the square", () => {
+    const g = layout(fixture, { labelSide: "right" });
+    const e = g.nodes.find((n) => n.id === "E");
+    expect(e?.labelAnchor?.x).toBeGreaterThan(e!.x);
+  });
+
+  it("vertical labelSide:left puts the badge to the left and reserves room", () => {
+    const g = layout(fixture, { labelSide: "left" });
+    const e = g.nodes.find((n) => n.id === "E");
+    // Badge sits left of the square…
+    expect(e?.labelAnchor?.x).toBeLessThan(e!.x);
+    // …and the whole badge still fits on-canvas (no negative coords).
+    for (const n of g.nodes) {
+      if (n.labelAnchor === undefined) continue;
+      expect(n.labelAnchor.x).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("horizontal labelSide:right places the badge below, left places it above", () => {
+    const below = layout(fixture, { orientation: "horizontal", labelSide: "right" });
+    const above = layout(fixture, { orientation: "horizontal", labelSide: "left" });
+    const eBelow = below.nodes.find((n) => n.id === "E");
+    const eAbove = above.nodes.find((n) => n.id === "E");
+    expect(eBelow?.labelAnchor?.y).toBeGreaterThan(eBelow!.y);
+    expect(eAbove?.labelAnchor?.y).toBeLessThan(eAbove!.y);
+    for (const n of above.nodes) {
+      if (n.labelAnchor === undefined) continue;
+      expect(n.labelAnchor.y).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("stays deterministic for the new options", () => {
+    const opts = { orientation: "horizontal" as const, labelSide: "left" as const };
+    expect(layout(fixture, opts)).toEqual(layout(fixture, opts));
+  });
+});

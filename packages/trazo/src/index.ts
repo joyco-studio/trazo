@@ -41,6 +41,8 @@ export type {
   PositionedGraph,
   LayoutOptions,
   GitLayoutOptions,
+  GitOrientation,
+  GitLabelSide,
   FlowLayoutOptions,
   FontSpec,
 } from "./types.js";

@@ -64,6 +64,7 @@ interface PositionedNode {
   color: string;           // TOKEN KEY, not a literal: "lane-<n>" (git) or "role-<role>" (flow)
   lane?: number;           // git column; absent for flow
   branch?; message?; author?; hash?;   // git label parts
+  labelAnchor?: Point;     // git: top-left of the label badge (engine-placed per orientation/labelSide)
   shape?; role?; w?; h?; label?;       // flow shape + size + centered label
   labelWidth?: number;     // measured width (incl. uppercase tracking) for sizing
 }
@@ -89,6 +90,8 @@ type EdgeStyle = "elbow45" | "orthogonal";   // default "elbow45"
 interface LayoutOptions {        // git
   laneWidth?; rowHeight?; nodeRadius?; padding?;
   edgeStyle?: EdgeStyle;
+  orientation?: "vertical" | "horizontal";   // default "vertical"
+  labelSide?: "left" | "right";              // default "right"
 }
 interface FlowLayoutOptions {    // flow
   direction?: FlowDirection;     // default "TD"

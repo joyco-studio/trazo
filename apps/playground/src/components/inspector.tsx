@@ -20,6 +20,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   type EdgeStyle,
+  type GitLabelSide,
+  type GitOrientation,
   layoutFlow,
   layoutGit,
   type PositionedGraph,
@@ -39,11 +41,18 @@ const DEBOUNCE_MS = 140;
 
 type Mode = "git" | "flow";
 
+/** Git-only layout options surfaced as preview toggles. */
+interface GitOptions {
+  orientation: GitOrientation;
+  labelSide: GitLabelSide;
+}
+
 /** Parse + lay out a source string for a given mode; returns graph + error. */
 function build(
   mode: Mode,
   source: string,
   edgeStyle: EdgeStyle,
+  git: GitOptions,
 ): {
   graph: PositionedGraph | null;
   error: ParseError | null;
@@ -58,7 +67,14 @@ function build(
   }
   const { graph, error } = parseDsl(source);
   if (graph.commits.length === 0) return { graph: null, error };
-  return { graph: layoutGit(graph, { edgeStyle }), error };
+  return {
+    graph: layoutGit(graph, {
+      edgeStyle,
+      orientation: git.orientation,
+      labelSide: git.labelSide,
+    }),
+    error,
+  };
 }
 
 export interface InspectorProps {
@@ -88,17 +104,29 @@ export function Inspector({
   // Edge routing. Defaults to "elbow45" — the same default the server used for
   // `initialGraph`, so the first client render matches the SSR markup.
   const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>("elbow45");
+  // Git-only preview options. Defaults ("vertical" / "right") match the server's
+  // `initialGraph`, so the first client render stays byte-identical.
+  const [git, setGit] = useState<GitOptions>({
+    orientation: "vertical",
+    labelSide: "right",
+  });
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const source = sources[mode];
 
   const recompute = useCallback(
-    (nextMode: Mode, nextSource: string, nextEdgeStyle: EdgeStyle) => {
+    (
+      nextMode: Mode,
+      nextSource: string,
+      nextEdgeStyle: EdgeStyle,
+      nextGit: GitOptions,
+    ) => {
       const { graph: next, error: nextError } = build(
         nextMode,
         nextSource,
         nextEdgeStyle,
+        nextGit,
       );
       setError(nextError);
       if (next) setGraph(next); // keep last good graph when parse yields nothing
@@ -112,11 +140,11 @@ export function Inspector({
       setSources((prev) => ({ ...prev, [mode]: next }));
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(
-        () => recompute(mode, next, edgeStyle),
+        () => recompute(mode, next, edgeStyle, git),
         DEBOUNCE_MS,
       );
     },
-    [mode, recompute, edgeStyle],
+    [mode, recompute, edgeStyle, git],
   );
 
   const handleMode = useCallback(
@@ -124,9 +152,9 @@ export function Inspector({
       const m = next as Mode;
       setMode(m);
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(m, sources[m], edgeStyle); // immediate on an explicit switch
+      recompute(m, sources[m], edgeStyle, git); // immediate on an explicit switch
     },
-    [recompute, sources, edgeStyle],
+    [recompute, sources, edgeStyle, git],
   );
 
   const handleEdgeStyle = useCallback(
@@ -134,9 +162,35 @@ export function Inspector({
       const next: EdgeStyle = elbow45 ? "elbow45" : "orthogonal";
       setEdgeStyle(next);
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(mode, source, next); // re-layout immediately on toggle
+      recompute(mode, source, next, git); // re-layout immediately on toggle
     },
-    [recompute, mode, source],
+    [recompute, mode, source, git],
+  );
+
+  const handleOrientation = useCallback(
+    (horizontal: boolean) => {
+      const next: GitOptions = {
+        ...git,
+        orientation: horizontal ? "horizontal" : "vertical",
+      };
+      setGit(next);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      recompute(mode, source, edgeStyle, next);
+    },
+    [recompute, mode, source, edgeStyle, git],
+  );
+
+  const handleLabelSide = useCallback(
+    (leading: boolean) => {
+      const next: GitOptions = {
+        ...git,
+        labelSide: leading ? "left" : "right",
+      };
+      setGit(next);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      recompute(mode, source, edgeStyle, next);
+    },
+    [recompute, mode, source, edgeStyle, git],
   );
 
   const lineCount = useMemo(() => source.split("\n").length, [source]);
@@ -224,6 +278,42 @@ export function Inspector({
             preview
           </Badge>
           <Filler />
+          {/* Git-only: orientation + label-side toggles. Hidden in flow mode
+              since they only affect the commit-lane layout. */}
+          {mode === "git" ? (
+            <>
+              {/* Orientation: off = vertical (default), on = horizontal. */}
+              <label className="flex cursor-pointer items-center gap-2">
+                <span className="font-mono text-xs tracking-wide uppercase">
+                  horiz
+                </span>
+                <Switch
+                  checked={git.orientation === "horizontal"}
+                  onCheckedChange={handleOrientation}
+                  aria-label="Toggle horizontal git layout (off = vertical)"
+                />
+              </label>
+              {/* Label side: off = trailing (right/below), on = leading (left/above). */}
+              <label className="flex cursor-pointer items-center gap-2">
+                <span className="font-mono text-xs tracking-wide uppercase">
+                  {git.orientation === "horizontal" ? "above" : "left"}
+                </span>
+                <Switch
+                  checked={git.labelSide === "left"}
+                  onCheckedChange={handleLabelSide}
+                  aria-label={
+                    git.orientation === "horizontal"
+                      ? "Toggle labels above the commits (off = below)"
+                      : "Toggle labels left of the commits (off = right)"
+                  }
+                />
+              </label>
+              <span
+                aria-hidden="true"
+                className="bg-border h-4 w-px self-center"
+              />
+            </>
+          ) : null}
           {/* Edge-style toggle: on = 45° diagonals, off = 90° orthogonal. */}
           <label className="flex cursor-pointer items-center gap-2">
             <span className="font-mono text-xs tracking-wide uppercase">45°</span>

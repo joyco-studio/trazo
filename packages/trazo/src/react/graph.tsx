@@ -13,7 +13,7 @@
 
 import type { GraphProps } from "./types.js";
 import type { PositionedEdge, PositionedNode, SemanticRole } from "../types.js";
-import { NODE_HALF, LABEL_GAP, LABEL_BADGE_PAD } from "../geometry.js";
+import { NODE_HALF, LABEL_GAP, LABEL_BADGE_PAD, BADGE_H } from "../geometry.js";
 import type { JSX } from "react";
 
 /**
@@ -94,6 +94,8 @@ const LABEL_FONT =
 const LABEL_SIZE = 13;
 /** Stroke width (px) for edges — JOYCO graphs use a slightly heavier line. */
 const EDGE_WIDTH = 2.5;
+/** Stroke width (px) for flowchart box-like shapes (box/stadium/diamond/cylinder). */
+const BOX_STROKE = 2;
 /** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
 const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
 /** Page background, used as node borders so chips read as lifted off the lines. */
@@ -110,7 +112,6 @@ const MUTED_FG =
 /** Sliced-corner badge metrics (matches the hub Badge: TL + BR chamfer). */
 const BADGE_CHAMFER = 6;
 const BADGE_PAD_X = LABEL_BADGE_PAD;
-const BADGE_H = 22;
 
 /**
  * SVG path for a sliced-corner badge rect (hub Badge geometry): top-left and
@@ -269,7 +270,7 @@ function renderNodeShape(
         ry={shape === "stadium" ? h / 2 : 0}
         fill={fill}
         stroke={BG}
-        strokeWidth={1}
+        strokeWidth={BOX_STROKE}
       />
     );
   }
@@ -291,7 +292,7 @@ function renderNodeShape(
         points={points}
         fill={fill}
         stroke={BG}
-        strokeWidth={1}
+        strokeWidth={BOX_STROKE}
       />
     );
   }
@@ -317,7 +318,7 @@ function renderNodeShape(
       d={d}
       fill={fill}
       stroke={BG}
-      strokeWidth={1}
+      strokeWidth={BOX_STROKE}
     />
   );
 }
@@ -355,11 +356,15 @@ function renderNodeLabel(
 
   // Git label = a sliced-corner badge (hub Badge geometry) holding an optional
   // mono hash, the subject, and an optional trailing author. The badge width
-  // comes from the measured labelWidth reserved by the layout.
-  const badgeX = node.x + NODE_HALF + LABEL_GAP;
-  const badgeY = node.y - BADGE_H / 2;
+  // comes from the measured labelWidth reserved by the layout, and its top-left
+  // corner from the engine-computed `labelAnchor` (which encodes the chart
+  // orientation + labelSide). When `labelAnchor` is absent (older engine
+  // output) we fall back to the legacy right-of-square placement.
   const badgeW = (node.labelWidth ?? 0) + BADGE_PAD_X * 2;
+  const badgeX = node.labelAnchor?.x ?? node.x + NODE_HALF + LABEL_GAP;
+  const badgeY = node.labelAnchor?.y ?? node.y - BADGE_H / 2;
   const textX = badgeX + BADGE_PAD_X;
+  const textY = badgeY + BADGE_H / 2;
 
   return (
     <g data-slot="label" className={labelClass}>
@@ -372,7 +377,7 @@ function renderNodeLabel(
       />
       <text
         x={textX}
-        y={node.y}
+        y={textY}
         dominantBaseline="central"
         fontFamily={LABEL_FONT}
         fontSize={LABEL_SIZE}

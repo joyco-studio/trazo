@@ -48,6 +48,9 @@ export const NODE_HALF = 5;
 export const LABEL_GAP = 10;
 /** Horizontal padding inside the sliced-corner git label badge (each side). */
 export const LABEL_BADGE_PAD = 10;
+/** Height (px) of the sliced-corner git label badge. Shared so the layout can
+ * reserve bounds for above/below placement and the renderer draws to match. */
+export const BADGE_H = 22;
 
 /** Defaults for shape sizing; callers may override width/height bases. */
 export interface ShapeSizeOptions {

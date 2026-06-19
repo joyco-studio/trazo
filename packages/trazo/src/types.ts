@@ -159,6 +159,13 @@ export interface PositionedNode {
    * default label font baked into the engine's glyph table.
    */
   labelWidth?: number;
+  /**
+   * Git: top-left corner of the label badge, in node coordinate space. The
+   * engine computes it from the chart orientation + `labelSide` so the renderer
+   * just draws the badge there (never re-deriving placement). Absent → the
+   * renderer falls back to the legacy right-of-square placement.
+   */
+  labelAnchor?: Point;
   /** Flow: shape primitive to render. Absent → git dot. */
   shape?: NodeShape;
   /** Flow: semantic role (mirrors the `role-*` color key). */
@@ -230,7 +237,29 @@ export interface LayoutOptions {
   padding?: number;
   /** Edge connector style. Default "elbow45". */
   edgeStyle?: EdgeStyle;
+  /**
+   * Chart orientation. "vertical" (default) flows commits top→bottom with lanes
+   * as columns; "horizontal" flows commits left→right with lanes as rows.
+   */
+  orientation?: GitOrientation;
+  /**
+   * Which side of the commit square the label badge sits on.
+   *  - vertical chart:   "right" (default) | "left" of the square.
+   *  - horizontal chart: "right" → below the square (default), "left" → above.
+   * In short: "right" trails the cross-axis, "left" leads it.
+   */
+  labelSide?: GitLabelSide;
 }
+
+/** Git chart orientation: commits flow top→bottom or left→right. */
+export type GitOrientation = "vertical" | "horizontal";
+
+/**
+ * Side of the commit square the label badge sits on, along the chart's
+ * cross-axis. Vertical → right/left; horizontal → below/above (see
+ * {@link LayoutOptions.labelSide}).
+ */
+export type GitLabelSide = "left" | "right";
 
 /**
  * How edges turn between nodes:

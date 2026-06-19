@@ -21,6 +21,20 @@ below is a styling decision encoded there.
   top-left + bottom-right corners chamfered 6px, `bg-accent` surface, with the
   hash (dim mono) + subject + author (dim).
 
+## Git orientation & label side
+
+- `layoutGit` takes `orientation: "vertical" | "horizontal"` (default `vertical`)
+  and `labelSide: "left" | "right"` (default `right`). Vertical flows commits
+  top→bottom (lanes = columns); horizontal flows them left→right (lanes = rows).
+- `labelSide` is the cross-axis side of the badge: vertical → right/left of the
+  square; horizontal → below (`right`) / above (`left`). The **engine** computes
+  the badge's top-left corner as `node.labelAnchor` (so the renderer never
+  re-derives placement). A leading badge (`left`/above) that would spill past the
+  origin is normalized: the layout shifts all geometry so the leading badge edge
+  sits at `padding`. The default vertical/right output is unchanged.
+- The renderer draws the badge at `labelAnchor` when present and falls back to
+  the legacy right-of-square placement when it's absent.
+
 ## Color tokens — the fallback strategy (important)
 
 The engine emits **token keys** (`"lane-N"`, `"role-X"`, `"accent"`); the
