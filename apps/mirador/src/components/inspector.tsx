@@ -25,7 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Cluster, Filler } from "@/components/ui/cluster";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { parseDsl, type ParseError } from "@/lib/dsl";
+import { parseDsl, type ParseError, SEED_PROGRAM } from "@/lib/dsl";
 import { directionOf, parseFlow, SEED_FLOW } from "@/lib/flow-dsl";
 
 const DEBOUNCE_MS = 140;
@@ -48,20 +48,27 @@ function build(mode: Mode, source: string): {
 }
 
 export interface InspectorProps {
-  /** The git seed program — identical to what the server rendered. */
+  /** Which mode the server rendered (and the initial active tab). */
+  initialMode: Mode;
+  /** The seed source for `initialMode` — identical to what the server rendered. */
   initialSource: string;
-  /** The server-computed git layout for `initialSource` (avoids re-layout on mount). */
+  /** The server-computed layout for `initialSource` (avoids re-layout on mount). */
   initialGraph: PositionedGraph;
 }
 
-export function Inspector({ initialSource, initialGraph }: InspectorProps) {
-  const [mode, setMode] = useState<Mode>("git");
-  // One source per mode so switching tabs preserves each editor's content.
+export function Inspector({
+  initialMode,
+  initialSource,
+  initialGraph,
+}: InspectorProps) {
+  const [mode, setMode] = useState<Mode>(initialMode);
+  // One source per mode so switching tabs preserves each editor's content. The
+  // server-rendered mode keeps its exact seed; the other gets its default.
   const [sources, setSources] = useState<Record<Mode, string>>({
-    git: initialSource,
-    flow: SEED_FLOW,
+    git: initialMode === "git" ? initialSource : SEED_PROGRAM,
+    flow: initialMode === "flow" ? initialSource : SEED_FLOW,
   });
-  // The git graph is seeded from the server; flow is laid out lazily on switch.
+  // The active mode's graph is seeded from the server; the other lays out lazily.
   const [graph, setGraph] = useState<PositionedGraph>(initialGraph);
   const [error, setError] = useState<ParseError | null>(null);
 
@@ -116,8 +123,8 @@ export function Inspector({ initialSource, initialGraph }: InspectorProps) {
         <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground gap-3 px-3 py-1.5">
           <Tabs value={mode} onValueChange={handleMode}>
             <TabsList>
-              <TabsTrigger value="git">git</TabsTrigger>
               <TabsTrigger value="flow">flowchart</TabsTrigger>
+              <TabsTrigger value="git">git</TabsTrigger>
             </TabsList>
           </Tabs>
           <Filler />
