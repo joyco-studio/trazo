@@ -299,7 +299,8 @@ export function layoutFlow(
     };
     if (n.label !== undefined) {
       node.label = n.label;
-      node.labelWidth = measure(n.label, LABEL_FONT);
+      // Labels render uppercase (JOYCO style); measure the uppercased text.
+      node.labelWidth = measure(n.label.toUpperCase(), LABEL_FONT);
     }
     return node;
   });

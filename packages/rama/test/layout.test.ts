@@ -147,4 +147,34 @@ describe("layout()", () => {
     expect(e?.message).toBe("Merge feat");
     expect(e?.labelWidth).toBeGreaterThan(0);
   });
+
+  it("reserves graph width for the rightmost label (no crop)", () => {
+    // Regression: width used to ignore labelWidth, cropping labels that render
+    // to the right of the node. Every label's right edge must fit in width.
+    const g = layout(fixture);
+    for (const n of g.nodes) {
+      if (n.labelWidth === undefined) continue;
+      const labelRight = n.x + n.labelWidth; // conservative: ignores gap/half
+      expect(labelRight).toBeLessThanOrEqual(g.width);
+    }
+    // A long message must widen the graph beyond the bare lane extent.
+    const long = layout({
+      commits: [
+        { id: "a", parents: [], branch: "main", message: "x" },
+        {
+          id: "b",
+          parents: ["a"],
+          branch: "main",
+          message: "a considerably longer commit subject line here",
+        },
+      ],
+    });
+    const short = layout({
+      commits: [
+        { id: "a", parents: [], branch: "main", message: "x" },
+        { id: "b", parents: ["a"], branch: "main", message: "y" },
+      ],
+    });
+    expect(long.width).toBeGreaterThan(short.width);
+  });
 });

@@ -18,6 +18,15 @@ import { measure } from "./measure.js";
 /** Font used to size flow-node labels — Public Sans, hub body size. */
 const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
 
+/**
+ * Git node visual geometry, shared between the layout (for bounds math) and the
+ * renderer (for drawing), so the computed `width` always reserves room for the
+ * label and nothing is cropped. Git commit markers are SQUARES of side
+ * `2*NODE_HALF`; the label sits to their right, `LABEL_GAP` px after the edge.
+ */
+export const NODE_HALF = 5;
+export const LABEL_GAP = 10;
+
 /** Defaults for shape sizing; callers may override width/height bases. */
 export interface ShapeSizeOptions {
   /** Minimum full width (px) a box-like node may have. */
@@ -48,7 +57,9 @@ export function sizeShape(
   const nodeHeight = options?.nodeHeight ?? SIZE_DEFAULTS.nodeHeight;
   const labelPadX = options?.labelPadX ?? SIZE_DEFAULTS.labelPadX;
 
-  const labelWidth = label ? measure(label, LABEL_FONT) : 0;
+  // Labels render UPPERCASE (JOYCO style), which is wider than the authored
+  // case — measure the uppercased text so the shape reserves the right width.
+  const labelWidth = label ? measure(label.toUpperCase(), LABEL_FONT) : 0;
   const boxW = Math.max(minNodeWidth, labelWidth + labelPadX * 2);
   const h = nodeHeight;
 
@@ -113,31 +124,53 @@ export function entryAnchor(
 }
 
 /**
- * Build the SVG `d` path for a git edge between two placed points: a straight
- * vertical/horizontal line when collinear, a smooth cubic curve when not (the
- * control points sit at the perpendicular midpoint so it eases between
- * columns). This is the curve the git layout used inline; extracted here so
- * the flow layout can reuse the exact same easing between layers.
+ * Build the segment(s) from `from` to `to` in the JOYCO hard-edged style: run
+ * straight along the dominant axis, then turn ABRUPTLY at exactly 45° to shift
+ * across, then straight again — no easing. Returns the `L`/`M` commands AFTER
+ * the implicit start point (caller emits the `M`).
+ *
+ * Given a vertical-dominant step (git/flow TD: |dy| ≥ |dx|): go straight to the
+ * point `|dx|` before the target along y, cut a 45° diagonal of length `|dx|`
+ * in both axes to land on the target's column, then straight to the target.
+ * Horizontal-dominant (flow LR) is the mirror. Collinear → a single `L`.
  */
-export function curveBetween(from: Point, to: Point): string {
-  const x1 = from.x;
-  const y1 = from.y;
-  const x2 = to.x;
-  const y2 = to.y;
+function elbow45(from: Point, to: Point): string {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
 
-  if (x1 === x2 || y1 === y2) {
-    return `M ${x1} ${y1} L ${x2} ${y2}`;
+  if (dx === 0 || dy === 0) {
+    return `L ${to.x} ${to.y}`;
   }
 
-  const midY = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+  const adx = Math.abs(dx);
+  const ady = Math.abs(dy);
+  const sx = Math.sign(dx);
+  const sy = Math.sign(dy);
+
+  if (ady >= adx) {
+    // vertical-dominant: straight down, 45° diagonal of size adx, straight down.
+    const kneeY = to.y - sy * adx;
+    return `L ${from.x} ${kneeY} L ${to.x} ${to.y}`;
+  }
+  // horizontal-dominant: straight across, 45° diagonal of size ady, straight.
+  const kneeX = to.x - sx * ady;
+  return `L ${kneeX} ${from.y} L ${to.x} ${to.y}`;
+}
+
+/**
+ * Build the SVG `d` path for a git edge between two placed points using the
+ * abrupt 45° elbow style (straight → sharp 45° turn → straight). Collinear
+ * points yield a single straight line. The flow layout reuses the same style
+ * via {@link pathThrough}.
+ */
+export function curveBetween(from: Point, to: Point): string {
+  return `M ${from.x} ${from.y} ${elbow45(from, to)}`;
 }
 
 /**
  * Build an SVG `d` path through an ordered list of points (start anchor →
- * dummy points → end anchor). Consecutive collinear points become a straight
- * `L`; otherwise a cubic Bézier eases between them (same control-point scheme
- * as {@link curveBetween}). Pure function of the input points.
+ * dummy points → end anchor), each hop using the same abrupt 45° elbow style
+ * as {@link curveBetween}. Pure function of the input points.
  */
 export function pathThrough(points: Point[]): string {
   if (points.length === 0) return "";
@@ -148,12 +181,7 @@ export function pathThrough(points: Point[]): string {
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1] as Point;
     const cur = points[i] as Point;
-    if (prev.x === cur.x || prev.y === cur.y) {
-      d += ` L ${cur.x} ${cur.y}`;
-    } else {
-      const midY = (prev.y + cur.y) / 2;
-      d += ` C ${prev.x} ${midY}, ${cur.x} ${midY}, ${cur.x} ${cur.y}`;
-    }
+    d += ` ${elbow45(prev, cur)}`;
   }
   return d;
 }

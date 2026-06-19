@@ -32,7 +32,7 @@ import type {
   PositionedNode,
 } from "./types.js";
 import { measure } from "./measure.js";
-import { curveBetween } from "./geometry.js";
+import { curveBetween, NODE_HALF, LABEL_GAP } from "./geometry.js";
 
 const DEFAULTS = {
   laneWidth: 28,
@@ -239,7 +239,10 @@ export function layoutGit(
     if (commit.branch !== undefined) node.branch = commit.branch;
     if (commit.message !== undefined) {
       node.message = commit.message;
-      node.labelWidth = measure(commit.message, LABEL_FONT);
+      // Labels render UPPERCASE (JOYCO style) via the renderer's CSS, which is
+      // wider than the authored case — so measure the uppercased text to
+      // reserve the correct width and avoid cropping.
+      node.labelWidth = measure(commit.message.toUpperCase(), LABEL_FONT);
     }
     nodeById.set(commit.id, node);
     return node;
@@ -277,11 +280,21 @@ export function layoutGit(
     }
   }
 
-  // Bounds: width spans all lanes + node radius + padding; height spans rows.
+  // Bounds. Height spans rows. Width must reach the furthest-right thing on the
+  // canvas — which is usually a commit LABEL (rendered to the right of its
+  // square), not the last lane. Take the max of the lane extent and every
+  // node's label right-edge (node.x + NODE_HALF + LABEL_GAP + labelWidth) so
+  // nothing is cropped.
   const lastRow = ordered.length > 0 ? ordered.length - 1 : 0;
-  const contentWidth =
-    laneCount > 0 ? (laneCount - 1) * laneWidth + 2 * nodeRadius : 0;
-  const width = padding * 2 + contentWidth;
+  const laneRight =
+    laneCount > 0 ? padding + (laneCount - 1) * laneWidth + nodeRadius : padding;
+  let rightmost = laneRight;
+  for (const node of nodes) {
+    if (node.labelWidth === undefined) continue;
+    const labelRight = node.x + NODE_HALF + LABEL_GAP + node.labelWidth;
+    if (labelRight > rightmost) rightmost = labelRight;
+  }
+  const width = rightmost + padding;
   const contentHeight =
     ordered.length > 0 ? lastRow * rowHeight + 2 * nodeRadius : 0;
   const height = padding * 2 + contentHeight;

@@ -13,6 +13,7 @@
 
 import type { GraphProps } from "./types.js";
 import type { PositionedNode, SemanticRole } from "../types.js";
+import { NODE_HALF, LABEL_GAP } from "../geometry.js";
 import type { JSX } from "react";
 
 /**
@@ -85,10 +86,10 @@ const LABEL_FONT =
 
 /** Label font size (px) — matches the size `layout()` measured labels against. */
 const LABEL_SIZE = 13;
-/** Node dot radius (px) used for the visual marker. */
-const NODE_RADIUS = 5;
-/** Gap (px) between a node dot and the start of its label. */
-const LABEL_GAP = 10;
+/** Stroke width (px) for edges — JOYCO graphs use a slightly heavier line. */
+const EDGE_WIDTH = 2.5;
+/** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
+const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
 
 /**
  * Render a `PositionedGraph` as an inline `<svg>`. Pure: same `graph` → same
@@ -121,9 +122,9 @@ export function Graph(props: GraphProps): JSX.Element {
             d={edge.path}
             fill="none"
             stroke={nodeColor(edge.color)}
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
+            strokeWidth={EDGE_WIDTH}
+            strokeLinecap="butt"
+            strokeLinejoin="miter"
           />
         ))}
       </g>
@@ -145,6 +146,7 @@ export function Graph(props: GraphProps): JSX.Element {
                 fill={FG}
                 fontFamily={LABEL_FONT}
                 fontSize={LABEL_SIZE}
+                style={UPPERCASE}
               >
                 {edge.label}
               </text>
@@ -177,14 +179,16 @@ function renderNodeShape(
 ): JSX.Element {
   const shape = node.shape;
   if (shape === undefined || shape === "dot") {
+    // JOYCO commits are SQUARES, not dots — no radius, centered on x/y.
     return (
-      <circle
+      <rect
         data-slot="node"
         data-lane={node.lane}
         className={nodeClass}
-        cx={node.x}
-        cy={node.y}
-        r={NODE_RADIUS}
+        x={node.x - NODE_HALF}
+        y={node.y - NODE_HALF}
+        width={NODE_HALF * 2}
+        height={NODE_HALF * 2}
         fill={nodeColor(node.color)}
         stroke={FG}
         strokeWidth={1}
@@ -208,8 +212,8 @@ function renderNodeShape(
         y={y}
         width={w}
         height={h}
-        rx={shape === "stadium" ? h / 2 : 4}
-        ry={shape === "stadium" ? h / 2 : 4}
+        rx={shape === "stadium" ? h / 2 : 0}
+        ry={shape === "stadium" ? h / 2 : 0}
         fill={fill}
         stroke={FG}
         strokeWidth={1}
@@ -287,6 +291,7 @@ function renderNodeLabel(
         fill={FG}
         fontFamily={LABEL_FONT}
         fontSize={LABEL_SIZE}
+        style={UPPERCASE}
       >
         {node.label}
       </text>
@@ -298,12 +303,13 @@ function renderNodeLabel(
     <text
       data-slot="label"
       className={labelClass}
-      x={node.x + NODE_RADIUS + LABEL_GAP}
+      x={node.x + NODE_HALF + LABEL_GAP}
       y={node.y}
       dominantBaseline="central"
       fill={FG}
       fontFamily={LABEL_FONT}
       fontSize={LABEL_SIZE}
+      style={UPPERCASE}
     >
       {node.message}
     </text>
