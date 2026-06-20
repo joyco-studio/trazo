@@ -14,6 +14,8 @@ import Image from "next/image";
 import { layoutFlow } from "trazo";
 
 import { Inspector } from "@/components/inspector";
+import { SyntaxContent } from "@/components/syntax-content";
+import { SyntaxDrawer } from "@/components/syntax-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Cluster, Filler } from "@/components/ui/cluster";
 import { Kbd } from "@/components/ui/kbd";
@@ -75,12 +77,9 @@ export default function Home() {
         <Filler className="bg-card" />
 
         <Cluster align="center" className="bg-card px-4">
-          <a
-            href="/syntax.md"
-            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring text-xs tracking-wide uppercase transition-colors focus-visible:ring-2 focus-visible:outline-none"
-          >
-            Syntax
-          </a>
+          <SyntaxDrawer>
+            <SyntaxContent />
+          </SyntaxDrawer>
         </Cluster>
 
         <Cluster
