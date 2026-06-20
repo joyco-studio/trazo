@@ -302,6 +302,55 @@ export function layoutFlow(
     if (layerCrossEnd > crossMax) crossMax = layerCrossEnd;
   }
 
+  // ── Straighten single-node chains on the cross axis ───────────────────
+  // Packing centers each node by its own half-width, so a chain of differently
+  // sized nodes (Great! → Deploy → End) drifts a few px per step and every edge
+  // picks up a tiny 45° jog. For a node that is ALONE in its layer there is no
+  // sibling to collide with, so it can be snapped onto its upstream neighbor's
+  // cross coordinate — making a straight, single-column chain. Top-down sweep so
+  // the alignment propagates down the chain (C → E → F). Deterministic: uses the
+  // input-order up-neighbor list and the median for forks.
+  const crossOf = (v: Vertex): number => (direction === "TD" ? v.center.x : v.center.y);
+  const setCross = (v: Vertex, c: number): void => {
+    if (direction === "TD") v.center.x = c;
+    else v.center.y = c;
+  };
+  for (let r = 1; r < layers.length; r++) {
+    const layer = layers[r] as Vertex[];
+    if (layer.length !== 1) continue; // only safe when there's no sibling
+    const v = layer[0] as Vertex;
+    const ups = (upNeighbors.get(v.id) as NodeId[])
+      .map((id) => crossOf(vById.get(id) as Vertex))
+      .sort((a, b) => a - b);
+    if (ups.length === 0) continue;
+    const mid = ups.length % 2 === 1
+      ? (ups[(ups.length - 1) / 2] as number)
+      : ((ups[ups.length / 2 - 1] as number) + (ups[ups.length / 2] as number)) / 2;
+    setCross(v, mid);
+  }
+
+  // Aligning lone nodes to a narrower upstream neighbor can push a wider node's
+  // leading edge past the padding (negative space). Shift ALL geometry on the
+  // cross axis so the leftmost/topmost leading edge sits back at `padding`, then
+  // recompute the cross extent. Deterministic; preserves relative positions.
+  {
+    let minLead = Infinity;
+    let maxTrail = 0;
+    for (const v of vById.values()) {
+      const half = (direction === "TD" ? v.w : v.h) / 2;
+      const lead = crossOf(v) - half;
+      const trail = crossOf(v) + half;
+      if (lead < minLead) minLead = lead;
+      if (trail > maxTrail) maxTrail = trail;
+    }
+    const shift = padding - minLead;
+    if (shift > 0.0001 || shift < -0.0001) {
+      for (const v of vById.values()) setCross(v, crossOf(v) + shift);
+      maxTrail += shift;
+    }
+    crossMax = Math.max(crossMax, maxTrail + padding);
+  }
+
   // Total bounds. Main axis spans through the last rank's far edge + padding.
   const lastRank = layers.length - 1;
   const mainEnd =
@@ -447,6 +496,34 @@ export function layoutFlow(
     }
     return edge;
   });
+
+  // ── Align sibling edge labels to a shared level ───────────────────────
+  // Labels on edges that fan out from the SAME source land on each edge's own
+  // diagonal, which can sit at different main-axis depths (one high near the
+  // fork, one low near its target box — where it can crowd that box). Snap every
+  // labeled sibling to the SHALLOWEST of the group's main-axis levels (TD: min y;
+  // LR: min x) so a decision's branch labels read as one aligned row, clear of
+  // the downstream nodes. Each label keeps its own cross-axis position. Grouped
+  // by source id in input order; deterministic.
+  const labeledBySource = new Map<NodeId, PositionedEdge[]>();
+  for (const pe of positionedEdges) {
+    if (pe.labelPoint === undefined) continue;
+    const list = labeledBySource.get(pe.from);
+    if (list) list.push(pe);
+    else labeledBySource.set(pe.from, [pe]);
+  }
+  for (const group of labeledBySource.values()) {
+    if (group.length < 2) continue;
+    let level = Infinity;
+    for (const pe of group) {
+      const main = direction === "TD" ? (pe.labelPoint as Point).y : (pe.labelPoint as Point).x;
+      if (main < level) level = main;
+    }
+    for (const pe of group) {
+      const lp = pe.labelPoint as Point;
+      pe.labelPoint = direction === "TD" ? { x: lp.x, y: level } : { x: level, y: lp.y };
+    }
+  }
 
   // Grow the viewBox to include any edge route that bulged past the node bounds
   // (back-edge side detours). routeMin* are clamped at 0 by the corridor guard,

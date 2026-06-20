@@ -112,6 +112,62 @@ describe("layoutFlow()", () => {
     expect(maxX).toBeLessThanOrEqual(g.width);
   });
 
+  it("aligns sibling branch labels to a shared level (decision YES/NO row)", () => {
+    // Two labeled edges out of one decision must share a main-axis level so the
+    // branch labels read as one aligned row, instead of each riding its own
+    // diagonal at a different depth (where the lower one can crowd its target).
+    const decision: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "B", label: "Is it working?", shape: "diamond" },
+        { id: "C", label: "Great!", shape: "box" },
+        { id: "D", label: "Debug", shape: "box" },
+      ],
+      edges: [
+        { from: "B", to: "C", label: "Yes" },
+        { from: "B", to: "D", label: "No" },
+      ],
+    };
+    const g = layoutFlow(decision, { direction: "TD" });
+    const yes = g.edges.find((e) => e.label === "Yes")!.labelPoint!;
+    const no = g.edges.find((e) => e.label === "No")!.labelPoint!;
+    expect(yes.y).toBeCloseTo(no.y, 5);
+    // They keep distinct horizontal positions (one per branch).
+    expect(Math.abs(yes.x - no.x)).toBeGreaterThan(1);
+  });
+
+  it("aligns a single-node chain on one column (straight edges, no jog)", () => {
+    // A chain of differently-sized lone nodes must share one cross coordinate so
+    // the connecting edges are straight verticals (TD), not 45° jogged by the
+    // per-node half-width drift from cross-axis packing.
+    const chain: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "wide", label: "A very wide step label", shape: "box" },
+        { id: "mid", label: "Medium", shape: "box" },
+        { id: "x", label: "X", shape: "box" },
+      ],
+      edges: [
+        { from: "wide", to: "mid" },
+        { from: "mid", to: "x" },
+      ],
+    };
+    const g = layoutFlow(chain, { direction: "TD" });
+    const x = (id: string) => g.nodes.find((n) => n.id === id)!.x;
+    expect(x("wide")).toBeCloseTo(x("mid"), 5);
+    expect(x("mid")).toBeCloseTo(x("x"), 5);
+    // Each connecting edge is a straight vertical: every path point shares one x.
+    for (const e of g.edges) {
+      const xs = e.path
+        .match(/-?\d+(?:\.\d+)?/g)!
+        .map(Number)
+        .filter((_, i) => i % 2 === 0);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      expect(maxX - minX).toBeLessThan(0.5);
+    }
+  });
+
   it("TD vs LR project rank onto different axes", () => {
     const td = layoutFlow(fixture, { direction: "TD" });
     const lr = layoutFlow(fixture, { direction: "LR" });
