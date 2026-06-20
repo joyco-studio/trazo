@@ -376,11 +376,18 @@ export function layoutFlow(
 }
 
 /**
- * Longest-path rank assignment via a Kahn topological sweep. Seeds with source
- * nodes (indegree 0) in input-index order; relaxes each node's successors so a
- * node's rank is the longest path from any source. Cycles are broken by
- * forcing the lowest-input-index unranked node to rank 0 when no zero-indegree
- * node remains, guaranteeing deterministic termination.
+ * Longest-path rank assignment via a Kahn topological sweep over the acyclic
+ * graph. Cycles are removed *before* ranking: a deterministic DFS (nodes and
+ * neighbors visited in input-index order) classifies every edge that points to
+ * an ancestor still on the DFS stack as a "back-edge", and those are dropped
+ * for ranking. Ranking the remaining DAG keeps loop targets near their
+ * predecessors instead of being pushed below them by the back-edge — so a
+ * `B --> D --> B` retry loop still ranks `B` directly under its real parent.
+ *
+ * On the resulting DAG: seed sources (indegree 0) in input-index order and
+ * relax each node's successors so a node's rank is the longest path from any
+ * source. The cycle-breaker (force the earliest unplaced node) remains as a
+ * safety net for any residual cycle.
  */
 function assignRanks(
   inputNodes: FlowNode[],
@@ -389,10 +396,26 @@ function assignRanks(
   inAdj: Map<NodeId, NodeId[]>,
   outAdj: Map<NodeId, NodeId[]>,
 ): Map<NodeId, number> {
+  // ── Identify back-edges via a deterministic DFS, then rank on the DAG ──
+  const backEdges = findBackEdges(inputNodes, indexOf, outAdj);
+  // Acyclic adjacency + indegree: every edge except the back-edges. A back-edge
+  // is keyed "from to"; all parallel duplicates of that pair are dropped.
+  const dagOut = new Map<NodeId, NodeId[]>();
+  const dagIndeg = new Map<NodeId, number>();
+  for (const n of inputNodes) {
+    dagOut.set(n.id, []);
+    dagIndeg.set(n.id, 0);
+  }
+  for (const e of edges) {
+    if (backEdges.has(edgeKey(e.from, e.to))) continue;
+    (dagOut.get(e.from) as NodeId[]).push(e.to);
+    dagIndeg.set(e.to, (dagIndeg.get(e.to) as number) + 1);
+  }
+
   const rank = new Map<NodeId, number>();
   const indeg = new Map<NodeId, number>();
   for (const n of inputNodes) {
-    indeg.set(n.id, (inAdj.get(n.id) as NodeId[]).length);
+    indeg.set(n.id, dagIndeg.get(n.id) as number);
     rank.set(n.id, 0);
   }
 
@@ -428,7 +451,7 @@ function assignRanks(
     placed.add(id);
 
     const myRank = rank.get(id) as number;
-    for (const succ of outAdj.get(id) as NodeId[]) {
+    for (const succ of dagOut.get(id) as NodeId[]) {
       const cand = myRank + 1;
       if (cand > (rank.get(succ) as number)) rank.set(succ, cand);
       const left = (indeg.get(succ) as number) - 1;
@@ -438,6 +461,69 @@ function assignRanks(
   }
 
   return rank;
+}
+
+/**
+ * Deterministic back-edge classification. Runs an iterative DFS over the graph
+ * (roots and each node's successors taken in input-index order) and marks every
+ * edge whose target is currently on the DFS stack — i.e. an edge that closes a
+ * cycle back onto an ancestor. Those edges are the ones to drop so ranking sees
+ * a DAG. Order-independent of hash-map iteration: every choice is keyed on the
+ * caller's input index.
+ */
+function findBackEdges(
+  inputNodes: FlowNode[],
+  indexOf: Map<NodeId, number>,
+  outAdj: Map<NodeId, NodeId[]>,
+): Set<string> {
+  const back = new Set<string>();
+  const visited = new Set<NodeId>();
+  const onStack = new Set<NodeId>();
+  const byIndex = (a: NodeId, b: NodeId) =>
+    (indexOf.get(a) as number) - (indexOf.get(b) as number);
+
+  // Iterative DFS so deep graphs can't blow the call stack. Each frame tracks
+  // the node and the next successor index to descend into.
+  type Frame = { id: NodeId; succ: NodeId[]; i: number };
+
+  for (const root of [...inputNodes].sort((a, b) => byIndex(a.id, b.id))) {
+    if (visited.has(root.id)) continue;
+    const stack: Frame[] = [];
+    const enter = (id: NodeId) => {
+      visited.add(id);
+      onStack.add(id);
+      stack.push({
+        id,
+        succ: [...(outAdj.get(id) as NodeId[])].sort(byIndex),
+        i: 0,
+      });
+    };
+    enter(root.id);
+
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1] as Frame;
+      if (frame.i >= frame.succ.length) {
+        onStack.delete(frame.id);
+        stack.pop();
+        continue;
+      }
+      const to = frame.succ[frame.i++] as NodeId;
+      if (onStack.has(to)) {
+        // Edge frame.id → to closes a cycle. Mark the first input edge that
+        // matches (parallel duplicate edges share the classification).
+        back.add(edgeKey(frame.id, to)); // edge closes a cycle onto an ancestor
+        continue;
+      }
+      if (!visited.has(to)) enter(to);
+    }
+  }
+
+  return back;
+}
+
+/** Stable key for an edge by its endpoints (back-edge classification is by pair). */
+function edgeKey(from: NodeId, to: NodeId): string {
+  return `${from} ${to}`;
 }
 
 /**

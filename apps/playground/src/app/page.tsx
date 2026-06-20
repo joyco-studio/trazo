@@ -74,6 +74,15 @@ export default function Home() {
 
         <Filler className="bg-card" />
 
+        <Cluster align="center" className="bg-card px-4">
+          <a
+            href="/syntax.md"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring text-xs tracking-wide uppercase transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          >
+            Syntax
+          </a>
+        </Cluster>
+
         <Cluster
           align="center"
           className="bg-card text-muted-foreground gap-2 px-4 max-md:hidden"

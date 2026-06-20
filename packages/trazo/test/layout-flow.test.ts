@@ -54,6 +54,39 @@ describe("layoutFlow()", () => {
     expect(y("join")).toBeLessThan(y("end"));
   });
 
+  it("ranks a back-edge (retry loop) by its forward parent, not the loop", () => {
+    // A --> B(decision) --> {C, D}; D loops back to B. The D --> B back-edge
+    // must NOT push B below D — B stays at rank 1, right under A.
+    const loop: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "A", label: "Start", shape: "box" },
+        { id: "B", label: "Is it working?", shape: "diamond" },
+        { id: "C", label: "Great!", shape: "box" },
+        { id: "D", label: "Debug", shape: "box" },
+        { id: "E", label: "Deploy", shape: "box" },
+        { id: "F", label: "End", shape: "box" },
+      ],
+      edges: [
+        { from: "A", to: "B" },
+        { from: "B", to: "C", label: "Yes" },
+        { from: "B", to: "D", label: "No" },
+        { from: "D", to: "B" }, // back-edge (retry)
+        { from: "C", to: "E" },
+        { from: "E", to: "F" },
+      ],
+    };
+    const g = layoutFlow(loop, { direction: "TD" });
+    const y = (id: string) => g.nodes.find((n) => n.id === id)?.y ?? 0;
+    expect(y("A")).toBeLessThan(y("B"));
+    expect(y("B")).toBeLessThan(y("C"));
+    expect(y("B")).toBeLessThan(y("D"));
+    // C and D share a rank (fan-out of the decision).
+    expect(y("C")).toBe(y("D"));
+    expect(y("C")).toBeLessThan(y("E"));
+    expect(y("E")).toBeLessThan(y("F"));
+  });
+
   it("TD vs LR project rank onto different axes", () => {
     const td = layoutFlow(fixture, { direction: "TD" });
     const lr = layoutFlow(fixture, { direction: "LR" });

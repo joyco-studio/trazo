@@ -45,6 +45,34 @@ A pnpm + turbo monorepo with two pieces:
   aesthetic from the `@joyco/ui` kit. Colors ship with layered CSS-var fallbacks
   so illustrations are never colorless in any consuming app.
 
+## Diagram syntax
+
+The two pseudo-code languages — **flow** (flowcharts) and **git** (commit
+graphs) — are documented in full in **[`SYNTAX.md`](apps/playground/public/syntax.md)**.
+The running playground serves the same file at **`/syntax.md`** (e.g.
+`https://<your-deploy>/syntax.md`), so LLMs and tooling can fetch the spec
+directly before generating diagram source.
+
+The essentials:
+
+```
+# FLOW — flowcharts
+flow TD                     # or LR; TD is the default
+A["Start"] --> B{"Decide?"} # box, diamond; --> neutral edge, ==> colored edge
+B -->|Yes| C(["Done"])      # labeled edge; stadium terminal
+B -->|No|  D[("store")]:bad # cylinder; :role colors a node
+
+# GIT — commit graphs
+commit a1b2c3d (JOYCO) : init   # [hash] (author) : message — all optional
+branch feature                  # branch off the tip and check it out
+commit : sketch solver
+checkout main
+merge feature : land it         # two-parent merge commit
+```
+
+See [`SYNTAX.md`](apps/playground/public/syntax.md) for shapes, roles, edge
+colors, cycles/loops, and the full git grammar.
+
 ## Quick start
 
 ```bash
