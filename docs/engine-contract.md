@@ -6,8 +6,8 @@ Treat any signature change as breaking for every consumer.
 ## Entry points
 
 ```ts
-import { layout, layoutGit, layoutFlow, measure } from "trazo";
-import { Graph } from "trazo/react"; // optional — React is a peer dep
+import { layout, layoutGit, layoutFlow, measure } from "@joycostudio/trazo";
+import { Graph } from "@joycostudio/trazo/react"; // optional — React is a peer dep
 
 layoutGit(input: CommitGraph, options?: LayoutOptions): PositionedGraph
 layoutFlow(input: FlowGraph,   options?: FlowLayoutOptions): PositionedGraph

@@ -11,7 +11,7 @@
  */
 
 import Image from "next/image";
-import { layoutFlow } from "trazo";
+import { layoutFlow } from "@joycostudio/trazo";
 
 import { Inspector } from "@/components/inspector";
 import { SyntaxContent } from "@/components/syntax-content";

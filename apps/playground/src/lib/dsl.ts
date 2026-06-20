@@ -27,7 +27,7 @@
  * a friendly message; the caller keeps the last good graph rendered.
  */
 
-import type { Commit, CommitGraph } from "trazo";
+import type { Commit, CommitGraph } from "@joycostudio/trazo";
 
 export interface ParseError {
   line: number;

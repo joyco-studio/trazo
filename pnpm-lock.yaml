@@ -23,6 +23,9 @@ importers:
       '@diceui/mention':
         specifier: ^0.8.0
         version: 0.8.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@joycostudio/trazo':
+        specifier: workspace:*
+        version: link:../../packages/trazo
       '@radix-ui/react-avatar':
         specifier: ^1.2.0
         version: 1.2.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -95,9 +98,6 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
-      trazo:
-        specifier: workspace:*
-        version: link:../../packages/trazo
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0

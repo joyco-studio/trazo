@@ -4,7 +4,7 @@
 
 ```
 trazo/                       # pnpm workspaces + turbo. GitHub: joyco-studio/trazo
-├── packages/trazo/          # the engine (npm package name: "trazo")
+├── packages/trazo/          # the engine (npm package: "@joycostudio/trazo")
 │   ├── src/
 │   │   ├── types.ts         # the public contract (input + output types)
 │   │   ├── index.ts         # public entry: layout, layoutGit, layoutFlow, measure

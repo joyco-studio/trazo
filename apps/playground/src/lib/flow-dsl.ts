@@ -29,7 +29,7 @@
  * caller keeps the last good graph rendered.
  */
 
-import type { FlowDirection, FlowGraph, FlowNode, NodeShape, SemanticRole } from "trazo";
+import type { FlowDirection, FlowGraph, FlowNode, NodeShape, SemanticRole } from "@joycostudio/trazo";
 
 export interface FlowParseError {
   line: number;

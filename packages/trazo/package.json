@@ -1,10 +1,32 @@
 {
-  "name": "trazo",
-  "version": "0.0.0",
+  "name": "@joycostudio/trazo",
+  "version": "0.0.1",
   "description": "Deterministic code-to-diagram layout engine (flowcharts + git graphs). Pure TS core + optional React SVG renderers.",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",
+  "keywords": [
+    "diagram",
+    "flowchart",
+    "git-graph",
+    "svg",
+    "layout",
+    "sugiyama",
+    "deterministic",
+    "ssr"
+  ],
+  "homepage": "https://github.com/joyco-studio/trazo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joyco-studio/trazo.git",
+    "directory": "packages/trazo"
+  },
+  "bugs": {
+    "url": "https://github.com/joyco-studio/trazo/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],

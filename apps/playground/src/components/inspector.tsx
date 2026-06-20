@@ -25,8 +25,8 @@ import {
   layoutFlow,
   layoutGit,
   type PositionedGraph,
-} from "trazo";
-import { Graph } from "trazo/react";
+} from "@joycostudio/trazo";
+import { Graph } from "@joycostudio/trazo/react";
 
 import { GraphViewport } from "@/components/graph-viewport";
 import { Badge } from "@/components/ui/badge";

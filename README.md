@@ -88,8 +88,8 @@ graphs. View-source on the page to confirm the `<svg>` is in the initial HTML.
 ### Using the engine directly
 
 ```ts
-import { layoutFlow, layoutGit } from "trazo";
-import { Graph } from "trazo/react"; // optional — React is a peer dep
+import { layoutFlow, layoutGit } from "@joycostudio/trazo";
+import { Graph } from "@joycostudio/trazo/react"; // optional — React is a peer dep
 
 const flow = layoutFlow({
   kind: "flow",

@@ -12,8 +12,8 @@ signature change as breaking for every consumer.
 ### Core — `trazo` (".")
 
 ```ts
-import { layout, layoutFlow, layoutGit, measure } from "trazo";
-import type { FlowGraph, CommitGraph, PositionedGraph, FontSpec } from "trazo";
+import { layout, layoutFlow, layoutGit, measure } from "@joycostudio/trazo";
+import type { FlowGraph, CommitGraph, PositionedGraph, FontSpec } from "@joycostudio/trazo";
 
 // flowchart
 const flow: PositionedGraph = layoutFlow(input /* FlowGraph */, options?);
@@ -38,10 +38,10 @@ Invariants:
 ### React — `trazo/react`
 
 ```ts
-import { Graph } from "trazo/react";
+import { Graph } from "@joycostudio/trazo/react";
 ```
 
-- React is an **optional peer dependency** — `import "trazo"` pulls in nothing.
+- React is an **optional peer dependency** — `import "@joycostudio/trazo"` pulls in nothing.
 - `<Graph graph={…} />` is a **pure function of its props**. It renders both as
   a Server Component (zero client JS — for static/hub illustrations) and when
   hydrated (for the playground's live preview), byte-identically. No hooks, no
