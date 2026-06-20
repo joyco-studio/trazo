@@ -199,25 +199,42 @@ export function Graph(props: GraphProps): JSX.Element {
         (e) => e.label !== undefined && e.labelPoint !== undefined,
       ) ? (
         <g data-slot="edge-labels" aria-hidden="true">
-          {graph.edges.map((edge) =>
-            edge.label !== undefined && edge.labelPoint !== undefined ? (
-              <text
+          {graph.edges.map((edge) => {
+            if (edge.label === undefined || edge.labelPoint === undefined) {
+              return null;
+            }
+            // Edge labels render as the same sliced-corner badge as git commit
+            // labels — a chip centered ON the edge's midpoint so it sits aligned
+            // with the arrow line (the line passes through the chip's center).
+            const badgeW = badgeWidth(edge.labelWidth ?? 0);
+            const badgeX = edge.labelPoint.x - badgeW / 2;
+            const badgeY = edge.labelPoint.y - BADGE_H / 2;
+            return (
+              <g
                 key={`${edge.from}->${edge.to}:label`}
                 data-slot="edge-label"
                 className={classNames?.edgeLabel}
-                x={edge.labelPoint.x}
-                y={edge.labelPoint.y}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fill={FG}
-                fontFamily={LABEL_FONT}
-                fontSize={LABEL_SIZE}
-                style={UPPERCASE}
               >
-                {edge.label}
-              </text>
-            ) : null,
-          )}
+                <path
+                  data-slot="edge-label-badge"
+                  d={badgePath(badgeX, badgeY, badgeW, BADGE_H)}
+                  fill={ACCENT}
+                />
+                <text
+                  x={edge.labelPoint.x}
+                  y={edge.labelPoint.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill={ACCENT_FG}
+                  fontFamily={LABEL_FONT}
+                  fontSize={LABEL_SIZE}
+                  style={UPPERCASE}
+                >
+                  {edge.label}
+                </text>
+              </g>
+            );
+          })}
         </g>
       ) : null}
 
