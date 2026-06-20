@@ -42,12 +42,12 @@ import type {
   SemanticRole,
 } from "./types.js";
 import {
-  entryAnchor,
-  exitAnchor,
+  edgeLabelPoint,
+  faceAnchor,
   measureLabel,
   pathThrough,
-  polylineMidpoint,
   sizeShape,
+  type AnchorFace,
 } from "./geometry.js";
 
 const DEFAULTS = {
@@ -66,6 +66,34 @@ const ORDERING_SWEEPS = 4;
 /** Token key for a node's color from its semantic role. */
 function roleColorKey(role: SemanticRole): string {
   return `role-${role}`;
+}
+
+/**
+ * A point `stub` px outward from `anchor` along the perpendicular of its face,
+ * so an edge leaves/enters the node at 90° before turning. The outward direction
+ * is fixed by the face + layout direction (e.g. TD "forward" pushes down, TD
+ * "backward" pushes up, "cross-end" pushes right, "cross-start" pushes left).
+ */
+function stubPoint(
+  anchor: Point,
+  face: AnchorFace,
+  direction: FlowDirection,
+  stub: number,
+): Point {
+  const along =
+    face === "forward"
+      ? +1
+      : face === "backward"
+        ? -1
+        : face === "cross-end"
+          ? +1
+          : -1;
+  const onMainAxis = face === "forward" || face === "backward";
+  // TD: main axis is y, cross axis is x. LR: swapped.
+  const movesY = direction === "TD" ? onMainAxis : !onMainAxis;
+  return movesY
+    ? { x: anchor.x, y: anchor.y + along * stub }
+    : { x: anchor.x + along * stub, y: anchor.y };
 }
 
 /** Internal per-node working record (real or dummy). */
@@ -281,8 +309,8 @@ export function layoutFlow(
     (rankThickness[lastRank] as number) +
     padding;
 
-  const width = direction === "TD" ? crossMax : mainEnd;
-  const height = direction === "TD" ? mainEnd : crossMax;
+  let width = direction === "TD" ? crossMax : mainEnd;
+  let height = direction === "TD" ? mainEnd : crossMax;
 
   // ── Emit positioned real nodes (in input order) ───────────────────────
   const nodes: PositionedNode[] = graph.nodes.map((n) => {
@@ -306,49 +334,103 @@ export function layoutFlow(
   });
 
   // ── 5. Edge routing ───────────────────────────────────────────────────
+  // Track the extent any edge route reaches so back-edge side detours (which
+  // bulge outside the node-derived bounds) aren't clipped by the viewBox.
+  let routeMaxX = 0;
+  let routeMaxY = 0;
+  let routeMinX = 0;
+  let routeMinY = 0;
   const positionedEdges: PositionedEdge[] = edges.map((e) => {
     const fromV = vById.get(e.from) as Vertex;
     const toV = vById.get(e.to) as Vertex;
     const chain = dummyChain.get(e) as NodeId[];
 
-    // The expanded path runs low-rank → high-rank; orient endpoints so the
-    // exit anchor is on `from` and the entry anchor is on `to`.
-    const fromIsLower = fromV.rank <= toV.rank;
-    const exit = exitAnchor(
-      fromV.center,
-      fromV.w,
-      fromV.h,
-      fromV.shape,
-      direction,
-    );
-    const entry = entryAnchor(
-      toV.center,
-      toV.w,
-      toV.h,
-      toV.shape,
-      direction,
-    );
+    // Pick the boundary face each endpoint attaches to from the rank relation:
+    //  - forward edge (from below to): leave `from`'s forward face, enter `to`'s
+    //    backward face — the normal top→bottom flow.
+    //  - back-edge (from a higher rank to a lower one, e.g. a retry loop): the
+    //    edge travels *against* the flow. Routing it straight up the column would
+    //    sit on top of the forward edge between the same nodes, so it leaves and
+    //    enters via the cross-axis SIDE faces and detours laterally around the
+    //    column (the `backDetour` waypoints below), mirroring how Mermaid arcs a
+    //    loop back to a decision.
+    //  - same-rank: route along the cross axis between the two sides.
+    const isBackEdge = fromV.rank > toV.rank;
+    let exitFace: AnchorFace;
+    let entryFace: AnchorFace;
+    if (fromV.rank < toV.rank) {
+      exitFace = "forward";
+      entryFace = "backward";
+    } else if (isBackEdge) {
+      // Exit and re-enter on the same lateral side (the side the source sits on,
+      // so the loop bulges outward away from the column's center).
+      const side: AnchorFace =
+        fromV.center.x >= toV.center.x ? "cross-end" : "cross-start";
+      exitFace = side;
+      entryFace = side;
+    } else {
+      // Same rank: leave one side, enter the other, by cross-axis order.
+      const leftToRight = fromV.order <= toV.order;
+      exitFace = leftToRight ? "cross-end" : "cross-start";
+      entryFace = leftToRight ? "cross-start" : "cross-end";
+    }
 
+    const exit = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
+    const entry = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+
+    // Dummy chain is built low-rank → high-rank; orient it from→to.
+    const fromIsLower = fromV.rank <= toV.rank;
     const middle = chain.map((id) => (vById.get(id) as Vertex).center);
     const orderedMiddle = fromIsLower ? middle : [...middle].reverse();
-    // Perpendicular stubs off the exit and entry faces so the edge always
-    // leaves/enters at 90° before any 45°/orthogonal turn. The stub points are
-    // inserted just inside each anchor; the middle (dummy) points route the rest.
-    const exitStub =
-      direction === "TD"
-        ? { x: exit.x, y: exit.y + stub }
-        : { x: exit.x + stub, y: exit.y };
-    const entryStub =
-      direction === "TD"
-        ? { x: entry.x, y: entry.y - stub }
-        : { x: entry.x - stub, y: entry.y };
+
+    // Perpendicular stubs off each chosen face so the edge always leaves/enters
+    // at 90° before any 45°/orthogonal turn. The stub direction follows the face.
+    const exitStub = stubPoint(exit, exitFace, direction, stub);
+    const entryStub = stubPoint(entry, entryFace, direction, stub);
+
+    // A back-edge detours out past the side of its endpoints and runs along a
+    // parallel corridor, so it never overlaps the forward edge between the same
+    // pair. The corridor offset clears the wider of the two endpoints.
+    const backDetour: Point[] = [];
+    if (isBackEdge) {
+      const goingEnd = exitFace === "cross-end";
+      // The exit/entry stubs already sit one `stub` px outside each node's side
+      // face (which itself accounts for half-width), so the corridor only needs a
+      // small extra gap beyond the outermost stub to read as a clean arc.
+      const clearance = nodeGap;
+      if (direction === "TD") {
+        const corridorX = goingEnd
+          ? Math.max(exitStub.x, entryStub.x) + clearance
+          : Math.max(padding, Math.min(exitStub.x, entryStub.x) - clearance);
+        backDetour.push(
+          { x: corridorX, y: exitStub.y },
+          { x: corridorX, y: entryStub.y },
+        );
+      } else {
+        const corridorY = goingEnd
+          ? Math.max(exitStub.y, entryStub.y) + clearance
+          : Math.max(padding, Math.min(exitStub.y, entryStub.y) - clearance);
+        backDetour.push(
+          { x: exitStub.x, y: corridorY },
+          { x: entryStub.x, y: corridorY },
+        );
+      }
+    }
+
     const points: Point[] = [
       exit,
       exitStub,
+      ...backDetour,
       ...orderedMiddle,
       entryStub,
       entry,
     ];
+    for (const p of points) {
+      if (p.x > routeMaxX) routeMaxX = p.x;
+      if (p.y > routeMaxY) routeMaxY = p.y;
+      if (p.x < routeMinX) routeMinX = p.x;
+      if (p.y < routeMinY) routeMinY = p.y;
+    }
 
     const edge: PositionedEdge = {
       from: e.from,
@@ -360,11 +442,19 @@ export function layoutFlow(
     };
     if (e.label !== undefined) {
       edge.label = e.label;
-      edge.labelPoint = polylineMidpoint(points);
+      edge.labelPoint = edgeLabelPoint(points, edgeStyle, direction);
       edge.labelWidth = measureLabel(e.label.toUpperCase());
     }
     return edge;
   });
+
+  // Grow the viewBox to include any edge route that bulged past the node bounds
+  // (back-edge side detours). routeMin* are clamped at 0 by the corridor guard,
+  // so geometry never needs a global shift here.
+  if (routeMaxX + padding > width) width = routeMaxX + padding;
+  if (routeMaxY + padding > height) height = routeMaxY + padding;
+  void routeMinX;
+  void routeMinY;
 
   return {
     nodes,

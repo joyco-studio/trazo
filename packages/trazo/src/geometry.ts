@@ -130,6 +130,58 @@ export function sizeShape(
 }
 
 /**
+ * Which boundary face of a node an edge attaches to, relative to rank flow.
+ * "forward" faces higher ranks (TD: bottom, LR: right); "backward" faces lower
+ * ranks (TD: top, LR: left); "cross-*" are the in-plane sides, used for
+ * same-rank and back-edge routing so a loop edge enters/leaves on the side
+ * rather than colliding head-on with the forward/backward traffic.
+ */
+export type AnchorFace =
+  | "forward"
+  | "backward"
+  | "cross-start"
+  | "cross-end";
+
+/**
+ * Anchor point on a node's bounding-box boundary for the given face. Cylinder
+ * caps are inset slightly on the forward/backward (flow) faces so the edge meets
+ * the flat, not the ellipse. Pure function of its inputs.
+ */
+export function faceAnchor(
+  center: Point,
+  w: number,
+  h: number,
+  shape: NodeShape,
+  direction: FlowDirection,
+  face: AnchorFace,
+): Point {
+  const capInset = shape === "cylinder" ? 6 : 0;
+  if (direction === "TD") {
+    switch (face) {
+      case "forward":
+        return { x: center.x, y: center.y + h / 2 - capInset };
+      case "backward":
+        return { x: center.x, y: center.y - h / 2 + capInset };
+      case "cross-start":
+        return { x: center.x - w / 2, y: center.y };
+      case "cross-end":
+        return { x: center.x + w / 2, y: center.y };
+    }
+  }
+  // LR
+  switch (face) {
+    case "forward":
+      return { x: center.x + w / 2, y: center.y };
+    case "backward":
+      return { x: center.x - w / 2, y: center.y };
+    case "cross-start":
+      return { x: center.x, y: center.y - h / 2 };
+    case "cross-end":
+      return { x: center.x, y: center.y + h / 2 };
+  }
+}
+
+/**
  * Exit anchor on the boundary of a node's bounding box, toward the next layer.
  * TD: bottom-center; LR: right-center. Diamond exits from its bottom/right
  * point (same center coords — the box already encodes the point extent).
@@ -142,12 +194,7 @@ export function exitAnchor(
   shape: NodeShape,
   direction: FlowDirection,
 ): Point {
-  if (direction === "LR") {
-    return { x: center.x + w / 2, y: center.y };
-  }
-  // TD
-  const capInset = shape === "cylinder" ? 6 : 0;
-  return { x: center.x, y: center.y + h / 2 - capInset };
+  return faceAnchor(center, w, h, shape, direction, "forward");
 }
 
 /**
@@ -161,12 +208,7 @@ export function entryAnchor(
   shape: NodeShape,
   direction: FlowDirection,
 ): Point {
-  if (direction === "LR") {
-    return { x: center.x - w / 2, y: center.y };
-  }
-  // TD
-  const capInset = shape === "cylinder" ? 6 : 0;
-  return { x: center.x, y: center.y - h / 2 + capInset };
+  return faceAnchor(center, w, h, shape, direction, "backward");
 }
 
 /**
@@ -178,20 +220,21 @@ export function entryAnchor(
  *    coordinate, then a 90° turn straight into the target.
  * Collinear points → a single `L`.
  */
-function turn(from: Point, to: Point, style: EdgeStyle): string {
+/**
+ * The intermediate knee point(s) the turn between `from` and `to` inserts, in
+ * the chosen style (excluding `from`, including up to `to`'s predecessor knee
+ * but NOT `to` itself). Collinear points insert no knee. This is the geometry
+ * `turn()` draws — kept here so both the `d` string and the label placement
+ * reason over the SAME expanded polyline.
+ */
+function turnKnees(from: Point, to: Point, style: EdgeStyle): Point[] {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-  if (dx === 0 || dy === 0) {
-    return `L ${to.x} ${to.y}`;
-  }
+  if (dx === 0 || dy === 0) return [];
 
   if (style === "orthogonal") {
-    // Right-angle elbow. Pivot on the dominant axis so the bend reads cleanly:
-    // vertical-dominant → go down to target y, then across; mirror for LR.
-    if (Math.abs(dy) >= Math.abs(dx)) {
-      return `L ${from.x} ${to.y} L ${to.x} ${to.y}`;
-    }
-    return `L ${to.x} ${from.y} L ${to.x} ${to.y}`;
+    if (Math.abs(dy) >= Math.abs(dx)) return [{ x: from.x, y: to.y }];
+    return [{ x: to.x, y: from.y }];
   }
 
   // elbow45
@@ -201,10 +244,26 @@ function turn(from: Point, to: Point, style: EdgeStyle): string {
   const sy = Math.sign(dy);
   if (ady >= adx) {
     const kneeY = to.y - sy * adx;
-    return `L ${from.x} ${kneeY} L ${to.x} ${to.y}`;
+    return [{ x: from.x, y: kneeY }];
   }
   const kneeX = to.x - sx * ady;
-  return `L ${kneeX} ${from.y} L ${to.x} ${to.y}`;
+  return [{ x: kneeX, y: from.y }];
+}
+
+/**
+ * Expand a waypoint list to the FULL rendered polyline, inserting each turn's
+ * knee points. The result is exactly the sequence of vertices the SVG path
+ * visits (start, every knee, every waypoint, end). Pure.
+ */
+export function expandPath(points: Point[], style: EdgeStyle = "elbow45"): Point[] {
+  if (points.length <= 1) return [...points];
+  const out: Point[] = [points[0] as Point];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1] as Point;
+    const cur = points[i] as Point;
+    out.push(...turnKnees(prev, cur, style), cur);
+  }
+  return out;
 }
 
 /**
@@ -215,15 +274,15 @@ function turn(from: Point, to: Point, style: EdgeStyle): string {
  * at 90° before any turn. Pure function of its inputs.
  */
 export function pathThrough(points: Point[], style: EdgeStyle = "elbow45"): string {
-  if (points.length === 0) return "";
-  const first = points[0] as Point;
-  if (points.length === 1) return `M ${first.x} ${first.y}`;
+  const expanded = expandPath(points, style);
+  if (expanded.length === 0) return "";
+  const first = expanded[0] as Point;
+  if (expanded.length === 1) return `M ${first.x} ${first.y}`;
 
   let d = `M ${first.x} ${first.y}`;
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1] as Point;
-    const cur = points[i] as Point;
-    d += ` ${turn(prev, cur, style)}`;
+  for (let i = 1; i < expanded.length; i++) {
+    const p = expanded[i] as Point;
+    d += ` L ${p.x} ${p.y}`;
   }
   return d;
 }
@@ -242,6 +301,45 @@ export function curveBetween(
   return pathThrough([from, to], style);
 }
 
+
+/**
+ * Where to place an edge's label along its RENDERED polyline. An elbow45 edge
+ * runs: a perpendicular stub, possibly a straight run along one axis, the 45°
+ * DIAGONAL that actually carries the edge across to the target's column, then a
+ * final stub. The label belongs on that diagonal — centered on its midpoint —
+ * so it reads as riding the line rather than sitting on a flat stub/run beside
+ * it. Pick the longest diagonal segment (|Δx| ≈ |Δy|, both non-zero); if there
+ * is none (e.g. orthogonal style, or a perfectly straight edge) fall back to the
+ * arc-length midpoint. `direction` is unused for the diagonal pick but kept for
+ * symmetry with the other anchor helpers. Pure.
+ */
+export function edgeLabelPoint(
+  points: Point[],
+  style: EdgeStyle,
+  direction: FlowDirection,
+): Point {
+  void direction;
+  const poly = expandPath(points, style);
+  if (poly.length <= 1) return polylineMidpoint(poly);
+
+  let best: { mid: Point; len: number } | null = null;
+  for (let i = 1; i < poly.length; i++) {
+    const a = poly[i - 1] as Point;
+    const b = poly[i] as Point;
+    const dx = Math.abs(b.x - a.x);
+    const dy = Math.abs(b.y - a.y);
+    // A 45° diagonal: both axes move, by (near-)equal amounts.
+    const isDiagonal = dx > 0.5 && dy > 0.5 && Math.abs(dx - dy) <= 0.5;
+    if (!isDiagonal) continue;
+    const len = Math.hypot(dx, dy);
+    if (best === null || len > best.len) {
+      best = { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, len };
+    }
+  }
+  // No diagonal run (orthogonal/straight edge): center along the arc.
+  if (best === null) return polylineMidpoint(poly);
+  return best.mid;
+}
 
 /** Midpoint of an ordered polyline (by segment-length-weighted arc midpoint). */
 export function polylineMidpoint(points: Point[]): Point {
