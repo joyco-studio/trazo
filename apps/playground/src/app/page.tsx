@@ -11,6 +11,7 @@
  */
 
 import Image from "next/image";
+import Link from "next/link";
 import { layoutFlow } from "@joycostudio/trazo";
 
 import { Inspector } from "@/components/inspector";
@@ -80,6 +81,15 @@ export default function Home() {
           <SyntaxDrawer>
             <SyntaxContent />
           </SyntaxDrawer>
+        </Cluster>
+
+        <Cluster align="center" className="bg-card px-4">
+          <Link
+            href="/docs"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring text-xs tracking-wide uppercase transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          >
+            Docs
+          </Link>
         </Cluster>
 
         <Cluster

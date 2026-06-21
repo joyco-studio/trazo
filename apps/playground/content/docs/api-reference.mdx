@@ -1,0 +1,210 @@
+---
+title: API Reference
+description: Types, functions, and the React component for @joycostudio/trazo.
+---
+
+## Entry points
+
+```ts
+import { layoutFlow, layoutGit, layout } from "@joycostudio/trazo";
+import { Graph } from "@joycostudio/trazo/react"; // React is a peer dependency
+```
+
+## Layout functions
+
+### `layoutFlow(input, options?)`
+
+Lay out a flowchart graph and return a positioned result ready for rendering.
+
+```ts
+layoutFlow(input: FlowGraph, options?: FlowLayoutOptions): PositionedGraph
+```
+
+### `layoutGit(input, options?)`
+
+Lay out a commit DAG.
+
+```ts
+layoutGit(input: CommitGraph, options?: LayoutOptions): PositionedGraph
+```
+
+### `layout(input, options?)`
+
+Convenience dispatcher — calls `layoutFlow` when `input.kind === "flow"`, otherwise `layoutGit`.
+
+```ts
+layout(input: CommitGraph | FlowGraph, options?): PositionedGraph
+```
+
+---
+
+## Input types
+
+### `CommitGraph`
+
+```ts
+interface Commit {
+  id: CommitId;          // unique string
+  parents: CommitId[];   // mainline first; [] = root; 2+ = merge
+  branch?: string;
+  message?: string;      // drives label sizing
+  author?: string;
+  hash?: string;         // short hash shown mono before the subject
+}
+
+interface CommitGraph {
+  commits: Commit[];
+  refs?: Record<string, CommitId>; // e.g. { main: "a1" }
+}
+```
+
+### `FlowGraph`
+
+```ts
+type NodeShape    = "dot" | "box" | "stadium" | "diamond" | "cylinder";
+type SemanticRole = "primary" | "good" | "bad" | "pending" | "streamed" | "neutral";
+type FlowDirection = "TD" | "LR";
+
+interface FlowNode {
+  id: NodeId;
+  label?: string;
+  shape?: NodeShape;   // default "box"
+  role?: SemanticRole; // controls color
+}
+
+interface FlowEdge {
+  from: NodeId;
+  to: NodeId;
+  label?: string;
+  colored?: boolean;   // true → inherits source node's role color
+}
+
+interface FlowGraph {
+  kind: "flow";
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+```
+
+---
+
+## Output: `PositionedGraph`
+
+Both layout functions return a `PositionedGraph`. Pass it directly to `<Graph />` — you rarely need to inspect the fields.
+
+```ts
+interface PositionedGraph {
+  nodes: PositionedNode[];
+  edges: PositionedEdge[];
+  width: number;   // total diagram width in px (use for container/viewBox sizing)
+  height: number;  // total diagram height in px
+}
+```
+
+`width` and `height` include padding and are ready for `viewBox="0 0 {width} {height}"`.
+
+---
+
+## Layout options
+
+### Git: `LayoutOptions`
+
+```ts
+interface LayoutOptions {
+  laneWidth?: number;    // default 28 px
+  rowHeight?: number;    // default 40 px (minimum spacing in horizontal mode)
+  padding?: number;      // default 16 px
+  edgeStyle?: "elbow45" | "orthogonal"; // default "elbow45"
+  orientation?: "vertical" | "horizontal"; // default "vertical"
+  labelSide?: "left" | "right"; // default "right"
+}
+```
+
+In **horizontal** mode, `rowHeight` is the *minimum* inter-commit spacing — commits automatically spread further apart when adjacent label badges would otherwise overlap.
+
+### Flow: `FlowLayoutOptions`
+
+```ts
+interface FlowLayoutOptions {
+  direction?: "TD" | "LR";              // default "TD"
+  layerGap?: number;                    // default 56 px — gap between layers
+  nodeGap?: number;                     // default 28 px — gap between sibling nodes
+  padding?: number;                     // default 24 px — outer padding
+  minNodeWidth?: number;                // default 64 px
+  nodeHeight?: number;                  // default 36 px
+  labelPadX?: number;                   // default 16 px — horizontal padding inside labels
+  edgeStyle?: "elbow45" | "orthogonal"; // default "elbow45"
+}
+```
+
+---
+
+## `<Graph />` component
+
+```tsx
+import { Graph } from "@joycostudio/trazo/react";
+
+<Graph
+  graph={positionedGraph}
+  title="Flowchart" // sets <title> and aria-label on the <svg>
+/>
+```
+
+- Pure function of props — no hooks, no effects, no browser globals.
+- Renders identically as a React Server Component or when client-hydrated.
+- Wraps output in `<svg data-slot="trazo-graph">`.
+
+---
+
+## Theming
+
+Colors are CSS variables with hardcoded fallbacks, so the SVG works out of the box without any theme setup. Override them on any ancestor element to match your brand.
+
+```css
+/* Available variables and their built-in fallbacks */
+
+/* Flow node roles */
+--color-role-primary:  #002cea;  /* joyco blue  */
+--color-role-good:     #16a34a;  /* green       */
+--color-role-bad:      #dc2626;  /* red         */
+--color-role-pending:  #d97706;  /* amber       */
+--color-role-streamed: #7c3aed;  /* purple      */
+--color-role-neutral:  #6b7280;  /* gray        */
+
+/* Git lanes (auto-cycles for extra branches) */
+--color-lane-0: #002cea;
+--color-lane-1: #16a34a;
+--color-lane-2: #d97706;
+/* add --color-lane-3, --color-lane-4, … as needed */
+
+/* Thick arrows and highlights */
+--color-accent: #002cea;
+
+/* Node "cutout" background — must match the surface behind the SVG */
+--trazo-bg: #ffffff;
+```
+
+**Example — dark branded theme:**
+
+```tsx
+// Wrap the <Graph /> in a div that sets the variables
+<div
+  style={{
+    background: "#0f0f14",
+    "--trazo-bg":            "#0f0f14",
+    "--color-role-primary":  "#3b82f6",
+    "--color-role-good":     "#22c55e",
+    "--color-role-bad":      "#ef4444",
+    "--color-role-pending":  "#f59e0b",
+    "--color-role-streamed": "#a855f7",
+    "--color-lane-0":        "#3b82f6",
+    "--color-lane-1":        "#22c55e",
+    "--color-lane-2":        "#f59e0b",
+    "--color-accent":        "#3b82f6",
+  } as React.CSSProperties}
+>
+  <Graph graph={graph} title="My diagram" />
+</div>
+```
+
+`--trazo-bg` is the only variable that **must** be set explicitly when you change the background — commit circles use it to punch a gap around the center dot so it reads correctly against a colored lane line.

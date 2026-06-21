@@ -1,0 +1,103 @@
+---
+title: Tips & Troubleshooting
+description: Common gotchas and best practices for Trazo.
+---
+
+## Common gotchas
+
+### Unknown parent IDs are silently skipped
+
+If a `Commit.parents` entry references an ID that doesn't exist in the `commits` array, the engine simply omits that edge — no error is thrown. This is intentional for **shallow histories**: you can pass a trimmed commit list and the visible portion renders cleanly.
+
+```ts
+layoutGit({
+  commits: [
+    // "root" is referenced as a parent but not in the array —
+    // the engine renders c1 as a root commit (no incoming edge)
+    { id: "c1", parents: ["root"], message: "First visible commit" },
+    { id: "c2", parents: ["c1"],   message: "Next" },
+  ],
+})
+```
+
+If an edge is unexpectedly missing, check that both the `from` and `to` commit IDs are present in `commits` and spelled consistently.
+
+---
+
+### Every graph needs at least one root commit
+
+A root commit has an empty `parents` array. If every commit has parents that point to other commits in the graph, the topological sort still resolves — but if you have a cycle (A → B → A), the engine breaks ties by input order, which may produce unexpected lane assignments.
+
+```ts
+// ✓ — c1 is an explicit root
+{ id: "c1", parents: [], message: "Initial" }
+
+// ✗ — no root; topological order is ambiguous
+{ id: "c1", parents: ["c2"] }
+{ id: "c2", parents: ["c1"] }
+```
+
+---
+
+### Flow edges to unknown nodes are dropped
+
+`layoutFlow` normalizes the graph before layout: any edge whose `from` or `to` ID doesn't match a node in `nodes` is silently removed. If a node isn't appearing, confirm its `id` matches the edge's `from`/`to` exactly (IDs are case-sensitive).
+
+---
+
+### Empty graphs return a zero-size result
+
+Passing an empty `commits: []` or `nodes: []` returns a valid `PositionedGraph` with `width: 0, height: 0` and empty arrays. `<Graph>` renders an empty `<svg>` — no error. Guard the render if you want a placeholder instead:
+
+```tsx
+{graph.nodes.length > 0 && <Graph graph={graph} title="…" />}
+```
+
+---
+
+## Best practices
+
+### Keep horizontal git labels short
+
+In horizontal orientation, label badges are centered above each commit dot. Long messages push adjacent commits further apart to prevent overlap — the diagram widens automatically. Use short subjects (a branch name or 2–3 words) for horizontal mode; save full commit messages for vertical orientation where labels sit to the side.
+
+```
+# ✓ — concise, horizontal-friendly
+commit a1 : feat/auth
+commit a2 : feat/checkout
+
+# ✗ — verbose messages will spread commits far apart in horizontal mode
+commit a1 : Implement OAuth2 flow with PKCE and refresh-token rotation
+commit a2 : Add checkout service with Stripe webhook validation
+```
+
+---
+
+### Put root commits first in the array
+
+The engine uses the caller's array order as the tiebreaker for deterministic layout. Placing older (root) commits earlier in the array produces the most intuitive lane assignments — the mainline stays in lane 0 and branches fan out to higher lanes in the order they were created.
+
+---
+
+### Use `branch` to anchor commits to named lanes
+
+The `branch` field on a `Commit` sets the lane label and helps the engine assign stable lane numbers across edits. Without it, the lane is inferred from topology alone, which can shift if you add commits elsewhere in the graph.
+
+```ts
+{ id: "c2", parents: ["c1"], branch: "feat/auth", message: "Scaffold" }
+```
+
+---
+
+### Match `--trazo-bg` to your background
+
+The most common theming mistake is forgetting `--trazo-bg`. Commit circles use a background-colored ring to visually separate the center dot from the lane line passing through it. If your page background is dark and `--trazo-bg` is still white (the default), you'll see a white halo around every commit dot.
+
+Set it on the element that wraps `<Graph />`:
+
+```css
+.diagram-wrapper {
+  background: #0f0f14;
+  --trazo-bg: #0f0f14;
+}
+```
