@@ -202,7 +202,7 @@ export function Inspector({
     navigator.clipboard.writeText(source).then(() => {
       setCodeCopied(true);
       setTimeout(() => setCodeCopied(false), 1500);
-    });
+    }).catch(() => {});
   }, [source]);
 
   const getSvgString = useCallback((): string | null => {
@@ -219,7 +219,7 @@ export function Inspector({
     navigator.clipboard.writeText(svg).then(() => {
       setSvgCopied(true);
       setTimeout(() => setSvgCopied(false), 1500);
-    });
+    }).catch(() => {});
   }, [getSvgString]);
 
   const handleDownloadSvg = useCallback(() => {
