@@ -119,6 +119,20 @@ export interface FlowGraph {
   kind: "flow";
   nodes: FlowNode[];
   edges: FlowEdge[];
+  /**
+   * Layout direction parsed from the DSL (`flow TD` / `flow LR`). When present,
+   * `layoutFlow` uses it as the default so callers don't need to repeat it in
+   * `FlowLayoutOptions`. An explicit `options.direction` always wins.
+   */
+  direction?: FlowDirection;
+}
+
+/** Error reported by `parseGit` or `parseFlow` when the source is invalid. */
+export interface ParseError {
+  /** 1-based line number where the error occurred. */
+  line: number;
+  /** Human-readable description of the problem. */
+  message: string;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

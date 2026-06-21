@@ -118,7 +118,7 @@ export function layoutFlow(
   graph: FlowGraph,
   options?: FlowLayoutOptions,
 ): PositionedGraph {
-  const direction = options?.direction ?? DEFAULTS.direction;
+  const direction = options?.direction ?? graph.direction ?? DEFAULTS.direction;
   const layerGap = options?.layerGap ?? DEFAULTS.layerGap;
   const nodeGap = options?.nodeGap ?? DEFAULTS.nodeGap;
   const padding = options?.padding ?? DEFAULTS.padding;
