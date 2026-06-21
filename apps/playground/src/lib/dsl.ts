@@ -18,10 +18,10 @@
  *   merge <name> [: message]  merge branch <name> into the current branch
  *                             (creates a merge commit with two parents).
  *
- * Each commit also carries a short hex-ish `hash`. If the line doesn't supply
- * one explicitly (the `id` token may itself be a 6+ hex-digit hash), a
- * DETERMINISTIC pseudo-hash is derived from the commit id, so server and client
- * produce identical graphs (no random → no hydration mismatch).
+ * A commit only carries a `hash` when one is supplied explicitly — i.e. the
+ * `id` token itself is a 6+ hex-digit hash (e.g. `commit a1b2c3d`). Without one
+ * the commit has no hash and none is rendered. Author and message are likewise
+ * optional; a commit with no hash, author, or message renders as a bare node.
  *
  * The first branch is `main`. Errors are reported with a 1-based line number and
  * a friendly message; the caller keeps the last good graph rendered.
@@ -43,20 +43,6 @@ const DEFAULT_BRANCH = "main";
 
 /** A token that already looks like a short git hash (6+ hex digits). */
 const HASH_RE = /^[0-9a-f]{6,}$/i;
-
-/**
- * Derive a deterministic 7-char hex pseudo-hash from a seed string (the commit
- * id). Uses a tiny FNV-1a so the same id always maps to the same hash in Node
- * and the browser — keeping SSR and hydration byte-identical.
- */
-function pseudoHash(seed: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0").slice(0, 7);
-}
 
 /**
  * Pull an optional leading `(author)` group off a string, returning the author
@@ -129,15 +115,16 @@ export function parseDsl(source: string): ParseResult {
         if (commits.some((c) => c.id === id)) {
           return fail(lineNumber, `duplicate commit id “${id}”`);
         }
-        // An explicit hex-ish id token doubles as the hash; otherwise derive one.
-        const hash = idToken && HASH_RE.test(idToken) ? idToken : pseudoHash(id);
+        // An explicit hex-ish id token doubles as the hash; otherwise the
+        // commit carries no hash and none is rendered.
+        const hash = idToken && HASH_RE.test(idToken) ? idToken : undefined;
 
         commits.push({
           id,
           parents: parentTip ? [parentTip] : [],
           branch: currentBranch,
           message,
-          hash,
+          ...(hash !== undefined ? { hash } : {}),
           ...(author !== undefined ? { author } : {}),
         });
         branchTips.set(currentBranch, id);
@@ -179,7 +166,6 @@ export function parseDsl(source: string): ParseResult {
           parents: [mainlineTip, mergedTip],
           branch: currentBranch,
           message: message ?? `merge ${arg}`,
-          hash: pseudoHash(id),
         });
         branchTips.set(currentBranch, id);
         break;

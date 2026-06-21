@@ -24,15 +24,6 @@ const DEFAULT_BRANCH = "main";
 
 const HASH_RE = /^[0-9a-f]{6,}$/i;
 
-function pseudoHash(seed: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0").slice(0, 7);
-}
-
 function takeAuthor(input: string): { author?: string; rest: string } {
   const trimmed = input.trimStart();
   if (!trimmed.startsWith("(")) return { rest: input };
@@ -112,14 +103,16 @@ export function parseGit(source: string): GitParseResult {
         if (commits.some((c) => c.id === id)) {
           return fail(lineNumber, `duplicate commit id "${id}"`);
         }
-        const hash = idToken && HASH_RE.test(idToken) ? idToken : pseudoHash(id);
+        // An explicit hex-ish id token doubles as the hash; otherwise the
+        // commit carries no hash and none is rendered.
+        const hash = idToken && HASH_RE.test(idToken) ? idToken : undefined;
 
         const commit: Commit = {
           id,
           parents: parentTip ? [parentTip] : [],
           branch: currentBranch,
-          hash,
         };
+        if (hash !== undefined) commit.hash = hash;
         if (message !== undefined) commit.message = message;
         if (author !== undefined) commit.author = author;
         commits.push(commit);
@@ -162,7 +155,6 @@ export function parseGit(source: string): GitParseResult {
           parents: [mainlineTip, mergedTip],
           branch: currentBranch,
           message: message ?? `merge ${arg}`,
-          hash: pseudoHash(id),
         };
         commits.push(mergeCommit);
         branchTips.set(currentBranch, id);
