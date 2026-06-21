@@ -132,7 +132,7 @@ export function parseFlow(source: string): FlowParseResult {
     const raw = ((lines[i] ?? "").split("#")[0] ?? "").trim();
     if (raw === "") continue;
 
-    const dirMatch = /^(?:flow(?:chart)?\s+)?(TD|LR)$/i.exec(raw);
+    const dirMatch = /^flow(?:chart)?\s+(TD|LR)$/i.exec(raw);
     if (dirMatch) {
       direction = (dirMatch[1] ?? "TD").toUpperCase() as FlowDirection;
       continue;
@@ -141,9 +141,10 @@ export function parseFlow(source: string): FlowParseResult {
 
     const coloredIdx = raw.indexOf("==>");
     const plainIdx = raw.indexOf("-->");
-    const arrowIdx = coloredIdx !== -1 ? coloredIdx : plainIdx;
+    const arrowIdx =
+      coloredIdx !== -1 && (plainIdx === -1 || coloredIdx < plainIdx) ? coloredIdx : plainIdx;
     if (arrowIdx !== -1) {
-      const colored = coloredIdx !== -1;
+      const colored = arrowIdx === coloredIdx;
       const left = parseNodeRef(raw.slice(0, arrowIdx));
       const arrow = colored ? "==>" : "-->";
       if (!left) return fail(lineNumber, `left side of ${arrow} is not a valid node`);
