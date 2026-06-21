@@ -51,6 +51,63 @@ const graph = layoutGit({
 <Graph graph={graph} title="Commit history" />
 ```
 
+## From playground to code
+
+The playground uses the same layout engine you call from TypeScript. Copy a diagram from the editor and translate it line-by-line to the API.
+
+### Flow DSL → `layoutFlow`
+
+Each node line becomes a `FlowNode`, each arrow becomes a `FlowEdge`:
+
+```
+flow TD
+A(["Request"]):primary ==> B["Process"]
+B --> C["Done"]:good
+```
+
+```ts
+layoutFlow({
+  kind: "flow",
+  nodes: [
+    { id: "A", label: "Request", shape: "stadium", role: "primary" },
+    { id: "B", label: "Process" },
+    { id: "C", label: "Done",    role: "good" },
+  ],
+  edges: [
+    { from: "A", to: "B" },
+    { from: "B", to: "C" },
+  ],
+})
+```
+
+DSL shapes map to `shape`: `[box]` → `"box"`, `(["stadium"])` → `"stadium"`, `{diamond}` → `"diamond"`, `[("cylinder")]` → `"cylinder"`. `:role` suffixes map to `role`. `==>` (thick arrow) maps to `colored: true` on the edge.
+
+### Git DSL → `layoutGit`
+
+The DSL is **imperative** (branch/checkout/merge statements that build the graph as you go). The API is **declarative** — you provide the final commit graph directly, with explicit `parents` arrays:
+
+```
+commit a1 (Alice) : Initial commit
+branch feat/x
+commit b1 (Bob) : Add feature
+checkout main
+merge feat/x : Merge
+```
+
+```ts
+layoutGit({
+  commits: [
+    { id: "a1", parents: [],           hash: "a1", author: "Alice", message: "Initial commit", branch: "main" },
+    { id: "b1", parents: ["a1"],       author: "Bob",               message: "Add feature",   branch: "feat/x" },
+    { id: "m1", parents: ["a1", "b1"],                              message: "Merge",          branch: "main" },
+  ],
+})
+```
+
+`parents[0]` is always the mainline parent. A merge commit has two or more parents — mainline first, merged-in branch second.
+
+---
+
 ## Key properties
 
 - **Pure TypeScript.** No DOM, no canvas, no `window`. The layout runs in Node just as well as in the browser — identical output on server and client.
