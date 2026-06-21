@@ -276,17 +276,23 @@ export function layoutGit(
   const ordered = orderCommits(input.commits);
   const { laneOf, laneCount } = assignLanes(ordered);
 
-  // Pre-compute label widths for all commits. In horizontal mode we need these
-  // before assigning positions so we can spread commits far enough apart that
-  // adjacent label badges don't overlap (each badge is centered on the commit's
-  // x, so adjacent badges touch when badgeW_i/2 + badgeW_{i+1}/2 > gap).
+  // Pre-compute label widths for all commits that have any label content (hash,
+  // message, or author). In horizontal mode these widths drive commit spacing so
+  // adjacent badges don't overlap. We trim each part: an all-whitespace field is
+  // treated as absent so it never produces a badge.
   const precomputedLabelWidths = new Map<CommitId, number>();
   for (const commit of ordered) {
-    if (commit.message !== undefined) {
-      const hashPart = commit.hash ? `${commit.hash} ` : "";
-      const authorPart = commit.author ? `  ${commit.author}` : "";
-      const full = `${hashPart}${commit.message}${authorPart}`.toUpperCase();
-      precomputedLabelWidths.set(commit.id, measureLabel(full));
+    const hash = commit.hash?.trim();
+    const message = commit.message?.trim();
+    const author = commit.author?.trim();
+    if (hash || message || author) {
+      const hashPart = hash ? `${hash} ` : "";
+      const msgPart = message ?? "";
+      const authorPart = author ? `  ${author}` : "";
+      precomputedLabelWidths.set(
+        commit.id,
+        measureLabel(`${hashPart}${msgPart}${authorPart}`.toUpperCase()),
+      );
     }
   }
 
@@ -338,13 +344,19 @@ export function layoutGit(
       color: laneColorKey(lane),
     };
     if (commit.branch !== undefined) node.branch = commit.branch;
-    if (commit.author !== undefined) node.author = commit.author;
-    if (commit.hash !== undefined) node.hash = commit.hash;
-    if (commit.message !== undefined) {
-      node.message = commit.message;
-      // Reuse the pre-computed width (same formula, avoids measuring twice).
-      node.labelWidth = precomputedLabelWidths.get(commit.id)!;
-      node.labelAnchor = badgeAnchor(node, node.labelWidth, orientation, labelSide);
+    // Only attach trimmed, non-empty label parts; empty/whitespace strings
+    // would produce blank tspans in the renderer.
+    const hash = commit.hash?.trim();
+    const message = commit.message?.trim();
+    const author = commit.author?.trim();
+    if (hash) node.hash = hash;
+    if (author) node.author = author;
+    if (message) node.message = message;
+    // Badge geometry is set whenever any label content exists (not just message).
+    const labelW = precomputedLabelWidths.get(commit.id);
+    if (labelW !== undefined) {
+      node.labelWidth = labelW;
+      node.labelAnchor = badgeAnchor(node, labelW, orientation, labelSide);
     }
     nodeById.set(commit.id, node);
     return node;
@@ -371,6 +383,27 @@ export function layoutGit(
       if (node.labelAnchor !== undefined) {
         if (horizontal) node.labelAnchor.y += shift;
         else node.labelAnchor.x += shift;
+      }
+    }
+  }
+
+  // In horizontal mode badges are centered on the commit's x, so the leftmost
+  // badge's left edge (labelAnchor.x = center.x − badgeW/2) can go negative
+  // when the first commit sits near `padding`. Shift all geometry right so no
+  // badge is clipped by the viewbox. Edges are built after this block and read
+  // the updated node.x values, so their paths stay correct.
+  if (horizontal) {
+    let leadingX = Infinity;
+    for (const node of nodes) {
+      if (node.labelAnchor === undefined) continue;
+      leadingX = Math.min(leadingX, node.labelAnchor.x);
+    }
+    const shiftX =
+      Number.isFinite(leadingX) && leadingX < padding ? padding - leadingX : 0;
+    if (shiftX !== 0) {
+      for (const node of nodes) {
+        node.x += shiftX;
+        if (node.labelAnchor !== undefined) node.labelAnchor.x += shiftX;
       }
     }
   }

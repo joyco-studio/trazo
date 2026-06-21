@@ -383,7 +383,10 @@ function renderNodeLabel(
     );
   }
 
-  if (node.message === undefined) return null;
+  const hash = node.hash;
+  const message = node.message;
+  const author = node.author;
+  if (!hash && !message && !author) return null;
 
   // Git label = a sliced-corner badge (hub Badge geometry) holding an optional
   // mono hash, the subject, and an optional trailing author. The badge width
@@ -412,16 +415,16 @@ function renderNodeLabel(
         fontSize={LABEL_SIZE}
         style={UPPERCASE}
       >
-        {node.hash !== undefined ? (
+        {hash !== undefined ? (
           <tspan data-slot="label-hash" fill={MUTED_FG}>
-            {node.hash}{" "}
+            {hash}{" "}
           </tspan>
         ) : null}
-        <tspan fill={ACCENT_FG}>{node.message}</tspan>
-        {node.author !== undefined ? (
+        {message !== undefined ? <tspan fill={ACCENT_FG}>{message}</tspan> : null}
+        {author !== undefined ? (
           <tspan data-slot="label-author" fill={MUTED_FG}>
             {"  "}
-            {node.author}
+            {author}
           </tspan>
         ) : null}
       </text>
