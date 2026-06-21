@@ -27,9 +27,11 @@ import {
   type PositionedGraph,
 } from "@joycostudio/trazo";
 import { Graph } from "@joycostudio/trazo/react";
+import { Check, Copy, Download } from "lucide-react";
 
 import { GraphViewport } from "@/components/graph-viewport";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Cluster, Filler } from "@/components/ui/cluster";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -112,6 +114,9 @@ export function Inspector({
   });
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graphRef = useRef<HTMLDivElement>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [svgCopied, setSvgCopied] = useState(false);
 
   const source = sources[mode];
 
@@ -193,6 +198,42 @@ export function Inspector({
     [recompute, mode, source, edgeStyle, git],
   );
 
+  const handleCopyCode = useCallback(() => {
+    navigator.clipboard.writeText(source).then(() => {
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1500);
+    });
+  }, [source]);
+
+  const getSvgString = useCallback((): string | null => {
+    const svgEl = graphRef.current?.querySelector<SVGElement>(
+      '[data-slot="trazo-graph"]',
+    );
+    if (!svgEl) return null;
+    return new XMLSerializer().serializeToString(svgEl);
+  }, []);
+
+  const handleCopySvg = useCallback(() => {
+    const svg = getSvgString();
+    if (!svg) return;
+    navigator.clipboard.writeText(svg).then(() => {
+      setSvgCopied(true);
+      setTimeout(() => setSvgCopied(false), 1500);
+    });
+  }, [getSvgString]);
+
+  const handleDownloadSvg = useCallback(() => {
+    const svg = getSvgString();
+    if (!svg) return;
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `trazo-${mode}.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [getSvgString, mode]);
+
   const lineCount = useMemo(() => source.split("\n").length, [source]);
   const unit = mode === "flow" ? "nodes" : "commits";
 
@@ -219,6 +260,15 @@ export function Inspector({
             </TabsList>
           </Tabs>
           <Filler />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleCopyCode}
+            aria-label={codeCopied ? "Copied" : "Copy code"}
+            className="text-muted-foreground"
+          >
+            {codeCopied ? <Check /> : <Copy />}
+          </Button>
           <span className="font-mono text-xs tabular-nums">
             {lineCount} {lineCount === 1 ? "line" : "lines"}
           </span>
@@ -330,12 +380,32 @@ export function Inspector({
           <span className="font-mono text-xs tabular-nums">
             {Math.round(graph.width)}×{Math.round(graph.height)}
           </span>
+          <span aria-hidden="true" className="bg-border h-4 w-px self-center" />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleCopySvg}
+            aria-label={svgCopied ? "SVG copied" : "Copy SVG"}
+            className="text-muted-foreground"
+          >
+            {svgCopied ? <Check /> : <Copy />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleDownloadSvg}
+            aria-label="Download SVG"
+            className="text-muted-foreground"
+          >
+            <Download />
+          </Button>
         </Cluster>
 
         {/* The preview surface is `bg-card`, not the page background — so point
             the <Graph> node-border token (`--trazo-bg`) at the card color too,
             or the bg-colored chip seam shows as a ring against this panel. */}
         <div
+          ref={graphRef}
           className="bg-card relative min-h-[55vh] flex-1 lg:min-h-0 [--trazo-bg:var(--color-card)]"
         >
           <GraphViewport contentWidth={graph.width} contentHeight={graph.height}>

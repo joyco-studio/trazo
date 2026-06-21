@@ -1,0 +1,195 @@
+---
+title: API Reference
+description: Types, functions, and layout options for the @joycostudio/trazo engine.
+---
+
+## Entry points
+
+```ts
+import { layout, layoutGit, layoutFlow, measure } from "@joycostudio/trazo";
+import { Graph } from "@joycostudio/trazo/react"; // React is a peer dependency
+```
+
+## Functions
+
+### `layoutFlow(input, options?)`
+
+Lay out a flowchart graph.
+
+```ts
+layoutFlow(input: FlowGraph, options?: FlowLayoutOptions): PositionedGraph
+```
+
+### `layoutGit(input, options?)`
+
+Lay out a commit DAG.
+
+```ts
+layoutGit(input: CommitGraph, options?: LayoutOptions): PositionedGraph
+```
+
+### `layout(input, options?)`
+
+Dispatcher — routes on `input.kind === "flow"`, otherwise calls `layoutGit`.
+
+```ts
+layout(input: CommitGraph | FlowGraph, options?): PositionedGraph
+```
+
+### `measure(text, font)`
+
+Measure text width using the bundled glyph-advance table (no canvas, no DOM).
+
+```ts
+measure(text: string, font: FontSpec): number  // width in px
+```
+
+---
+
+## Input types
+
+### `CommitGraph`
+
+```ts
+interface Commit {
+  id: CommitId;          // unique string
+  parents: CommitId[];   // mainline first; [] = root; 2+ = merge
+  branch?: string;
+  message?: string;      // drives label sizing
+  author?: string;
+  hash?: string;         // short hash shown mono before the subject
+}
+
+interface CommitGraph {
+  commits: Commit[];
+  refs?: Record<string, CommitId>; // e.g. { main: "a1" }
+}
+```
+
+### `FlowGraph`
+
+```ts
+type NodeShape    = "dot" | "box" | "stadium" | "diamond" | "cylinder";
+type SemanticRole = "primary" | "good" | "bad" | "pending" | "streamed" | "neutral";
+type FlowDirection = "TD" | "LR";
+
+interface FlowNode {
+  id: NodeId;
+  label?: string;
+  shape?: NodeShape;   // default "box"
+  role?: SemanticRole; // controls color token
+}
+
+interface FlowEdge {
+  from: NodeId;
+  to: NodeId;
+  label?: string;
+  colored?: boolean;   // true → uses source node's role color
+}
+
+interface FlowGraph {
+  kind: "flow";
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+```
+
+---
+
+## Output: `PositionedGraph`
+
+Both layout functions return a `PositionedGraph`:
+
+```ts
+interface PositionedGraph {
+  nodes: PositionedNode[];
+  edges: PositionedEdge[];
+  width: number;     // set SVG viewBox from these
+  height: number;
+  laneCount: number; // git columns / flow layer count
+}
+
+interface PositionedNode {
+  id: NodeId;
+  x: number;  // center x
+  y: number;  // center y
+  color: string; // TOKEN KEY: "lane-<n>" or "role-<role>"
+  // git-only:
+  lane?: number;
+  branch?: string; message?: string; author?: string; hash?: string;
+  labelAnchor?: Point; labelWidth?: number;
+  // flow-only:
+  shape?: NodeShape; role?: SemanticRole;
+  w?: number; h?: number; label?: string;
+}
+
+interface PositionedEdge {
+  from: NodeId; to: NodeId;
+  path: string;    // ready-to-use SVG `d` string
+  kind: "normal" | "branch" | "merge" | "flow";
+  color: string;   // TOKEN KEY
+  label?: string; labelPoint?: Point; labelWidth?: number;
+}
+```
+
+---
+
+## Layout options
+
+### Git: `LayoutOptions`
+
+```ts
+interface LayoutOptions {
+  laneWidth?: number;    // default 28 px
+  rowHeight?: number;    // default 40 px (minimum in horizontal mode)
+  padding?: number;      // default 16 px
+  edgeStyle?: "elbow45" | "orthogonal"; // default "elbow45"
+  orientation?: "vertical" | "horizontal"; // default "vertical"
+  labelSide?: "left" | "right"; // default "right"
+}
+```
+
+In **horizontal** mode, `rowHeight` is the *minimum* inter-commit spacing — commits are automatically spread further apart when adjacent label badges would otherwise overlap.
+
+### Flow: `FlowLayoutOptions`
+
+```ts
+interface FlowLayoutOptions {
+  direction?: "TD" | "LR"; // default "TD"
+  layerGap?: number;
+  nodeGap?: number;
+  padding?: number;
+  minNodeWidth?: number;
+  nodeHeight?: number;
+  labelPadX?: number;
+  edgeStyle?: "elbow45" | "orthogonal";
+}
+```
+
+---
+
+## `<Graph />` component
+
+```ts
+import { Graph } from "@joycostudio/trazo/react";
+
+<Graph
+  graph={positionedGraph}
+  title="Flowchart" // sets <title> and aria-label on the <svg>
+/>
+```
+
+- Pure function of props — no hooks, no effects, no browser globals.
+- Renders identically as a React Server Component or when hydrated.
+- Root element is `<svg data-slot="trazo-graph">`.
+- Colors via CSS variables with hardcoded fallbacks (e.g. `var(--color-joyco-blue, #002cea)`).
+
+---
+
+## Invariants
+
+1. **Pure TS.** No DOM, no canvas, no `window` in `layout*`, `geometry`, `measure`.
+2. **Deterministic.** Equal input → deeply equal `PositionedGraph`.
+3. **`<Graph>` is a pure function of props.** SSR-safe, zero client JS required.
+4. **`measure` reads a bundled glyph table, never a canvas.** Identical in Node and browser.
+5. **Engine emits token keys, not colors.** `"lane-N"`, `"role-X"`, `"accent"` — the renderer maps them.

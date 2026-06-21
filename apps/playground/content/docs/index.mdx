@@ -1,0 +1,62 @@
+---
+title: Quick Start
+description: Get up and running with Trazo in minutes.
+---
+
+Trazo is a deterministic code-to-diagram layout engine — flowcharts and git graphs. Pure-TypeScript core with an optional React SVG renderer.
+
+## Install
+
+```bash
+pnpm add @joycostudio/trazo
+```
+
+## Flowchart
+
+```ts
+import { layoutFlow } from "@joycostudio/trazo";
+import { Graph } from "@joycostudio/trazo/react";
+
+const graph = layoutFlow({
+  kind: "flow",
+  nodes: [
+    { id: "a", label: "Request", shape: "stadium", role: "primary" },
+    { id: "b", label: "Process" },
+    { id: "c", label: "Done", shape: "stadium", role: "good" },
+  ],
+  edges: [
+    { from: "a", to: "b" },
+    { from: "b", to: "c" },
+  ],
+});
+
+// React (or any React Server Component):
+<Graph graph={graph} title="My flowchart" />
+```
+
+## Git graph
+
+```ts
+import { layoutGit } from "@joycostudio/trazo";
+
+const graph = layoutGit({
+  commits: [
+    { id: "c1", parents: [],       message: "Initial commit" },
+    { id: "c2", parents: ["c1"],   message: "Add feature",   branch: "feat/x" },
+    { id: "c3", parents: ["c1"],   message: "Hotfix",        branch: "main" },
+    { id: "c4", parents: ["c3", "c2"], message: "Merge feat/x" },
+  ],
+});
+
+<Graph graph={graph} title="Commit history" />
+```
+
+## Invariants
+
+- **Pure TS.** No DOM, no canvas, no `window`. Runs in Node — layouts are identical on server and client.
+- **Deterministic.** Equal input → equal `PositionedGraph`. Safe for SSR without hydration mismatches.
+- **`<Graph>` is a pure function of props.** No hooks, no effects, no browser globals — renders as a Server Component.
+
+## Playground
+
+Try it interactively at [/](/) — the playground renders the SVG on the server and hydrates for live editing.
