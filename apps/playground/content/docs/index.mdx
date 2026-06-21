@@ -51,11 +51,11 @@ const graph = layoutGit({
 <Graph graph={graph} title="Commit history" />
 ```
 
-## Invariants
+## Key properties
 
-- **Pure TS.** No DOM, no canvas, no `window`. Runs in Node — layouts are identical on server and client.
-- **Deterministic.** Equal input → equal `PositionedGraph`. Safe for SSR without hydration mismatches.
-- **`<Graph>` is a pure function of props.** No hooks, no effects, no browser globals — renders as a Server Component.
+- **Pure TypeScript.** No DOM, no canvas, no `window`. The layout runs in Node just as well as in the browser — identical output on server and client.
+- **Deterministic.** Equal input always produces the same `PositionedGraph`. Safe for SSR: the server-rendered SVG and the first client render are byte-identical, so there are no hydration mismatches.
+- **`<Graph>` is a pure function of props.** No hooks, no effects, no browser globals — use it in a React Server Component and ship zero client JS for the diagram.
 
 ## Playground
 

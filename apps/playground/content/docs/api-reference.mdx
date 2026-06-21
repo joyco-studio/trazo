@@ -1,20 +1,20 @@
 ---
 title: API Reference
-description: Types, functions, and layout options for the @joycostudio/trazo engine.
+description: Types, functions, and the React component for @joycostudio/trazo.
 ---
 
 ## Entry points
 
 ```ts
-import { layout, layoutGit, layoutFlow, measure } from "@joycostudio/trazo";
+import { layoutFlow, layoutGit, layout } from "@joycostudio/trazo";
 import { Graph } from "@joycostudio/trazo/react"; // React is a peer dependency
 ```
 
-## Functions
+## Layout functions
 
 ### `layoutFlow(input, options?)`
 
-Lay out a flowchart graph.
+Lay out a flowchart graph and return a positioned result ready for rendering.
 
 ```ts
 layoutFlow(input: FlowGraph, options?: FlowLayoutOptions): PositionedGraph
@@ -30,18 +30,10 @@ layoutGit(input: CommitGraph, options?: LayoutOptions): PositionedGraph
 
 ### `layout(input, options?)`
 
-Dispatcher — routes on `input.kind === "flow"`, otherwise calls `layoutGit`.
+Convenience dispatcher — calls `layoutFlow` when `input.kind === "flow"`, otherwise `layoutGit`.
 
 ```ts
 layout(input: CommitGraph | FlowGraph, options?): PositionedGraph
-```
-
-### `measure(text, font)`
-
-Measure text width using the bundled glyph-advance table (no canvas, no DOM).
-
-```ts
-measure(text: string, font: FontSpec): number  // width in px
 ```
 
 ---
@@ -77,14 +69,14 @@ interface FlowNode {
   id: NodeId;
   label?: string;
   shape?: NodeShape;   // default "box"
-  role?: SemanticRole; // controls color token
+  role?: SemanticRole; // controls color
 }
 
 interface FlowEdge {
   from: NodeId;
   to: NodeId;
   label?: string;
-  colored?: boolean;   // true → uses source node's role color
+  colored?: boolean;   // true → inherits source node's role color
 }
 
 interface FlowGraph {
@@ -98,39 +90,18 @@ interface FlowGraph {
 
 ## Output: `PositionedGraph`
 
-Both layout functions return a `PositionedGraph`:
+Both layout functions return a `PositionedGraph`. Pass it directly to `<Graph />` — you rarely need to inspect the fields.
 
 ```ts
 interface PositionedGraph {
   nodes: PositionedNode[];
   edges: PositionedEdge[];
-  width: number;     // set SVG viewBox from these
-  height: number;
-  laneCount: number; // git columns / flow layer count
-}
-
-interface PositionedNode {
-  id: NodeId;
-  x: number;  // center x
-  y: number;  // center y
-  color: string; // TOKEN KEY: "lane-<n>" or "role-<role>"
-  // git-only:
-  lane?: number;
-  branch?: string; message?: string; author?: string; hash?: string;
-  labelAnchor?: Point; labelWidth?: number;
-  // flow-only:
-  shape?: NodeShape; role?: SemanticRole;
-  w?: number; h?: number; label?: string;
-}
-
-interface PositionedEdge {
-  from: NodeId; to: NodeId;
-  path: string;    // ready-to-use SVG `d` string
-  kind: "normal" | "branch" | "merge" | "flow";
-  color: string;   // TOKEN KEY
-  label?: string; labelPoint?: Point; labelWidth?: number;
+  width: number;   // total diagram width in px (use for container/viewBox sizing)
+  height: number;  // total diagram height in px
 }
 ```
+
+`width` and `height` include padding and are ready for `viewBox="0 0 {width} {height}"`.
 
 ---
 
@@ -141,7 +112,7 @@ interface PositionedEdge {
 ```ts
 interface LayoutOptions {
   laneWidth?: number;    // default 28 px
-  rowHeight?: number;    // default 40 px (minimum in horizontal mode)
+  rowHeight?: number;    // default 40 px (minimum spacing in horizontal mode)
   padding?: number;      // default 16 px
   edgeStyle?: "elbow45" | "orthogonal"; // default "elbow45"
   orientation?: "vertical" | "horizontal"; // default "vertical"
@@ -149,19 +120,19 @@ interface LayoutOptions {
 }
 ```
 
-In **horizontal** mode, `rowHeight` is the *minimum* inter-commit spacing — commits are automatically spread further apart when adjacent label badges would otherwise overlap.
+In **horizontal** mode, `rowHeight` is the *minimum* inter-commit spacing — commits automatically spread further apart when adjacent label badges would otherwise overlap.
 
 ### Flow: `FlowLayoutOptions`
 
 ```ts
 interface FlowLayoutOptions {
   direction?: "TD" | "LR"; // default "TD"
-  layerGap?: number;
-  nodeGap?: number;
-  padding?: number;
+  layerGap?: number;        // gap between layers
+  nodeGap?: number;         // gap between nodes in the same layer
+  padding?: number;         // outer padding
   minNodeWidth?: number;
   nodeHeight?: number;
-  labelPadX?: number;
+  labelPadX?: number;       // horizontal padding inside node labels
   edgeStyle?: "elbow45" | "orthogonal";
 }
 ```
@@ -170,7 +141,7 @@ interface FlowLayoutOptions {
 
 ## `<Graph />` component
 
-```ts
+```tsx
 import { Graph } from "@joycostudio/trazo/react";
 
 <Graph
@@ -180,16 +151,34 @@ import { Graph } from "@joycostudio/trazo/react";
 ```
 
 - Pure function of props — no hooks, no effects, no browser globals.
-- Renders identically as a React Server Component or when hydrated.
-- Root element is `<svg data-slot="trazo-graph">`.
-- Colors via CSS variables with hardcoded fallbacks (e.g. `var(--color-joyco-blue, #002cea)`).
+- Renders identically as a React Server Component or when client-hydrated.
+- Wraps output in `<svg data-slot="trazo-graph">`.
 
 ---
 
-## Invariants
+## Theming
 
-1. **Pure TS.** No DOM, no canvas, no `window` in `layout*`, `geometry`, `measure`.
-2. **Deterministic.** Equal input → deeply equal `PositionedGraph`.
-3. **`<Graph>` is a pure function of props.** SSR-safe, zero client JS required.
-4. **`measure` reads a bundled glyph table, never a canvas.** Identical in Node and browser.
-5. **Engine emits token keys, not colors.** `"lane-N"`, `"role-X"`, `"accent"` — the renderer maps them.
+Colors are CSS variables with hardcoded fallbacks, so the SVG works out of the box without any theme setup. Override them to match your brand:
+
+```css
+/* Flow node roles */
+--color-role-primary:  …;
+--color-role-good:     …;
+--color-role-bad:      …;
+--color-role-pending:  …;
+--color-role-streamed: …;
+--color-role-neutral:  …;
+
+/* Git lanes (cycles automatically for extra lanes) */
+--color-lane-0: …;
+--color-lane-1: …;
+--color-lane-2: …;
+
+/* Thick arrows and accent highlights */
+--color-accent: …;
+
+/* Node "cutout" background — set to match the surface behind the SVG */
+--trazo-bg: …;
+```
+
+Set `--trazo-bg` to match the background color of the element that contains the SVG. Commit circles use this variable to punch a transparent gap around the center dot.

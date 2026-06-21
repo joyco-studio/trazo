@@ -1,4 +1,4 @@
 {
   "title": "Trazo",
-  "pages": ["index", "dsl-reference", "api-reference", "architecture"]
+  "pages": ["index", "dsl-reference", "api-reference"]
 }
