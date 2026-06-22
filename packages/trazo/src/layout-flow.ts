@@ -288,13 +288,19 @@ export function layoutFlow(
 
   // ── 4. Coordinate assignment ──────────────────────────────────────────
   // When the graph has clusters, reserve room up front so a subgraph container
-  // (its padding on every side + the title strip on the backward face) never
+  // (its GROUP_PAD on every side + the title strip ALWAYS along the TOP) never
   // pushes geometry past the origin. Seeding the leads here avoids a post-hoc
-  // global shift that would invalidate already-baked edge path strings.
+  // global shift that would invalidate already-baked edge path strings. The
+  // title strip is always on top (y), independent of flow direction, so the
+  // renderer can place the title uniformly — hence the title lead lands on
+  // whichever lead (main/cross) maps to the Y axis for this direction.
   const hasGroups = (graph.groups?.length ?? 0) > 0;
-  // Backward-face lead (title strip + padding) and cross-axis lead (padding).
-  const mainLead = hasGroups ? GROUP_PAD + GROUP_TITLE_H : 0;
-  const crossLead = hasGroups ? GROUP_PAD : 0;
+  const groupPad = hasGroups ? GROUP_PAD : 0;
+  const titleLead = hasGroups ? GROUP_TITLE_H : 0;
+  // TD: main axis = y → title strip (top) rides the main lead.
+  // LR: main axis = x, cross axis = y → title strip rides the CROSS lead.
+  const mainLead = groupPad + (direction === "TD" ? titleLead : 0);
+  const crossLead = groupPad + (direction === "TD" ? 0 : titleLead);
 
   // Per-rank main-axis thickness = max node extent along the main axis.
   const rankThickness: number[] = layers.map((layer) => {
@@ -433,14 +439,10 @@ export function layoutFlow(
         GROUP_PAD,
       );
       if (box === null) continue;
-      // Reserve the title strip on the backward face (top for TD, left for LR).
-      if (direction === "TD") {
-        box.y -= GROUP_TITLE_H;
-        box.h += GROUP_TITLE_H;
-      } else {
-        box.x -= GROUP_TITLE_H;
-        box.w += GROUP_TITLE_H;
-      }
+      // Reserve the title strip along the TOP in both directions, so the
+      // renderer places the title uniformly (top-left of the box).
+      box.y -= GROUP_TITLE_H;
+      box.h += GROUP_TITLE_H;
       const pg: PositionedGroup = {
         id: g.id,
         x: box.x,

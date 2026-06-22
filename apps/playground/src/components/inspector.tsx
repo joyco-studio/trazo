@@ -12,22 +12,27 @@
  *     debounced. No server round-trip per keystroke.
  *   - Parse errors keep the LAST GOOD graph on screen with a friendly inline
  *     message.
- *   - A mode toggle switches between the git DSL (commit DAGs) and the flow DSL
- *     (flowcharts) — the two diagram families the JOYCO logs need. Each mode
- *     keeps its own source so toggling never loses your work.
+ *   - A mode toggle switches between the flow (flowcharts), git (commit DAGs),
+ *     sequence (sequence diagrams), and block (block-grid wireframes) DSLs — the
+ *     diagram families the JOYCO logs need. Each mode keeps its own source so
+ *     toggling never loses your work.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
 import {
   type EdgeStyle,
   type GitLabelSide,
   type GitOrientation,
+  layoutBlock,
   layoutFlow,
   layoutGit,
+  layoutSequence,
+  parseBlock,
+  parseSequence,
   type PositionedGraph,
 } from "@joycostudio/trazo";
 import { Graph } from "@joycostudio/trazo/react";
 import { Check, Copy, Download } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { GraphViewport } from "@/components/graph-viewport";
 import { Badge } from "@/components/ui/badge";
@@ -38,10 +43,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { parseDsl, type ParseError, SEED_PROGRAM } from "@/lib/dsl";
 import { directionOf, parseFlow, SEED_FLOW } from "@/lib/flow-dsl";
+import { SEED_BLOCK, SEED_SEQUENCE } from "@/lib/seeds";
 
 const DEBOUNCE_MS = 140;
 
-type Mode = "git" | "flow";
+type Mode = "git" | "flow" | "sequence" | "block";
 
 /** Git-only layout options surfaced as preview toggles. */
 interface GitOptions {
@@ -66,6 +72,16 @@ function build(
       graph: layoutFlow(graph, { direction: directionOf(graph), edgeStyle }),
       error,
     };
+  }
+  if (mode === "sequence") {
+    const { graph, error } = parseSequence(source);
+    if (graph.participants.length === 0) return { graph: null, error };
+    return { graph: layoutSequence(graph), error };
+  }
+  if (mode === "block") {
+    const { graph, error } = parseBlock(source);
+    if (graph.cells.length === 0) return { graph: null, error };
+    return { graph: layoutBlock(graph), error };
   }
   const { graph, error } = parseDsl(source);
   if (graph.commits.length === 0) return { graph: null, error };
@@ -99,6 +115,8 @@ export function Inspector({
   const [sources, setSources] = useState<Record<Mode, string>>({
     git: initialMode === "git" ? initialSource : SEED_PROGRAM,
     flow: initialMode === "flow" ? initialSource : SEED_FLOW,
+    sequence: initialMode === "sequence" ? initialSource : SEED_SEQUENCE,
+    block: initialMode === "block" ? initialSource : SEED_BLOCK,
   });
   // The active mode's graph is seeded from the server; the other lays out lazily.
   const [graph, setGraph] = useState<PositionedGraph>(initialGraph);
@@ -235,7 +253,15 @@ export function Inspector({
   }, [getSvgString, mode]);
 
   const lineCount = useMemo(() => source.split("\n").length, [source]);
-  const unit = mode === "flow" ? "nodes" : "commits";
+  // The noun for the left-pane status count + the editor/preview labels, per mode.
+  const unit =
+    mode === "git" ? "commits" : mode === "block" ? "cells" : "nodes";
+  const modeLabel: Record<Mode, string> = {
+    flow: "Flowchart",
+    git: "Commit graph",
+    sequence: "Sequence diagram",
+    block: "Block grid",
+  };
 
   return (
     // Two bento panes. The wrapper is transparent; the gap-px seams reveal the
@@ -257,6 +283,8 @@ export function Inspector({
             <TabsList>
               <TabsTrigger value="flow">flowchart</TabsTrigger>
               <TabsTrigger value="git">git</TabsTrigger>
+              <TabsTrigger value="sequence">sequence</TabsTrigger>
+              <TabsTrigger value="block">block</TabsTrigger>
             </TabsList>
           </Tabs>
           <Filler />
@@ -275,7 +303,7 @@ export function Inspector({
         </Cluster>
 
         <label htmlFor="dsl-editor" className="sr-only">
-          {mode === "flow" ? "Flowchart" : "Commit-graph"} pseudo-code editor
+          {modeLabel[mode]} pseudo-code editor
         </label>
         <Textarea
           id="dsl-editor"
@@ -364,19 +392,25 @@ export function Inspector({
               />
             </>
           ) : null}
-          {/* Edge-style toggle: on = 45° diagonals, off = 90° orthogonal. */}
-          <label className="flex cursor-pointer items-center gap-2">
-            <span className="font-mono text-xs tracking-wide uppercase">45°</span>
-            <Switch
-              checked={edgeStyle === "elbow45"}
-              onCheckedChange={handleEdgeStyle}
-              aria-label="Toggle 45° edges (off = 90° orthogonal)"
-            />
-          </label>
-          <span
-            aria-hidden="true"
-            className="bg-border h-4 w-px self-center"
-          />
+          {/* Edge-style toggle: on = 45° diagonals, off = 90° orthogonal. Only
+              flow + git honor it; sequence uses fixed orthogonal and block has
+              no edges, so hide it there. */}
+          {mode === "flow" || mode === "git" ? (
+            <>
+              <label className="flex cursor-pointer items-center gap-2">
+                <span className="font-mono text-xs tracking-wide uppercase">45°</span>
+                <Switch
+                  checked={edgeStyle === "elbow45"}
+                  onCheckedChange={handleEdgeStyle}
+                  aria-label="Toggle 45° edges (off = 90° orthogonal)"
+                />
+              </label>
+              <span
+                aria-hidden="true"
+                className="bg-border h-4 w-px self-center"
+              />
+            </>
+          ) : null}
           <span className="font-mono text-xs tabular-nums">
             {Math.round(graph.width)}×{Math.round(graph.height)}
           </span>
@@ -409,10 +443,7 @@ export function Inspector({
           className="bg-card relative min-h-[55vh] flex-1 lg:min-h-0 [--trazo-bg:var(--color-card)]"
         >
           <GraphViewport contentWidth={graph.width} contentHeight={graph.height}>
-            <Graph
-              graph={graph}
-              title={mode === "flow" ? "Flowchart" : "Commit graph"}
-            />
+            <Graph graph={graph} title={modeLabel[mode]} />
           </GraphViewport>
         </div>
       </Cluster>

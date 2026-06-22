@@ -472,4 +472,28 @@ describe("layoutFlow() — subgraphs", () => {
     });
     expect(g.groups!.map((gp) => gp.id)).toEqual(["Real"]);
   });
+
+  it("reserves the title strip along the TOP in BOTH directions (TD and LR)", () => {
+    // The renderer places a subgraph title at the top of the box in both
+    // directions, so the layout must reserve the strip on top either way —
+    // otherwise an LR title overlaps the members.
+    const src = {
+      kind: "flow" as const,
+      nodes: [
+        { id: "a", label: "A", group: "G" },
+        { id: "b", label: "B", group: "G" },
+      ],
+      edges: [{ from: "a", to: "b" }],
+      groups: [{ id: "G", label: "Title" }],
+    };
+    for (const direction of ["TD", "LR"] as const) {
+      const g = layoutFlow(src, { direction });
+      const box = g.groups![0]!;
+      const topMemberEdge = Math.min(...g.nodes.map((n) => n.y - n.h! / 2));
+      // The title strip (box top → top + GROUP_TITLE_H) sits ABOVE every member.
+      expect(box.y + 22).toBeLessThanOrEqual(topMemberEdge + 0.5);
+      // And the box never escapes the top of the viewBox.
+      expect(box.y).toBeGreaterThanOrEqual(0);
+    }
+  });
 });
