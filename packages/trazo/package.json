@@ -1,6 +1,6 @@
 {
   "name": "@joycostudio/trazo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Deterministic code-to-diagram layout engine (flowcharts + git graphs). Pure TS core + optional React SVG renderers.",
   "type": "module",
   "sideEffects": false,
