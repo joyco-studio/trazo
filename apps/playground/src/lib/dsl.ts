@@ -1,253 +1,31 @@
 /**
- * playground DSL — a tiny, forgiving line-based language for describing a commit
- * DAG, parsed into a rama `CommitGraph`.
+ * Playground git DSL — a thin wrapper over the PUBLISHED parser.
  *
- * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
- *
- *   commit [id] [(<author>)] [: message]
- *   commit [id] [(<author>)] ["message with : colons"]
- *                             add a commit on the current branch; parent is the
- *                             branch's current tip. `id` optional (auto: c1, c2…).
- *                             `(<author>)` optional author name in parens.
- *                             Message is either `: text` or `"text"` (double
- *                             quotes allow any characters, including colons).
- *                             Examples:
- *                               commit : init repo
- *                               commit "feat: add feature"
- *                               commit e1 (Elvira) : checkout work
- *                               commit (Homero) "fix: receipt page"
- *   branch <name>             create <name> off the current tip and check it out.
- *   checkout <name>           switch the current branch to <name>.
- *   merge <name> [: message]  merge branch <name> into the current branch
- *   merge <name> ["message"]  (creates a merge commit with two parents).
- *
- * A commit only carries a `hash` when one is supplied explicitly — i.e. the
- * `id` token itself is a 6+ hex-digit hash (e.g. `commit a1b2c3d`). Without one
- * the commit has no hash and none is rendered. Author and message are likewise
- * optional; a commit with no hash, author, or message renders as a bare node.
- *
- * The first branch is `main`. Errors are reported with a 1-based line number and
- * a friendly message; the caller keeps the last good graph rendered.
+ * The git parser used to be duplicated here; it now re-exports the package's
+ * `parseGit` (aliased to `parseDsl`, the name the inspector uses) so the editor
+ * and the published `@joycostudio/trazo` API accept exactly the same grammar.
+ * The package is the single source of truth — only the seed program lives here.
  */
 
-import type { Commit, CommitGraph } from "@joycostudio/trazo";
+import { parseGit } from "@joycostudio/trazo";
 
+/** Parse a git DSL source into a `CommitGraph` (re-export of the package parser). */
+export const parseDsl = parseGit;
+export { parseGit };
+export type { GitParseResult, GitParseResult as ParseResult } from "@joycostudio/trazo";
+
+/** Parse error shape the inspector renders (line + message). */
 export interface ParseError {
   line: number;
   message: string;
 }
 
-export interface ParseResult {
-  graph: CommitGraph;
-  error: ParseError | null;
-}
-
-const DEFAULT_BRANCH = "main";
-
-/** A token that already looks like a short git hash (6+ hex digits). */
-const HASH_RE = /^[0-9a-f]{6,}$/i;
-
 /**
- * Returns the index of the first `needle` in `s` outside any double-quoted
- * span (backslash-escaped quotes are honoured). Returns -1 if not found.
- */
-function indexOutsideQuotes(s: string, needle: string): number {
-  let inQuote = false;
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '"' && (i === 0 || s[i - 1] !== "\\")) inQuote = !inQuote;
-    if (!inQuote && s.startsWith(needle, i)) return i;
-  }
-  return -1;
-}
-
-/**
- * Pull an optional leading `(author)` group off a string, returning the author
- * (if present) and the remaining text.
- */
-function takeAuthor(input: string): { author?: string; rest: string } {
-  const trimmed = input.trimStart();
-  if (!trimmed.startsWith("(")) return { rest: input };
-  const close = trimmed.indexOf(")");
-  if (close === -1) return { rest: input };
-  const author = trimmed.slice(1, close).trim() || undefined;
-  return { author, rest: trimmed.slice(close + 1) };
-}
-
-export function parseDsl(source: string): ParseResult {
-  const commits: Commit[] = [];
-  const branchTips = new Map<string, string>(); // branch → current tip id
-  let currentBranch = DEFAULT_BRANCH;
-  let autoCounter = 0;
-
-  branchTips.set(DEFAULT_BRANCH, ""); // empty tip = no commits yet
-
-  const fail = (line: number, message: string): ParseResult => ({
-    graph: { commits, refs: refsFrom(branchTips, currentBranch) },
-    error: { line, message },
-  });
-
-  const lines = source.split("\n");
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineNumber = i + 1;
-    // Strip comments only outside quoted spans so `commit "fix #123"` survives.
-    const line = lines[i] ?? "";
-    const commentIdx = indexOutsideQuotes(line, "#");
-    const raw = (commentIdx === -1 ? line : line.slice(0, commentIdx)).trim();
-    if (raw === "") continue;
-
-    // Extract the optional message. Quoted syntax ("...") takes priority over
-    // colon syntax (: ...). Scan forward skipping paren-depth so a " inside an
-    // (author) group is not mistaken for the start of the message.
-    let head: string;
-    let message: string | undefined;
-
-    let firstOuterQuote = -1;
-    {
-      let depth = 0;
-      for (let j = 0; j < raw.length; j++) {
-        if (raw[j] === "(") depth++;
-        else if (raw[j] === ")") depth = Math.max(0, depth - 1);
-        else if (raw[j] === '"' && depth === 0) { firstOuterQuote = j; break; }
-      }
-    }
-
-    if (firstOuterQuote !== -1) {
-      if (!raw.endsWith('"')) {
-        return fail(lineNumber, 'unclosed string — close the message with "');
-      }
-      head = raw.slice(0, firstOuterQuote).trim();
-      message = raw.slice(firstOuterQuote + 1, raw.length - 1) || undefined;
-    } else {
-      const colonIndex = raw.indexOf(":");
-      head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
-      message = colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
-    }
-
-    const tokens = head.split(/\s+/);
-    const keyword = tokens[0].toLowerCase();
-    const arg = tokens[1];
-
-    switch (keyword) {
-      case "commit": {
-        const parentTip = branchTips.get(currentBranch) ?? "";
-
-        // After the `commit` keyword, the head may hold `[id] [(author)]`. The
-        // id is an optional first token that is NOT an opening paren.
-        const afterKeyword = head.slice(keyword.length).trimStart();
-        let idToken: string | undefined;
-        let remainder = afterKeyword;
-        if (afterKeyword !== "" && !afterKeyword.startsWith("(")) {
-          const m = /^\S+/.exec(afterKeyword);
-          idToken = m?.[0];
-          remainder = afterKeyword.slice(idToken?.length ?? 0);
-        }
-
-        const { author, rest } = takeAuthor(remainder);
-        if (rest.trim() !== "") {
-          return fail(
-            lineNumber,
-            `unexpected “${rest.trim()}” after commit — use “commit [id] [(author)] [: message]” or “commit [id] [(author)] [\\”message\\”]”`,
-          );
-        }
-
-        const id = idToken ?? `c${++autoCounter}`;
-        if (commits.some((c) => c.id === id)) {
-          return fail(lineNumber, `duplicate commit id “${id}”`);
-        }
-        // An explicit hex-ish id token doubles as the hash; otherwise the
-        // commit carries no hash and none is rendered.
-        const hash = idToken && HASH_RE.test(idToken) ? idToken : undefined;
-
-        commits.push({
-          id,
-          parents: parentTip ? [parentTip] : [],
-          branch: currentBranch,
-          message,
-          ...(hash !== undefined ? { hash } : {}),
-          ...(author !== undefined ? { author } : {}),
-        });
-        branchTips.set(currentBranch, id);
-        break;
-      }
-
-      case "branch": {
-        if (!arg) return fail(lineNumber, "branch needs a name, e.g. “branch feature”");
-        if (branchTips.has(arg)) {
-          return fail(lineNumber, `branch “${arg}” already exists`);
-        }
-        branchTips.set(arg, branchTips.get(currentBranch) ?? "");
-        currentBranch = arg;
-        break;
-      }
-
-      case "checkout": {
-        if (!arg) return fail(lineNumber, "checkout needs a branch name");
-        if (!branchTips.has(arg)) {
-          return fail(lineNumber, `unknown branch “${arg}” — branch it first`);
-        }
-        currentBranch = arg;
-        break;
-      }
-
-      case "merge": {
-        if (!arg) return fail(lineNumber, "merge needs a branch name, e.g. “merge feature”");
-        if (!branchTips.has(arg)) {
-          return fail(lineNumber, `unknown branch “${arg}”`);
-        }
-        const mainlineTip = branchTips.get(currentBranch) ?? "";
-        const mergedTip = branchTips.get(arg) ?? "";
-        if (!mainlineTip || !mergedTip) {
-          return fail(lineNumber, `nothing to merge — both branches need a commit`);
-        }
-        const id = `m${++autoCounter}`;
-        commits.push({
-          id,
-          parents: [mainlineTip, mergedTip],
-          branch: currentBranch,
-          message: message ?? `merge ${arg}`,
-        });
-        branchTips.set(currentBranch, id);
-        break;
-      }
-
-      default:
-        return fail(
-          lineNumber,
-          `unknown command “${keyword}” — use commit, branch, checkout or merge`,
-        );
-    }
-  }
-
-  return {
-    graph: { commits, refs: refsFrom(branchTips, currentBranch) },
-    error: null,
-  };
-}
-
-function refsFrom(
-  branchTips: Map<string, string>,
-  currentBranch: string,
-): Record<string, string> {
-  const refs: Record<string, string> = {};
-  for (const [branch, tip] of branchTips) {
-    if (tip) refs[branch] = tip;
-  }
-  const head = branchTips.get(currentBranch);
-  if (head) refs.HEAD = head;
-  return refs;
-}
-
-/**
- * The default git seed — a reconstruction of the JOYCO log "phantom merge
- * conflicts" story, annotated with branch names, authors, and short hashes.
- *
- * The DSL can't literally model a squash + rebase transplant, so the graph
- * APPROXIMATES it to tell the story visually: two branches diverge off `B`
- * (Elvira's checkout work, with Homero's receipts stacked on top of it), then
- * back on `main` a single squash commit `S` collapses Elvira's branch, and
- * Homero's two commits are REPLAYED (h1'/h2') on top of that squash. The
- * commit messages carry the narrative. Hashes are short hex-ish.
+ * Seed git program for the initial render — the "phantom merge conflicts" story
+ * from the JOYCO log. Two base commits, then Elvira branches for checkout and
+ * Homero stacks receipts on top of her branch. Back on `main` a single squash
+ * commit collapses Elvira's branch, and Homero's two commits are REPLAYED
+ * (rebased) on top of that squash. The commit messages carry the narrative.
  */
 export const SEED_PROGRAM = `# Trazo Playground — git mode
 # phantom merge conflicts (JOYCO log)

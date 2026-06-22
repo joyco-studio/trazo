@@ -204,6 +204,9 @@ function renderGroup(
   // their text centers in the whole box (height = textHeight + GROUP_PAD*2).
   const titleX = group.x + GROUP_PAD;
   const titleY = isNote ? group.y + group.h / 2 : group.y + GROUP_TITLE_H / 2;
+  // A note is a flat filled panel (no border, no radius), with its text centered;
+  // a subgraph container is an outlined rounded box with a top-left title.
+  const textX = isNote ? group.x + group.w / 2 : titleX;
   return (
     <g key={group.id} data-slot={isNote ? "note" : "group"} className={groupClass}>
       <rect
@@ -211,24 +214,24 @@ function renderGroup(
         y={group.y}
         width={group.w}
         height={group.h}
-        rx={8}
         fill={isNote ? MUTED : "none"}
-        stroke={GROUP_STROKE}
-        strokeWidth={1.5}
+        stroke={isNote ? "none" : GROUP_STROKE}
+        strokeWidth={isNote ? 0 : 1.5}
       />
       {group.label !== undefined ? (
         <text
           data-slot="group-label"
           className={labelClass}
-          x={titleX}
+          x={textX}
           y={titleY}
+          textAnchor={isNote ? "middle" : "start"}
           dominantBaseline="central"
           fill={MUTED_FG}
           fontFamily={LABEL_FONT}
           fontSize={LABEL_SIZE}
           style={UPPERCASE}
         >
-          {renderMultilineText(group.label, titleX, titleY)}
+          {renderMultilineText(group.label, textX, titleY)}
         </text>
       ) : null}
     </g>
@@ -463,6 +466,7 @@ export function Graph(props: GraphProps): JSX.Element {
                   data-slot="edge-label-badge"
                   d={badgePath(badgeX, badgeY, badgeW, BADGE_H)}
                   fill={ACCENT}
+                  fillOpacity={0.85}
                 />
                 <text
                   x={edge.labelPoint.x}

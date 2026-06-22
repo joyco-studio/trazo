@@ -84,6 +84,53 @@ describe("layoutSequence()", () => {
     expect(note.x + note.w).toBeGreaterThanOrEqual(sx);
   });
 
+  it("places an interleaved note in its timeline row (between messages, no overlap)", () => {
+    // m0, then a note, then m1: the note sits BELOW m0's arrow and ABOVE m1's,
+    // and no message arrow passes through any note box.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }],
+      messages: [
+        { from: "A", to: "B", label: "first", kind: "sync", seq: 0 },
+        { from: "A", to: "B", label: "second", kind: "sync", seq: 2 },
+      ],
+      notes: [{ over: ["A"], text: "between", seq: 1 }],
+    });
+    const arrowY = (i: number) =>
+      g.edges[i]!.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number)[1]!;
+    const note = g.groups![0]!;
+    // Timeline order: m0 above the note, m1 below it.
+    expect(arrowY(0)).toBeLessThan(note.y);
+    expect(arrowY(1)).toBeGreaterThan(note.y + note.h);
+    // No arrow runs through the note box.
+    for (const e of g.edges) {
+      const y = e.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number)[1]!;
+      expect(y >= note.y && y <= note.y + note.h).toBe(false);
+    }
+    // Everything stays within the viewBox.
+    expect(note.x).toBeGreaterThanOrEqual(0);
+    expect(note.x + note.w).toBeLessThanOrEqual(g.width + 0.5);
+  });
+
+  it("sits the message label ABOVE the arrow and keeps its badge in the viewBox", () => {
+    // A long horizontal message: the label must not sit on top of the arrow
+    // line (which would hide it), and its badge must not be cropped on the right.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }],
+      messages: [
+        { from: "A", to: "B", label: "A fairly long message label here", kind: "sync", seq: 0 },
+      ],
+    });
+    const e = g.edges[0]!;
+    const arrowY = e.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number)[1]!;
+    // Label center is clearly above the arrow line.
+    expect(e.labelPoint!.y).toBeLessThan(arrowY - 5);
+    // The badge's right edge fits inside the viewBox (badgeWidth = w + 28).
+    const rightEdge = e.labelPoint!.x + (e.labelWidth! + 28) / 2;
+    expect(rightEdge).toBeLessThanOrEqual(g.width + 0.5);
+  });
+
   it("sets positive viewBox bounds", () => {
     const g = layoutSequence(fixture);
     expect(g.width).toBeGreaterThan(0);

@@ -10,6 +10,7 @@
  *   <node> --- <node>          undirected edge (no arrowhead, neutral).
  *   <node> === <node>          undirected colored edge.
  *   <node> <--> <node>         bidirectional edge (arrowhead at both ends).
+ *   <node> <==> <node>         bidirectional colored edge.
  *   <node> -->|label| <node>   edge with a label (works with every arrow above).
  *   <node>                     bare node declaration.
  *   subgraph G ["Label"]       open a cluster; nodes declared until `end` join it.
@@ -88,6 +89,7 @@ function indexOutsideQuotes(s: string, needle: string): number {
  * `colored` selects the source-role color; `arrow` selects which ends get a head.
  */
 const ARROW_TOKENS: ReadonlyArray<{ token: string; colored: boolean; arrow: ArrowEnds }> = [
+  { token: "<==>", colored: true, arrow: "both" },
   { token: "<-->", colored: false, arrow: "both" },
   { token: "-->", colored: false, arrow: "end" },
   { token: "==>", colored: true, arrow: "end" },

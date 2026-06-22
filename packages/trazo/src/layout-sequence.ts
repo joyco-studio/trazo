@@ -31,9 +31,12 @@ import type {
   SequenceGraph,
   SequenceLayoutOptions,
   SequenceMessage,
+  SequenceNote,
   SequenceParticipant,
 } from "./types.js";
 import {
+  BADGE_H,
+  badgeWidth,
   curveBetween,
   GROUP_PAD,
   measureMultiline,
@@ -41,6 +44,9 @@ import {
   roleColorKey,
   sizeShape,
 } from "./geometry.js";
+
+/** Vertical gap (px) between a message label badge and the arrow it sits above. */
+const LABEL_ABOVE_GAP = 4;
 
 const DEFAULTS = {
   columnGap: 120,
@@ -102,16 +108,20 @@ export function layoutSequence(
     }
   }
 
-  // ── 2. Header nodes ───────────────────────────────────────────────────────
+  // ── 2. Header nodes (a participant box per column) ────────────────────────
+  // A participant renders TWICE: a header band at the top and a closing band at
+  // the bottom (mirrors Mermaid), so the lifelines read as bracketed columns and
+  // the diagram has a clear bottom edge instead of dangling lines.
   const headerCenterY = padding + headerHeight / 2;
-  const nodes: PositionedNode[] = order.map((id, i) => {
+  const headerNodeAt = (i: number, centerY: number, suffix: string): PositionedNode => {
+    const id = order[i] as NodeId;
     const p = partById.get(id) as SequenceParticipant;
     const size = headerSize[i] as { w: number; h: number };
     const role = p.role ?? "neutral";
     const node: PositionedNode = {
-      id,
+      id: suffix ? `${id}${suffix}` : id,
       x: colX[i] as number,
-      y: headerCenterY,
+      y: centerY,
       color: roleColorKey(role),
       shape: "box",
       role,
@@ -122,15 +132,90 @@ export function layoutSequence(
     node.label = label;
     node.labelWidth = measureMultiline(label).width;
     return node;
-  });
+  };
+  const nodes: PositionedNode[] = order.map((_, i) => headerNodeAt(i, headerCenterY, ""));
 
-  // ── 3. Rows: each message gets a row by its input order ───────────────────
+  // ── 3. Timeline: interleave messages AND notes by their global `seq` ──────
+  // Each is one event occupying its own vertical band; a running Y cursor walks
+  // the timeline so a note pushes the events after it down (instead of floating
+  // in a side column). Events with a `seq` sort by it; any without fall back to
+  // "messages in array order, then notes" — a stable, deterministic tie-break.
   const headerBottom = padding + headerHeight;
-  const rowY = (r: number): number => headerBottom + padding + r * rowGap;
-  const lastRowY = messages.length > 0 ? rowY(messages.length - 1) : headerBottom + padding;
-  const lifelineBottom = lastRowY + rowGap;
+  type Event =
+    | { type: "msg"; key: number; m: SequenceMessage }
+    | { type: "note"; key: number; n: SequenceNote };
+  const events: Event[] = [];
+  messages.forEach((m, i) => events.push({ type: "msg", key: m.seq ?? i, m }));
+  (graph.notes ?? []).forEach((n, i) =>
+    events.push({ type: "note", key: n.seq ?? messages.length + i, n }),
+  );
+  // Stable sort by global order; ties keep insertion order (messages before notes).
+  events.sort((a, b) => a.key - b.key);
 
-  // ── 4. Lifelines ─────────────────────────────────────────────────────────
+  const xOf = (id: NodeId): number => colX[colOf.get(id) as number] as number;
+  const SELF_LOOP = 28;
+  // Track horizontal extent (self-loops, wide label badges, notes) for the viewBox.
+  let maxX = colX.length > 0 ? (colX[colX.length - 1] as number) : padding;
+  const track = (x: number): void => {
+    if (x > maxX) maxX = x;
+  };
+  const edges: PositionedEdge[] = [];
+  const noteBoxes: PositionedGroup[] = [];
+  let noteCount = 0;
+
+  // Walk the timeline. A message band is `rowGap` tall and its arrow sits at the
+  // band's mid; a self-message needs a little more; a note band is its box
+  // height + gap, and the box is centered on the lifelines it spans.
+  let cursorY = headerBottom + padding;
+  for (const ev of events) {
+    if (ev.type === "msg") {
+      const m = ev.m;
+      const isSelf = m.from === m.to;
+      const y = cursorY + rowGap / 2;
+      if (isSelf) {
+        edges.push(selfMessage(m, xOf(m.from), y, rowGap, edgeStyle, SELF_LOOP, track));
+        cursorY += rowGap * 1.4; // reserve room for the loop's downward leg
+      } else {
+        edges.push(straightMessage(m, xOf(m.from), xOf(m.to), y, edgeStyle, track));
+        cursorY += rowGap;
+      }
+    } else {
+      const note = ev.n;
+      const cols = note.over.map((id) => colOf.get(id)).filter((c): c is number => c !== undefined);
+      if (cols.length === 0) continue;
+      const lo = Math.min(...cols);
+      const hi = Math.max(...cols);
+      const size = measureMultiline(note.text);
+      // Span the covered lifelines (+pad), but never narrower than the text. A
+      // single-participant note centers its box on that lifeline.
+      const spanLeft = colX[lo] as number;
+      const spanRight = colX[hi] as number;
+      const spanMid = (spanLeft + spanRight) / 2;
+      const w = Math.max(spanRight - spanLeft + GROUP_PAD * 2, size.width + GROUP_PAD * 2);
+      const h = size.height + GROUP_PAD * 2;
+      const x = spanMid - w / 2;
+      const box: PositionedGroup = {
+        id: `__note_${noteCount++}`,
+        label: note.text,
+        x,
+        y: cursorY,
+        w,
+        h,
+        variant: "note",
+      };
+      box.labelWidth = size.width;
+      noteBoxes.push(box);
+      if (x + w > maxX) maxX = x + w;
+      cursorY += h + rowGap / 2;
+    }
+  }
+  const timelineBottom = cursorY;
+
+  // ── 4. Lifelines (drop from the header to the closing band) ───────────────
+  // The lifeline runs from the bottom of the top header to the top of the
+  // closing header band, so it's bracketed by a participant box at each end.
+  const closingTop = timelineBottom;
+  const lifelineBottom = closingTop;
   const lifelines: Lifeline[] = order.map((id, i) => ({
     id,
     x1: colX[i] as number,
@@ -139,65 +224,21 @@ export function layoutSequence(
     y2: lifelineBottom,
   }));
 
-  // ── 5. Messages → edges ───────────────────────────────────────────────────
-  // Track how far a self-loop or label bulges right so the viewBox can grow.
-  let maxX = colX.length > 0 ? (colX[colX.length - 1] as number) : padding;
-  const SELF_LOOP = 28;
-  const xOf = (id: NodeId): number => colX[colOf.get(id) as number] as number;
-  const edges: PositionedEdge[] = messages.map((m, r) => {
-    const fromX = xOf(m.from);
-    const toX = xOf(m.to);
-    const y = rowY(r);
-    return m.from === m.to
-      ? selfMessage(m, fromX, y, rowGap, edgeStyle, SELF_LOOP, (x) => {
-          if (x > maxX) maxX = x;
-        })
-      : straightMessage(m, fromX, toX, y, edgeStyle);
-  });
-
-  // ── 6. Notes → group boxes (variant "note") ───────────────────────────────
-  // Notes are stacked in a column below the header band; a running cursor sums
-  // each prior note's OWN height (notes may differ in height) so they never
-  // overlap, and the lowest note grows the diagram height (`maxY`).
-  let groups: PositionedGroup[] | undefined;
-  let maxY = lifelineBottom;
-  if (graph.notes && graph.notes.length > 0) {
-    const out: PositionedGroup[] = [];
-    let cursorY = headerBottom + padding;
-    graph.notes.forEach((note, ni) => {
-      const cols = note.over.map((id) => colOf.get(id)).filter((c): c is number => c !== undefined);
-      if (cols.length === 0) return;
-      const lo = Math.min(...cols);
-      const hi = Math.max(...cols);
-      const size = measureMultiline(note.text);
-      const left = (colX[lo] as number) - GROUP_PAD;
-      const right = (colX[hi] as number) + GROUP_PAD;
-      const w = Math.max(right - left, size.width + GROUP_PAD * 2);
-      const h = size.height + GROUP_PAD * 2;
-      const box: PositionedGroup = {
-        id: `__note_${ni}`,
-        label: note.text,
-        x: left,
-        y: cursorY,
-        w,
-        h,
-        variant: "note",
-      };
-      box.labelWidth = size.width;
-      out.push(box);
-      if (left + w > maxX) maxX = left + w;
-      if (cursorY + h > maxY) maxY = cursorY + h;
-      cursorY += h + GROUP_PAD;
-    });
-    if (out.length > 0) groups = out;
+  // ── 4b. Closing header band (mirrors the top header) ──────────────────────
+  const closingCenterY = closingTop + headerHeight / 2;
+  for (let i = 0; i < order.length; i++) {
+    nodes.push(headerNodeAt(i, closingCenterY, "__end"));
   }
+  const closingBottom = closingTop + headerHeight;
 
-  // ── 7. Bounds ──────────────────────────────────────────────────────────────
+  const groups: PositionedGroup[] | undefined =
+    noteBoxes.length > 0 ? noteBoxes : undefined;
+
+  // ── 5. Bounds ──────────────────────────────────────────────────────────────
   const lastIdx = order.length - 1;
   const lastHalf = lastIdx >= 0 ? (headerSize[lastIdx] as { w: number }).w / 2 : 0;
   const width = Math.max(maxX + padding, (colX[lastIdx] ?? padding) + lastHalf + padding);
-  // Height covers the lifelines AND the deepest note box.
-  const height = maxY + padding;
+  const height = closingBottom + padding;
 
   const result: PositionedGraph = {
     nodes,
@@ -218,6 +259,7 @@ function straightMessage(
   toX: number,
   y: number,
   edgeStyle: SequenceLayoutOptions["edgeStyle"],
+  track: (x: number) => void,
 ): PositionedEdge {
   const from = { x: fromX, y };
   const to = { x: toX, y };
@@ -232,9 +274,15 @@ function straightMessage(
   if (m.kind === "async") edge.dashed = true;
   if (m.label !== undefined) {
     edge.label = m.label;
-    edge.labelPoint = { x: (fromX + toX) / 2, y };
     // Widest line, so a multi-line message label sizes its badge correctly.
-    edge.labelWidth = measureMultiline(m.label).width;
+    const labelWidth = measureMultiline(m.label).width;
+    edge.labelWidth = labelWidth;
+    // Sit the label ABOVE the arrow (not on top of it, which would hide a long
+    // horizontal message line). Centered on the message span.
+    const mid = (fromX + toX) / 2;
+    edge.labelPoint = { x: mid, y: y - BADGE_H / 2 - LABEL_ABOVE_GAP };
+    // Reserve the badge's right edge so a wide label isn't cropped by the viewBox.
+    track(mid + badgeWidth(labelWidth) / 2);
   }
   return edge;
 }
@@ -268,9 +316,13 @@ function selfMessage(
   if (m.kind === "async") edge.dashed = true;
   if (m.label !== undefined) {
     edge.label = m.label;
-    edge.labelPoint = { x: x + loop, y: y + drop / 2 };
-    // Widest line, so a multi-line self-message label sizes its badge correctly.
-    edge.labelWidth = measureMultiline(m.label).width;
+    const labelWidth = measureMultiline(m.label).width;
+    edge.labelWidth = labelWidth;
+    // Label ABOVE the loop (between the lifeline and the loop's top), so it never
+    // sits on the loop arrow. Anchored just right of the lifeline so it clears it.
+    const lx = x + loop / 2 + badgeWidth(labelWidth) / 2;
+    edge.labelPoint = { x: lx, y: y - BADGE_H / 2 - LABEL_ABOVE_GAP };
+    track(lx + badgeWidth(labelWidth) / 2);
   }
   return edge;
 }

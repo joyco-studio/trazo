@@ -182,6 +182,13 @@ export interface SequenceMessage {
   to: NodeId;
   label?: string;
   kind: MessageKind;
+  /**
+   * Global event order across messages AND notes (0-based). The parser stamps it
+   * from the source line order so the layout can interleave messages and notes
+   * on one timeline. Absent → the layout falls back to the message's array order
+   * (notes then sort after all messages).
+   */
+  seq?: number;
 }
 
 /** A note spanning one or more participants at a point in the sequence. */
@@ -189,6 +196,8 @@ export interface SequenceNote {
   /** Participant ids the note covers (its box spans from the first to the last). */
   over: NodeId[];
   text: string;
+  /** Global event order across messages AND notes (0-based); see {@link SequenceMessage.seq}. */
+  seq?: number;
 }
 
 /** The full input for a sequence layout. `kind` discriminates from the others. */

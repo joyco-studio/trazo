@@ -203,6 +203,11 @@ describe("parseFlow — arrow tokens", () => {
     expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "both" });
   });
 
+  it("<==> is bidirectional AND colored", () => {
+    const g = ok("A <==> B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "both", colored: true });
+  });
+
   it("longest-match: <--> is not read as -->", () => {
     const g = ok("A <--> B");
     expect(g.edges).toHaveLength(1);

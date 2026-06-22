@@ -65,7 +65,15 @@ describe("parseSequence — messages", () => {
 describe("parseSequence — notes", () => {
   it("parses a note over multiple participants", () => {
     const g = ok("A ->> B\nNote over A,B : both busy");
-    expect(g.notes).toEqual([{ over: ["A", "B"], text: "both busy" }]);
+    expect(g.notes).toHaveLength(1);
+    expect(g.notes![0]).toMatchObject({ over: ["A", "B"], text: "both busy" });
+  });
+
+  it("stamps a global `seq` interleaving messages and notes by source order", () => {
+    const g = ok("A ->> B : m1\nNote over A : n1\nA ->> B : m2");
+    expect(g.messages[0]?.seq).toBe(0); // m1
+    expect(g.notes![0]?.seq).toBe(1); // n1 between the two messages
+    expect(g.messages[1]?.seq).toBe(2); // m2
   });
 
   it("emits no notes key when there are none", () => {

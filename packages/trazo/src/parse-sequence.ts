@@ -124,6 +124,8 @@ export function parseSequence(source: string): SequenceParseResult {
   const order: string[] = [];
   const messages: SequenceMessage[] = [];
   const notes: SequenceNote[] = [];
+  // Global event counter so messages and notes share one timeline order.
+  let seq = 0;
 
   const graphOf = (): SequenceGraph => {
     const graph: SequenceGraph = {
@@ -182,7 +184,7 @@ export function parseSequence(source: string): SequenceParseResult {
         .map((s) => s.trim())
         .filter((s) => s !== "");
       if (ids.length === 0) return fail(lineNumber, `note is missing a participant`);
-      notes.push({ over: ids, text: normalizeBreaks(unquote(noteMatch[2]!.trim())) });
+      notes.push({ over: ids, text: normalizeBreaks(unquote(noteMatch[2]!.trim())), seq: seq++ });
       continue;
     }
 
@@ -206,7 +208,7 @@ export function parseSequence(source: string): SequenceParseResult {
       // layout derives from `from === to`, so a self-message keeps its
       // sync/async distinction (and an async self-call still renders dashed).
       const kind: MessageKind = arrow.async ? "async" : "sync";
-      const message: SequenceMessage = { from: left.id, to: right.id, kind };
+      const message: SequenceMessage = { from: left.id, to: right.id, kind, seq: seq++ };
       if (label !== undefined && label !== "") message.label = label;
       messages.push(message);
       continue;

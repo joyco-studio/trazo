@@ -5,18 +5,29 @@
  * parsers come straight from `@joycostudio/trazo`.
  */
 
-/** Default sequence-diagram program: a request/response with a note + self-call. */
+/**
+ * Default sequence-diagram program — the PPR "Don't await. Forward." flow from
+ * JOYCO log 07: the server fans out work and streams results while the client
+ * renders progressively. Exercises self-messages, sync + async (`-->>`, dashed)
+ * arrows, and single- and multi-participant notes.
+ */
 export const SEED_SEQUENCE = `# playground — sequence mode
 # messages: A ->> B sync   A -->> B async (dashed)   A ->> A self-loop
-# Note over A,B : text
+# Note over A : text        Note over A,B : spanning note
 sequence
-participant C ["Client"]:primary
-participant S ["Server"]
+participant S ["Server"]:primary
+participant C ["Client"]
 
-C ->> S : GET /cart
-Note over S : reads cache
-S -->> C : 200 OK
-C ->> C : hydrate
+S ->> S : Start getCart()
+S ->> S : Start getFlags()
+S ->> C : Static shell + fallbacks (instant)
+C ->> C : Display shell + hydrate static parts
+Note over C : Users see content immediately
+S -->> C : Stream flags data
+C ->> C : CheckoutButton resolves
+S -->> C : Stream cart data
+C ->> C : CartCount + CartTotal pop in
+Note over S,C : Fast TTFB, progressive render
 `;
 
 /** Default block-grid program: a page-layout wireframe with column spans. */

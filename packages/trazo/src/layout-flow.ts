@@ -312,11 +312,33 @@ export function layoutFlow(
     return max;
   });
 
+  // The set of groups a rank's REAL nodes belong to (dummies ignored). Used to
+  // open extra main-axis room where one group's band ends and another begins.
+  const rankGroups: Array<Set<string>> = layers.map((layer) => {
+    const s = new Set<string>();
+    for (const v of layer) if (!v.isDummy && v.group !== undefined) s.add(v.group);
+    return s;
+  });
+  // True when ranks r-1 and r belong to DIFFERENT groups (a stacked-subgraph
+  // boundary), so their container boxes don't crowd each other. The title strip
+  // the lower box reserves on top also needs to clear the upper box.
+  const crossesGroupBoundary = (r: number): boolean => {
+    if (r === 0) return false;
+    const prev = rankGroups[r - 1] as Set<string>;
+    const cur = rankGroups[r] as Set<string>;
+    if (prev.size === 0 && cur.size === 0) return false;
+    for (const g of cur) if (prev.has(g)) return false; // shared group → same band
+    return prev.size > 0 || cur.size > 0;
+  };
+
   // Main-axis origin per rank: padding + Σ(prev thickness + layerGap) + half.
   const rankMainStart: number[] = [];
   {
     let acc = padding + mainLead;
     for (let r = 0; r < layers.length; r++) {
+      // At a stacked-subgraph boundary, add room for both boxes' padding + the
+      // lower box's title strip.
+      if (hasGroups && crossesGroupBoundary(r)) acc += GROUP_PAD * 2 + GROUP_TITLE_H;
       rankMainStart[r] = acc;
       acc += (rankThickness[r] as number) + layerGap;
     }
