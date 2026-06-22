@@ -5,18 +5,21 @@
  * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
  *
  *   commit [id] [(<author>)] [: message]
+ *   commit [id] [(<author>)] ["message with : colons"]
  *                             add a commit on the current branch; parent is the
  *                             branch's current tip. `id` optional (auto: c1, c2…).
  *                             `(<author>)` optional author name in parens.
- *                             `: message` optional human label.
+ *                             Message is either `: text` or `"text"` (double
+ *                             quotes allow any characters, including colons).
  *                             Examples:
  *                               commit : init repo
+ *                               commit "feat: add feature"
  *                               commit e1 (Elvira) : checkout work
- *                               commit (Homero) : receipt page
+ *                               commit (Homero) "fix: receipt page"
  *   branch <name>             create <name> off the current tip and check it out.
  *   checkout <name>           switch the current branch to <name>.
  *   merge <name> [: message]  merge branch <name> into the current branch
- *                             (creates a merge commit with two parents).
+ *   merge <name> ["message"]  (creates a merge commit with two parents).
  *
  * A commit only carries a `hash` when one is supplied explicitly — i.e. the
  * `id` token itself is a 6+ hex-digit hash (e.g. `commit a1b2c3d`). Without one
@@ -78,11 +81,26 @@ export function parseDsl(source: string): ParseResult {
     const raw = withoutComment.trim();
     if (raw === "") continue;
 
-    // Split off an optional `: message` tail first.
-    const colonIndex = raw.indexOf(":");
-    const head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
-    const message =
-      colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
+    // Extract the optional message: quoted syntax ("...") takes priority over
+    // colon syntax (: ...) so messages can contain colons freely.
+    let head: string;
+    let message: string | undefined;
+    const quoteStart = raw.indexOf('"');
+    if (quoteStart !== -1) {
+      const quoteEnd = raw.indexOf('"', quoteStart + 1);
+      if (quoteEnd === -1) {
+        return fail(lineNumber, 'unclosed string — close the message with "');
+      }
+      if (raw.slice(quoteEnd + 1).trim() !== "") {
+        return fail(lineNumber, 'unexpected content after closing " — nothing should follow the message');
+      }
+      head = raw.slice(0, quoteStart).trim();
+      message = raw.slice(quoteStart + 1, quoteEnd) || undefined;
+    } else {
+      const colonIndex = raw.indexOf(":");
+      head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
+      message = colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
+    }
 
     const tokens = head.split(/\s+/);
     const keyword = tokens[0].toLowerCase();
@@ -107,7 +125,7 @@ export function parseDsl(source: string): ParseResult {
         if (rest.trim() !== "") {
           return fail(
             lineNumber,
-            `unexpected “${rest.trim()}” after commit — use “commit [id] [(author)] [: message]”`,
+            `unexpected “${rest.trim()}” after commit — use “commit [id] [(author)] [: message]” or “commit [id] [(author)] [\\”message\\”]”`,
           );
         }
 

@@ -5,9 +5,11 @@
  * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
  *
  *   commit [id] [(<author>)] [: message]
+ *   commit [id] [(<author>)] ["message with : colons"]
  *   branch <name>
  *   checkout <name>
  *   merge <name> [: message]
+ *   merge <name> ["message with : colons"]
  *
  * First branch is `main`. Errors carry a 1-based line number and a friendly
  * message; callers can keep the last good graph rendered on error.
@@ -70,10 +72,26 @@ export function parseGit(source: string): GitParseResult {
     const raw = withoutComment.trim();
     if (raw === "") continue;
 
-    const colonIndex = raw.indexOf(":");
-    const head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
-    const message =
-      colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
+    // Extract the optional message: quoted syntax ("...") takes priority over
+    // colon syntax (: ...) so messages can contain colons freely.
+    let head: string;
+    let message: string | undefined;
+    const quoteStart = raw.indexOf('"');
+    if (quoteStart !== -1) {
+      const quoteEnd = raw.indexOf('"', quoteStart + 1);
+      if (quoteEnd === -1) {
+        return fail(lineNumber, 'unclosed string — close the message with "');
+      }
+      if (raw.slice(quoteEnd + 1).trim() !== "") {
+        return fail(lineNumber, 'unexpected content after closing " — nothing should follow the message');
+      }
+      head = raw.slice(0, quoteStart).trim();
+      message = raw.slice(quoteStart + 1, quoteEnd) || undefined;
+    } else {
+      const colonIndex = raw.indexOf(":");
+      head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
+      message = colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
+    }
 
     const tokens = head.split(/\s+/);
     const keyword = (tokens[0] ?? "").toLowerCase();
@@ -95,7 +113,7 @@ export function parseGit(source: string): GitParseResult {
         if (rest.trim() !== "") {
           return fail(
             lineNumber,
-            `unexpected "${rest.trim()}" after commit — use "commit [id] [(author)] [: message]"`,
+            `unexpected "${rest.trim()}" after commit — use "commit [id] [(author)] [: message]" or "commit [id] [(author)] [\\"message\\"]"`,
           );
         }
 
