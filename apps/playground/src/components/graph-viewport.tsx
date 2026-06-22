@@ -1,4 +1,4 @@
-"use client";
+'use client'
 
 /**
  * GraphViewport — a pan/zoom/fit canvas around the <Graph> SVG.
@@ -10,201 +10,272 @@
  * so the <Graph> renders at its intrinsic size and the transform alone places
  * and scales it.
  *
+ * Following atlas-cropper: pan lives in a ref and is written imperatively to the
+ * element's `transform` (no React re-render per pan/zoom-anchor); only `zoom` is
+ * React state, since it also drives the controls' percentage readout. `flushSync`
+ * commits a zoom change before we read post-resize geometry to re-anchor the pan.
+ *
+ * Auto-fit only fires on mount and when the fit button is pressed — editing the
+ * DSL (new content size) never steals the user's current zoom/pan.
+ *
+ * Split into a provider + two consumers so the zoom controls can live in a
+ * sibling row (e.g. the preview header) instead of overlaid on the canvas. The
+ * provider owns all state/handlers and shares them via context; <Canvas> is the
+ * pan/zoom surface and <Controls> the +/-/fit buttons. Both must be descendants
+ * of the same <GraphViewport> provider.
+ *
  * SSR-safe: the server renders the <Graph> inside an identity transform (zoom 1,
  * pan 0). Fit is applied in a post-mount effect, so the first client render
  * matches the server HTML (no hydration mismatch); the transform is just an
  * instant visual adjustment afterwards.
  */
 
-import { Maximize, ZoomIn, ZoomOut } from "lucide-react";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { Maximize, ZoomIn, ZoomOut } from 'lucide-react'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
-const ZOOM_MIN = 0.05;
-const ZOOM_MAX = 5;
-/** Empty pixels kept around the content when fitting. */
-const FIT_MARGIN = 48;
+const ZOOM_MIN = 0.02
+const ZOOM_MAX = 5
+/** Empty pixels kept around the content when fitting (atlas uses 80 ≈ 40/side). */
+const FIT_MARGIN = 80
 /** Multiplicative step for the +/- buttons. */
-const ZOOM_STEP = 1.2;
+const ZOOM_STEP = 1.2
+/** Wheel delta → zoom factor sensitivity (matches atlas-cropper). */
+const ZOOM_SENSITIVITY = 0.005
 
-const clampZoom = (z: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+const clampZoom = (z: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
 
 interface Pan {
-  x: number;
-  y: number;
+  x: number
+  y: number
+}
+
+interface GraphViewportContextValue {
+  zoom: number
+  isDragging: boolean
+  containerRef: React.RefObject<HTMLDivElement | null>
+  contentRef: React.RefObject<HTMLDivElement | null>
+  contentWidth: number
+  contentHeight: number
+  panRef: React.RefObject<Pan>
+  fit: () => void
+  zoomByStep: (factor: number) => void
+  handlePointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+  handlePointerMove: (e: React.PointerEvent<HTMLDivElement>) => void
+  endDrag: (e: React.PointerEvent<HTMLDivElement>) => void
+}
+
+const GraphViewportContext = createContext<GraphViewportContextValue | null>(null)
+
+function useGraphViewport(): GraphViewportContextValue {
+  const ctx = useContext(GraphViewportContext)
+  if (!ctx) {
+    throw new Error('GraphViewport.Canvas / GraphViewport.Controls must be used within <GraphViewport>')
+  }
+  return ctx
 }
 
 export interface GraphViewportProps {
-  /** The <Graph> SVG to display, rendered at its intrinsic size. */
-  children: ReactNode;
+  children: ReactNode
   /** Intrinsic content width (graph.width) — drives the fit math. */
-  contentWidth: number;
+  contentWidth: number
   /** Intrinsic content height (graph.height) — drives the fit math. */
-  contentHeight: number;
-  className?: string;
+  contentHeight: number
 }
 
-export function GraphViewport({
-  children,
-  contentWidth,
-  contentHeight,
-  className,
-}: GraphViewportProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+/**
+ * Provider that owns the zoom/pan motor. Wrap both <GraphViewport.Canvas> and
+ * <GraphViewport.Controls> with it; they can sit in different parts of the tree.
+ */
+export function GraphViewport({ children, contentWidth, contentHeight }: GraphViewportProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
   // Identity by default so server HTML and the first client render match.
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
+  // Only `zoom` is state — it drives the controls' percentage readout. Pan lives
+  // in a ref and is written imperatively, so panning/zoom-anchoring never
+  // re-renders (atlas-cropper pattern).
+  const [zoom, setZoom] = useState(1)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const zoomRef = useRef(zoom)
+  const panRef = useRef<Pan>({ x: 0, y: 0 })
 
   // Live drag bookkeeping (refs, not state, so pointermove stays cheap).
-  const dragState = useRef<{ startX: number; startY: number; startPan: Pan } | null>(
-    null,
-  );
+  const dragState = useRef<{ startX: number; startY: number; startPan: Pan } | null>(null)
 
-  /** Compute the fit transform for the current container + content size. */
-  const computeFit = useCallback((): { zoom: number; pan: Pan } | null => {
-    const el = containerRef.current;
-    if (!el) return null;
-    const { width: vpW, height: vpH } = el.getBoundingClientRect();
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+
+  /** Write the current pan ref to the element transform (zoom comes from state). */
+  const applyPan = useCallback(() => {
+    const cEl = contentRef.current
+    if (!cEl) return
+    cEl.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px) scale(${zoomRef.current})`
+  }, [])
+
+  /** Fit the content to the viewport and center it. Mount + fit button only. */
+  const fit = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    const { width: vpW, height: vpH } = el.getBoundingClientRect()
     if (vpW === 0 || vpH === 0 || contentWidth === 0 || contentHeight === 0) {
-      return null;
+      return
     }
     // Don't upscale past 100% just to fill the pane.
     const fitZoom = Math.min(
       1,
-      Math.max(
-        ZOOM_MIN,
-        Math.min(
-          (vpW - FIT_MARGIN) / contentWidth,
-          (vpH - FIT_MARGIN) / contentHeight,
-        ),
-      ),
-    );
-    return {
-      zoom: fitZoom,
-      pan: {
-        x: (vpW - contentWidth * fitZoom) / 2,
-        y: (vpH - contentHeight * fitZoom) / 2,
-      },
-    };
-  }, [contentWidth, contentHeight]);
-
-  const fit = useCallback(() => {
-    const next = computeFit();
-    if (!next) return;
-    setZoom(next.zoom);
-    setPan(next.pan);
-  }, [computeFit]);
-
-  // A single effect handles every fit trigger:
-  //  - mount: ResizeObserver fires its callback once on `observe`, with the
-  //    initial container size.
-  //  - container resize: subsequent observer callbacks (responsive panes,
-  //    window resize).
-  //  - new graph: `fit` is recreated when contentWidth/Height change (via
-  //    computeFit), re-running this effect, which re-observes and re-fits.
-  // fit() (which calls setState) runs inside the observer callback, never
-  // synchronously in the effect body — so no cascading-render on mount.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    if (typeof ResizeObserver === "undefined") {
-      const id = requestAnimationFrame(() => fit());
-      return () => cancelAnimationFrame(id);
+      Math.max(ZOOM_MIN, Math.min((vpW - FIT_MARGIN) / contentWidth, (vpH - FIT_MARGIN) / contentHeight))
+    )
+    flushSync(() => setZoom(fitZoom))
+    zoomRef.current = fitZoom
+    panRef.current = {
+      x: (vpW - contentWidth * fitZoom) / 2,
+      y: (vpH - contentHeight * fitZoom) / 2,
     }
-    const ro = new ResizeObserver(() => fit());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [fit]);
+    applyPan()
+  }, [contentWidth, contentHeight, applyPan])
 
-  /** Zoom toward an anchor point (in container-local coords), keeping it fixed. */
+  // Auto-fit on mount only. Editing the DSL (new content size) must NOT steal the
+  // user's current zoom/pan, so contentWidth/Height are deliberately not deps.
+  useEffect(() => {
+    fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Zoom toward an anchor point (in container-local coords), keeping it fixed.
+   * `flushSync` commits the zoom (which the transform reads via zoomRef) before
+   * we recompute the pan that keeps the anchor's content point under the anchor.
+   */
   const zoomToward = useCallback(
     (anchorX: number, anchorY: number, factor: number) => {
-      setZoom((prevZoom) => {
-        const nextZoom = clampZoom(prevZoom * factor);
-        if (nextZoom === prevZoom) return prevZoom;
-        setPan((prevPan) => {
-          const contentX = (anchorX - prevPan.x) / prevZoom;
-          const contentY = (anchorY - prevPan.y) / prevZoom;
-          return {
-            x: anchorX - contentX * nextZoom,
-            y: anchorY - contentY * nextZoom,
-          };
-        });
-        return nextZoom;
-      });
+      const oldZoom = zoomRef.current
+      const newZoom = clampZoom(oldZoom * factor)
+      if (newZoom === oldZoom) return
+
+      const pan = panRef.current
+      const contentX = (anchorX - pan.x) / oldZoom
+      const contentY = (anchorY - pan.y) / oldZoom
+
+      flushSync(() => setZoom(newZoom))
+      zoomRef.current = newZoom
+      panRef.current = {
+        x: anchorX - contentX * newZoom,
+        y: anchorY - contentY * newZoom,
+      }
+      applyPan()
     },
-    [],
-  );
+    [applyPan]
+  )
 
   // Wheel zoom, cursor-anchored. Attached imperatively with { passive: false }
   // because React's synthetic onWheel is passive and can't preventDefault.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    const el = containerRef.current
+    if (!el) return
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const cursorX = e.clientX - rect.left;
-      const cursorY = e.clientY - rect.top;
-      zoomToward(cursorX, cursorY, 1 - e.deltaY * 0.0015);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomToward]);
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      const cursorX = e.clientX - rect.left
+      const cursorY = e.clientY - rect.top
+      zoomToward(cursorX, cursorY, 1 - e.deltaY * ZOOM_SENSITIVITY)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [zoomToward])
 
-  const handlePointerDown = useCallback(
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Ignore drags that start on the controls (buttons).
+    if ((e.target as HTMLElement).closest('[data-slot=button]')) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPan: panRef.current,
+    }
+    setIsDragging(true)
+  }, [])
+
+  const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      // Ignore drags that start on the controls (buttons).
-      if ((e.target as HTMLElement).closest("[data-slot=button]")) return;
-      e.currentTarget.setPointerCapture(e.pointerId);
-      dragState.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        startPan: pan,
-      };
-      setIsDragging(true);
+      const drag = dragState.current
+      if (!drag) return
+      panRef.current = {
+        x: drag.startPan.x + (e.clientX - drag.startX),
+        y: drag.startPan.y + (e.clientY - drag.startY),
+      }
+      applyPan()
     },
-    [pan],
-  );
-
-  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragState.current;
-    if (!drag) return;
-    setPan({
-      x: drag.startPan.x + (e.clientX - drag.startX),
-      y: drag.startPan.y + (e.clientY - drag.startY),
-    });
-  }, []);
+    [applyPan]
+  )
 
   const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragState.current) return;
-    dragState.current = null;
-    setIsDragging(false);
+    if (!dragState.current) return
+    dragState.current = null
+    setIsDragging(false)
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+      e.currentTarget.releasePointerCapture(e.pointerId)
     }
-  }, []);
+  }, [])
 
   /** Step zoom toward the viewport center, used by the +/- buttons. */
   const zoomByStep = useCallback(
     (factor: number) => {
-      const el = containerRef.current;
-      if (!el) return;
-      const { width, height } = el.getBoundingClientRect();
-      zoomToward(width / 2, height / 2, factor);
+      const el = containerRef.current
+      if (!el) return
+      const { width, height } = el.getBoundingClientRect()
+      zoomToward(width / 2, height / 2, factor)
     },
-    [zoomToward],
-  );
+    [zoomToward]
+  )
+
+  return (
+    <GraphViewportContext.Provider
+      value={{
+        zoom,
+        isDragging,
+        containerRef,
+        contentRef,
+        contentWidth,
+        contentHeight,
+        panRef,
+        fit,
+        zoomByStep,
+        handlePointerDown,
+        handlePointerMove,
+        endDrag,
+      }}
+    >
+      {children}
+    </GraphViewportContext.Provider>
+  )
+}
+
+export interface GraphViewportCanvasProps {
+  /** The <Graph> SVG to display, rendered at its intrinsic size. */
+  children: ReactNode
+  className?: string
+}
+
+/** The pan/zoom surface that clips, captures input, and holds the transform. */
+function GraphViewportCanvas({ children, className }: GraphViewportCanvasProps) {
+  const {
+    isDragging,
+    containerRef,
+    contentRef,
+    contentWidth,
+    contentHeight,
+    panRef,
+    zoom,
+    handlePointerDown,
+    handlePointerMove,
+    endDrag,
+  } = useGraphViewport()
 
   return (
     <div
@@ -216,18 +287,21 @@ export function GraphViewport({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       className={cn(
-        "relative h-full w-full touch-none overflow-hidden overscroll-contain",
-        isDragging ? "cursor-grabbing select-none" : "cursor-grab",
-        className,
+        'relative h-full w-full touch-none overflow-hidden overscroll-contain',
+        isDragging ? 'cursor-grabbing select-none' : 'cursor-grab',
+        className
       )}
     >
       {/* Inner wrapper carries the transform; origin top-left so the math is
-          a plain translate+scale. */}
+          a plain translate+scale. applyPan() writes the transform imperatively
+          during pan/zoom; this inline value (read from the refs at render time)
+          keeps a re-render — e.g. the zoom % readout — from clobbering it. */}
       <div
+        ref={contentRef}
         data-slot="graph-viewport-content"
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transformOrigin: "0 0",
+          transform: `translate(${panRef.current.x}px, ${panRef.current.y}px) scale(${zoom})`,
+          transformOrigin: '0 0',
           width: contentWidth || undefined,
           height: contentHeight || undefined,
         }}
@@ -235,43 +309,41 @@ export function GraphViewport({
       >
         {children}
       </div>
-
-      {/* CONTROLS — overlaid bottom-left. */}
-      <div
-        data-slot="graph-viewport-controls"
-        className="bg-card/90 absolute bottom-3 left-3 flex items-center gap-1 rounded-md border p-1 shadow-xs backdrop-blur-sm"
-      >
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Zoom out"
-          onClick={() => zoomByStep(1 / ZOOM_STEP)}
-        >
-          <ZoomOut aria-hidden="true" />
-        </Button>
-        <span className="text-muted-foreground w-12 text-center font-mono text-xs tabular-nums">
-          {Math.round(zoom * 100)}%
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Zoom in"
-          onClick={() => zoomByStep(ZOOM_STEP)}
-        >
-          <ZoomIn aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Fit to view"
-          onClick={fit}
-        >
-          <Maximize aria-hidden="true" />
-        </Button>
-      </div>
     </div>
-  );
+  )
 }
+
+export interface GraphViewportControlsProps {
+  className?: string
+}
+
+/** Zoom out / % / zoom in / fit. Render anywhere inside the provider. */
+function GraphViewportControls({ className }: GraphViewportControlsProps) {
+  const { zoom, zoomByStep, fit } = useGraphViewport()
+
+  return (
+    <div data-slot="graph-viewport-controls" className={cn('flex items-center', className)}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Zoom out"
+        onClick={() => zoomByStep(1 / ZOOM_STEP)}
+      >
+        <ZoomOut aria-hidden="true" />
+      </Button>
+      <span className="text-muted-foreground w-12 text-center font-mono text-xs tabular-nums">
+        {Math.round(zoom * 100)}%
+      </span>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Zoom in" onClick={() => zoomByStep(ZOOM_STEP)}>
+        <ZoomIn aria-hidden="true" />
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Fit to view" onClick={fit}>
+        <Maximize aria-hidden="true" />
+      </Button>
+    </div>
+  )
+}
+
+GraphViewport.Canvas = GraphViewportCanvas
+GraphViewport.Controls = GraphViewportControls
