@@ -5,23 +5,26 @@
  * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
  *
  *   commit [id] [(<author>)] [: message]
+ *   commit [id] [(<author>)] ["message with : colons"]
  *                             add a commit on the current branch; parent is the
  *                             branch's current tip. `id` optional (auto: c1, c2…).
  *                             `(<author>)` optional author name in parens.
- *                             `: message` optional human label.
+ *                             Message is either `: text` or `"text"` (double
+ *                             quotes allow any characters, including colons).
  *                             Examples:
  *                               commit : init repo
+ *                               commit "feat: add feature"
  *                               commit e1 (Elvira) : checkout work
- *                               commit (Homero) : receipt page
+ *                               commit (Homero) "fix: receipt page"
  *   branch <name>             create <name> off the current tip and check it out.
  *   checkout <name>           switch the current branch to <name>.
  *   merge <name> [: message]  merge branch <name> into the current branch
- *                             (creates a merge commit with two parents).
+ *   merge <name> ["message"]  (creates a merge commit with two parents).
  *
- * Each commit also carries a short hex-ish `hash`. If the line doesn't supply
- * one explicitly (the `id` token may itself be a 6+ hex-digit hash), a
- * DETERMINISTIC pseudo-hash is derived from the commit id, so server and client
- * produce identical graphs (no random → no hydration mismatch).
+ * A commit only carries a `hash` when one is supplied explicitly — i.e. the
+ * `id` token itself is a 6+ hex-digit hash (e.g. `commit a1b2c3d`). Without one
+ * the commit has no hash and none is rendered. Author and message are likewise
+ * optional; a commit with no hash, author, or message renders as a bare node.
  *
  * The first branch is `main`. Errors are reported with a 1-based line number and
  * a friendly message; the caller keeps the last good graph rendered.
@@ -45,17 +48,16 @@ const DEFAULT_BRANCH = "main";
 const HASH_RE = /^[0-9a-f]{6,}$/i;
 
 /**
- * Derive a deterministic 7-char hex pseudo-hash from a seed string (the commit
- * id). Uses a tiny FNV-1a so the same id always maps to the same hash in Node
- * and the browser — keeping SSR and hydration byte-identical.
+ * Returns the index of the first `needle` in `s` outside any double-quoted
+ * span (backslash-escaped quotes are honoured). Returns -1 if not found.
  */
-function pseudoHash(seed: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
+function indexOutsideQuotes(s: string, needle: string): number {
+  let inQuote = false;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '"' && (i === 0 || s[i - 1] !== "\\")) inQuote = !inQuote;
+    if (!inQuote && s.startsWith(needle, i)) return i;
   }
-  return (h >>> 0).toString(16).padStart(8, "0").slice(0, 7);
+  return -1;
 }
 
 /**
@@ -88,15 +90,39 @@ export function parseDsl(source: string): ParseResult {
 
   for (let i = 0; i < lines.length; i++) {
     const lineNumber = i + 1;
-    const withoutComment = lines[i].split("#")[0];
-    const raw = withoutComment.trim();
+    // Strip comments only outside quoted spans so `commit "fix #123"` survives.
+    const line = lines[i] ?? "";
+    const commentIdx = indexOutsideQuotes(line, "#");
+    const raw = (commentIdx === -1 ? line : line.slice(0, commentIdx)).trim();
     if (raw === "") continue;
 
-    // Split off an optional `: message` tail first.
-    const colonIndex = raw.indexOf(":");
-    const head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
-    const message =
-      colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
+    // Extract the optional message. Quoted syntax ("...") takes priority over
+    // colon syntax (: ...). Scan forward skipping paren-depth so a " inside an
+    // (author) group is not mistaken for the start of the message.
+    let head: string;
+    let message: string | undefined;
+
+    let firstOuterQuote = -1;
+    {
+      let depth = 0;
+      for (let j = 0; j < raw.length; j++) {
+        if (raw[j] === "(") depth++;
+        else if (raw[j] === ")") depth = Math.max(0, depth - 1);
+        else if (raw[j] === '"' && depth === 0) { firstOuterQuote = j; break; }
+      }
+    }
+
+    if (firstOuterQuote !== -1) {
+      if (!raw.endsWith('"')) {
+        return fail(lineNumber, 'unclosed string — close the message with "');
+      }
+      head = raw.slice(0, firstOuterQuote).trim();
+      message = raw.slice(firstOuterQuote + 1, raw.length - 1) || undefined;
+    } else {
+      const colonIndex = raw.indexOf(":");
+      head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
+      message = colonIndex === -1 ? undefined : raw.slice(colonIndex + 1).trim() || undefined;
+    }
 
     const tokens = head.split(/\s+/);
     const keyword = tokens[0].toLowerCase();
@@ -121,7 +147,7 @@ export function parseDsl(source: string): ParseResult {
         if (rest.trim() !== "") {
           return fail(
             lineNumber,
-            `unexpected “${rest.trim()}” after commit — use “commit [id] [(author)] [: message]”`,
+            `unexpected “${rest.trim()}” after commit — use “commit [id] [(author)] [: message]” or “commit [id] [(author)] [\\”message\\”]”`,
           );
         }
 
@@ -129,15 +155,16 @@ export function parseDsl(source: string): ParseResult {
         if (commits.some((c) => c.id === id)) {
           return fail(lineNumber, `duplicate commit id “${id}”`);
         }
-        // An explicit hex-ish id token doubles as the hash; otherwise derive one.
-        const hash = idToken && HASH_RE.test(idToken) ? idToken : pseudoHash(id);
+        // An explicit hex-ish id token doubles as the hash; otherwise the
+        // commit carries no hash and none is rendered.
+        const hash = idToken && HASH_RE.test(idToken) ? idToken : undefined;
 
         commits.push({
           id,
           parents: parentTip ? [parentTip] : [],
           branch: currentBranch,
           message,
-          hash,
+          ...(hash !== undefined ? { hash } : {}),
           ...(author !== undefined ? { author } : {}),
         });
         branchTips.set(currentBranch, id);
@@ -179,7 +206,6 @@ export function parseDsl(source: string): ParseResult {
           parents: [mainlineTip, mergedTip],
           branch: currentBranch,
           message: message ?? `merge ${arg}`,
-          hash: pseudoHash(id),
         });
         branchTips.set(currentBranch, id);
         break;

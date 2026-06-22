@@ -38,6 +38,10 @@
     "./react": {
       "types": "./dist/react/index.d.ts",
       "import": "./dist/react/index.js"
+    },
+    "./eslint": {
+      "types": "./dist/eslint/index.d.ts",
+      "import": "./dist/eslint/index.js"
     }
   },
   "main": "./dist/index.js",
@@ -47,6 +51,9 @@
     "*": {
       "react": [
         "./dist/react/index.d.ts"
+      ],
+      "eslint": [
+        "./dist/eslint/index.d.ts"
       ]
     }
   },
@@ -58,10 +65,14 @@
     "gen:glyphs": "tsx scripts/gen-glyphs.ts"
   },
   "peerDependencies": {
+    "eslint": ">=9",
     "react": ">=18",
     "react-dom": ">=18"
   },
   "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    },
     "react": {
       "optional": true
     },
