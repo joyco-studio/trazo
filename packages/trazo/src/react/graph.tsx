@@ -200,9 +200,10 @@ function renderGroup(
   labelClass: string | undefined,
 ): JSX.Element {
   const isNote = group.variant === "note";
-  // Title sits in the reserved strip on the box's top-left.
+  // Subgraph titles sit in the reserved top strip; note boxes have no strip, so
+  // their text centers in the whole box (height = textHeight + GROUP_PAD*2).
   const titleX = group.x + GROUP_PAD;
-  const titleY = group.y + GROUP_TITLE_H / 2;
+  const titleY = isNote ? group.y + group.h / 2 : group.y + GROUP_TITLE_H / 2;
   return (
     <g key={group.id} data-slot={isNote ? "note" : "group"} className={groupClass}>
       <rect

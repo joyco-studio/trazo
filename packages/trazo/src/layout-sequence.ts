@@ -36,7 +36,6 @@ import type {
 import {
   curveBetween,
   GROUP_PAD,
-  measureLabel,
   measureMultiline,
   pathThrough,
   roleColorKey,
@@ -234,7 +233,8 @@ function straightMessage(
   if (m.label !== undefined) {
     edge.label = m.label;
     edge.labelPoint = { x: (fromX + toX) / 2, y };
-    edge.labelWidth = measureLabel(m.label.toUpperCase());
+    // Widest line, so a multi-line message label sizes its badge correctly.
+    edge.labelWidth = measureMultiline(m.label).width;
   }
   return edge;
 }
@@ -269,7 +269,8 @@ function selfMessage(
   if (m.label !== undefined) {
     edge.label = m.label;
     edge.labelPoint = { x: x + loop, y: y + drop / 2 };
-    edge.labelWidth = measureLabel(m.label.toUpperCase());
+    // Widest line, so a multi-line self-message label sizes its badge correctly.
+    edge.labelWidth = measureMultiline(m.label).width;
   }
   return edge;
 }
