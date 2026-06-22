@@ -137,9 +137,15 @@ const GROUP_STROKE = MUTED_FG;
 const BADGE_CHAMFER = 6;
 const BADGE_PAD_X = LABEL_BADGE_PAD;
 
-/** Arrowhead marker geometry (a filled triangle), sized in stroke-width units. */
-const ARROW_LEN = 7;
-const ARROW_WID = 6;
+/**
+ * Arrowhead marker geometry — a small filled triangle in ABSOLUTE user units
+ * (markerUnits="userSpaceOnUse"), so it does NOT scale with the 2.5px stroke
+ * (which made it huge). `ARROW_LEN` is the tip-to-base length, `ARROW_WID` the
+ * base height. The base is wider than the stroke so the line tucks fully under
+ * the head instead of poking past its narrowing sides.
+ */
+const ARROW_LEN = 8;
+const ARROW_WID = 7;
 /** Dash pattern for dashed edges (async sequence messages). */
 const EDGE_DASH = "6 4";
 
@@ -268,6 +274,56 @@ function arrowColorTokens(edges: PositionedEdge[]): string[] {
   return out;
 }
 
+/** Parse an `M x y L x y …` polyline `d` string into points. Returns [] on miss. */
+function parsePolyline(d: string): Array<{ x: number; y: number }> {
+  const nums = d.match(/-?\d+(?:\.\d+)?/g);
+  if (!nums || nums.length < 2) return [];
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    pts.push({ x: Number(nums[i]), y: Number(nums[i + 1]) });
+  }
+  return pts;
+}
+
+/**
+ * Pull an arrow-bearing END of a polyline back by `inset` px along its last
+ * segment so the stroke STOPS where the arrowhead's base sits — the line never
+ * runs under the head's narrowing tip (which would poke out past its sides).
+ * `which` selects the end to trim ("end" trims the last point, "start" the
+ * first, "both" trims both). Returns the rebuilt `d`; falls back to the original
+ * when the path is too short to trim. Pure.
+ */
+function insetPathEnds(
+  d: string,
+  which: "none" | "end" | "both",
+  insetStart: boolean,
+  inset: number,
+): string {
+  if (which === "none" && !insetStart) return d;
+  const pts = parsePolyline(d);
+  if (pts.length < 2) return d;
+
+  const pullToward = (p: { x: number; y: number }, toward: { x: number; y: number }) => {
+    const dx = toward.x - p.x;
+    const dy = toward.y - p.y;
+    const len = Math.hypot(dx, dy);
+    if (len <= inset) return { ...p }; // segment too short — leave it
+    const t = inset / len;
+    return { x: p.x + dx * t, y: p.y + dy * t };
+  };
+
+  const trimEnd = which === "end" || which === "both";
+  const trimStart = insetStart;
+  if (trimEnd) {
+    const last = pts.length - 1;
+    pts[last] = pullToward(pts[last]!, pts[last - 1]!);
+  }
+  if (trimStart) {
+    pts[0] = pullToward(pts[0]!, pts[1]!);
+  }
+  return pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+}
+
 /**
  * Render a `PositionedGraph` as an inline `<svg>`. Pure: same `graph` → same
  * markup, on server or client.
@@ -295,10 +351,13 @@ export function Graph(props: GraphProps): JSX.Element {
         <defs>
           {markerTokens.map((token) => {
             const fill = nodeColor(token);
-            // Triangle pointing along +x. `orient="auto-start-reverse"` rotates
-            // it to the path tangent AND flips it when used as `marker-start`, so
-            // a bidirectional edge's two heads point outward (not both downstream).
-            // `markerUnits="strokeWidth"` scales it with the line.
+            // Triangle pointing along +x, base at x=0, tip at x=ARROW_LEN.
+            // refX at the tip → the point lands on the node face (where the path
+            // ends). markerUnits="userSpaceOnUse" keeps it an absolute ~8px
+            // instead of ×strokeWidth (which made it huge). The base (ARROW_WID,
+            // wider than the 2.5px stroke) covers the line end so it never pokes
+            // past the head. orient="auto-start-reverse" flips it for
+            // marker-start so a bidirectional edge's two heads point outward.
             const half = ARROW_WID / 2;
             return (
               <marker
@@ -309,7 +368,7 @@ export function Graph(props: GraphProps): JSX.Element {
                 refX={ARROW_LEN}
                 refY={half}
                 orient="auto-start-reverse"
-                markerUnits="strokeWidth"
+                markerUnits="userSpaceOnUse"
               >
                 <path d={`M 0 0 L ${ARROW_LEN} ${half} L 0 ${ARROW_WID} Z`} fill={fill} />
               </marker>
@@ -349,6 +408,14 @@ export function Graph(props: GraphProps): JSX.Element {
         {orderEdgesByPaint(graph.edges).map((edge, i) => {
           const head = edge.arrowHead;
           const markerRef = head && head !== "none" ? `url(#${arrowMarkerId(edge.color)})` : undefined;
+          // Pull the stroke back from any arrowed end by the head length so the
+          // line ends under the head's base, not its tip.
+          const insetEnd = head === "end" || head === "both" ? head : "none";
+          const insetStart = head === "both";
+          const d =
+            head && head !== "none"
+              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN)
+              : edge.path;
           return (
             <path
               // Index-suffixed: a sequence/multigraph can have multiple edges
@@ -357,7 +424,7 @@ export function Graph(props: GraphProps): JSX.Element {
               data-slot="edge"
               data-kind={edge.kind}
               className={classNames?.edge}
-              d={edge.path}
+              d={d}
               fill="none"
               stroke={nodeColor(edge.color)}
               strokeWidth={EDGE_WIDTH}
