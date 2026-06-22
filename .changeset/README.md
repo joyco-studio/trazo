@@ -19,3 +19,21 @@ project in
    consumes the changeset markdown files, bumps versions and updates changelogs.
 4. Merging the "Version Packages" PR publishes the affected packages to npm
    automatically.
+
+## One-time setup: npm trusted publishing
+
+The publish step uses npm **trusted publishing** (OIDC), so no `NPM_TOKEN`
+secret is stored. Before the first "Version Packages" PR is merged, a trusted
+publisher must be configured on npmjs.com for each published package, or the
+publish job will fail with an authentication error:
+
+1. Go to the package settings on npmjs.com (for `@joycostudio/trazo`:
+   `https://www.npmjs.com/package/@joycostudio/trazo/access`).
+2. Under **Trusted Publisher**, add a GitHub Actions publisher pointing at:
+   - Repository: `joyco-studio/trazo`
+   - Workflow: `.github/workflows/release.yml`
+3. Save. The `id-token: write` permission in the workflow then lets npm verify
+   the release and attach provenance automatically.
+
+To use a classic token instead, drop `id-token: write` from the release job and
+set `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` on the publish step.

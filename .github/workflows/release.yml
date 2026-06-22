@@ -40,10 +40,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # npm trusted publishing (OIDC) requires a recent npm. Node 24 ships a
-      # compatible npm, but pin to latest so provenance/OIDC is always available.
+      # npm trusted publishing (OIDC) needs npm >= 11.5.1. Node 24's bundled npm
+      # may be older, so install an explicit, SHA-pinned-equivalent version
+      # rather than a floating `@latest` that could regress between runs.
       - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.5.1
 
       # changesets/action does one of two things on every push to main:
       #   - changesets present  -> open/update the "Version Packages" PR (runs `version`)
