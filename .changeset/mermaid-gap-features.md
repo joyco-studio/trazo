@@ -15,8 +15,12 @@ block-grid diagrams, and undirected/bidirectional edges.
   stacks the lines as `<tspan>` rows.
 - **Sequence diagrams.** New `SequenceGraph` input, `layoutSequence`,
   `parseSequence`, and a `seq` tagged template. Participants become lifeline
-  columns, messages become rows (`->>` sync, `-->>` async/dashed, self-loops),
-  and `Note over A,B` renders a note box. The result reuses `<Graph>` via new
+  columns (bracketed by a header band at the top AND bottom), messages become
+  rows (`->>` sync, `-->>` async/dashed, self-loops), and `Note over A,B`
+  renders a note box. Messages and notes share one timeline via an additive
+  `seq?: number` (global event order) on `SequenceMessage`/`SequenceNote`, so a
+  note interleaves in its row between messages. Message labels sit above their
+  arrow; notes are flat filled panels. The result reuses `<Graph>` via new
   `lifelines` and note `PositionedGroup`s.
 - **Block-grid wireframes.** New `BlockGraph` input, `layoutBlock`, `parseBlock`,
   and a `block` tagged template for Mermaid `block-beta`-style column-span grids
@@ -24,8 +28,10 @@ block-grid diagrams, and undirected/bidirectional edges.
   box nodes.
 - **Undirected / bidirectional edges + arrowheads.** `FlowEdge.arrow`
   (`"none" | "end" | "both"`) and the DSL tokens `---` (undirected), `===`
-  (undirected colored), and `<-->` (bidirectional). The renderer now draws
-  arrowheads via SVG `<marker>`s whose fill follows the edge's color token.
+  (undirected colored), `<-->` (bidirectional), and `<==>` (bidirectional
+  colored). The renderer draws arrowheads via SVG `<marker>`s whose fill follows
+  the edge's color token; `<-->`/`<==>` use `auto-start-reverse` so both heads
+  point outward.
 
   **Behavior change:** flow edges are **directed by default** — `-->` / `==>`
   now render an arrowhead at the target (previously edges had no heads). Use

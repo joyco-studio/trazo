@@ -130,8 +130,11 @@ interface FlowGraph {
 type MessageKind = "sync" | "async" | "self";
 
 interface SequenceParticipant { id: NodeId; label?: string; role?: SemanticRole; }
-interface SequenceMessage { from: NodeId; to: NodeId; label?: string; kind: MessageKind; }
-interface SequenceNote { over: NodeId[]; text: string; }
+interface SequenceMessage { from: NodeId; to: NodeId; label?: string; kind: MessageKind; seq?: number; }
+interface SequenceNote { over: NodeId[]; text: string; seq?: number; }
+// `seq` is the global event order across messages AND notes (0-based). The
+// parser stamps it from source line order so notes interleave on the timeline;
+// omit it when building a graph by hand and notes sort after all messages.
 
 interface SequenceGraph {
   kind: "sequence";
