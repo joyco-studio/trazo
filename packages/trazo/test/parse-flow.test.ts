@@ -152,6 +152,82 @@ describe("parseFlow — edges", () => {
   });
 });
 
+// ── multi-line labels ────────────────────────────────────────────────────────
+
+describe("parseFlow — multi-line labels", () => {
+  it("converts a literal \\n in a label to a newline", () => {
+    expect(node(ok('A["line one\\nline two"]'), "A").label).toBe("line one\nline two");
+  });
+
+  it("converts <br> and <br/> to newlines", () => {
+    expect(node(ok('A["a<br>b<br/>c"]'), "A").label).toBe("a\nb\nc");
+  });
+
+  it("converts \\n inside an edge label", () => {
+    // Pipe labels are not quote-stripped (quotes are literal by design), so use
+    // a bare label here.
+    expect(ok("A -->|first\\nsecond| B").edges[0]?.label).toBe("first\nsecond");
+  });
+
+  it("leaves a single-line label unchanged", () => {
+    expect(node(ok('A["just one"]'), "A").label).toBe("just one");
+  });
+
+  it("preserves a literal backslash-N (only lowercase \\n is a break)", () => {
+    // `C:\Newdir` must NOT become `C:` / `ewdir` — \N is not a line break.
+    expect(node(ok('A["C:\\Newdir"]'), "A").label).toBe("C:\\Newdir");
+  });
+});
+
+// ── arrow tokens (directed / undirected / bidirectional) ─────────────────────
+
+describe("parseFlow — arrow tokens", () => {
+  it("--> is directed (no explicit arrow recorded; default end)", () => {
+    expect(ok("A --> B").edges[0]?.arrow).toBeUndefined();
+  });
+
+  it("--- is undirected (arrow: none)", () => {
+    const g = ok("A --- B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "none" });
+    expect(g.edges[0]?.colored).toBeUndefined();
+  });
+
+  it("=== is undirected and colored", () => {
+    const g = ok("A === B");
+    expect(g.edges[0]?.arrow).toBe("none");
+    expect(g.edges[0]?.colored).toBe(true);
+  });
+
+  it("<--> is bidirectional (arrow: both)", () => {
+    const g = ok("A <--> B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "both" });
+  });
+
+  it("<==> is bidirectional AND colored", () => {
+    const g = ok("A <==> B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "both", colored: true });
+  });
+
+  it("longest-match: <--> is not read as -->", () => {
+    const g = ok("A <--> B");
+    expect(g.edges).toHaveLength(1);
+    expect(node(g, "A").id).toBe("A");
+    expect(g.edges[0]?.to).toBe("B");
+  });
+
+  it("every arrow token supports an edge label", () => {
+    expect(ok("A ---|sync| B").edges[0]?.label).toBe("sync");
+    expect(ok("A <-->|two-way| B").edges[0]?.label).toBe("two-way");
+  });
+
+  it("ignores an arrow token inside a quoted label", () => {
+    const g = ok('A["x --- y"] --> B');
+    expect(g.edges).toHaveLength(1);
+    expect(g.edges[0]?.arrow).toBeUndefined();
+    expect(node(g, "A").label).toBe("x --- y");
+  });
+});
+
 // ── quote-aware: comment stripping ───────────────────────────────────────────
 
 describe("parseFlow — comment stripping respects quotes", () => {
@@ -226,6 +302,50 @@ describe("parseFlow — pipe label respects quotes", () => {
   it("handles a quoted string inside a pipe label without early-closing", () => {
     const g = ok('A -->|step "a|b"| B');
     expect(g.edges[0]?.label).toBe('step "a|b"');
+  });
+});
+
+// ── subgraphs ─────────────────────────────────────────────────────────────────
+
+describe("parseFlow — subgraphs", () => {
+  it("declares a group and tags its members", () => {
+    const g = ok('subgraph G ["Build"]\nA --> B\nend\nB --> C');
+    expect(g.groups).toEqual([{ id: "G", label: "Build" }]);
+    expect(node(g, "A").group).toBe("G");
+    expect(node(g, "B").group).toBe("G");
+    // C is declared outside the block → ungrouped.
+    expect(node(g, "C").group).toBeUndefined();
+  });
+
+  it("supports a bare (unlabeled) subgraph", () => {
+    const g = ok("subgraph G\nA\nend");
+    expect(g.groups).toEqual([{ id: "G" }]);
+    expect(node(g, "A").group).toBe("G");
+  });
+
+  it("accepts a quoted title without brackets", () => {
+    expect(ok('subgraph G "Title"\nA\nend').groups?.[0]?.label).toBe("Title");
+  });
+
+  it("errors on a nested subgraph", () => {
+    const e = err("subgraph A\nsubgraph B\nend\nend");
+    expect(e.line).toBe(2);
+    expect(e.message).toMatch(/nested/i);
+  });
+
+  it("errors on `end` with no open subgraph", () => {
+    const e = err("A\nend");
+    expect(e.line).toBe(2);
+    expect(e.message).toMatch(/end/i);
+  });
+
+  it("first group wins when a node would join two", () => {
+    const g = ok("subgraph G1\nA\nend\nsubgraph G2\nA\nend");
+    expect(node(g, "A").group).toBe("G1");
+  });
+
+  it("emits no groups key when there are none", () => {
+    expect(ok("A --> B").groups).toBeUndefined();
   });
 });
 

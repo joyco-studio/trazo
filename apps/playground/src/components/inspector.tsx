@@ -1,4 +1,4 @@
-"use client";
+'use client'
 
 /**
  * Inspector — the client island that makes playground "live".
@@ -12,41 +12,47 @@
  *     debounced. No server round-trip per keystroke.
  *   - Parse errors keep the LAST GOOD graph on screen with a friendly inline
  *     message.
- *   - A mode toggle switches between the git DSL (commit DAGs) and the flow DSL
- *     (flowcharts) — the two diagram families the JOYCO logs need. Each mode
- *     keeps its own source so toggling never loses your work.
+ *   - A mode toggle switches between the flow (flowcharts), git (commit DAGs),
+ *     sequence (sequence diagrams), and block (block-grid wireframes) DSLs — the
+ *     diagram families the JOYCO logs need. Each mode keeps its own source so
+ *     toggling never loses your work.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
 import {
   type EdgeStyle,
   type GitLabelSide,
   type GitOrientation,
+  layoutBlock,
   layoutFlow,
   layoutGit,
+  layoutSequence,
+  parseBlock,
+  parseSequence,
   type PositionedGraph,
-} from "@joycostudio/trazo";
-import { Graph } from "@joycostudio/trazo/react";
-import { Check, Copy, Download } from "lucide-react";
+} from '@joycostudio/trazo'
+import { Graph } from '@joycostudio/trazo/react'
+import { Check, Copy, Download } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
-import { GraphViewport } from "@/components/graph-viewport";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Cluster, Filler } from "@/components/ui/cluster";
-import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { parseDsl, type ParseError, SEED_PROGRAM } from "@/lib/dsl";
-import { directionOf, parseFlow, SEED_FLOW } from "@/lib/flow-dsl";
+import { GraphViewport } from '@/components/graph-viewport'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Cluster, Filler } from '@/components/ui/cluster'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
+import { parseDsl, type ParseError, SEED_PROGRAM } from '@/lib/dsl'
+import { directionOf, parseFlow, SEED_FLOW } from '@/lib/flow-dsl'
+import { SEED_BLOCK, SEED_SEQUENCE } from '@/lib/seeds'
 
-const DEBOUNCE_MS = 140;
+const DEBOUNCE_MS = 140
 
-type Mode = "git" | "flow";
+type Mode = 'git' | 'flow' | 'sequence' | 'block'
 
 /** Git-only layout options surfaced as preview toggles. */
 interface GitOptions {
-  orientation: GitOrientation;
-  labelSide: GitLabelSide;
+  orientation: GitOrientation
+  labelSide: GitLabelSide
 }
 
 /** Parse + lay out a source string for a given mode; returns graph + error. */
@@ -54,21 +60,31 @@ function build(
   mode: Mode,
   source: string,
   edgeStyle: EdgeStyle,
-  git: GitOptions,
+  git: GitOptions
 ): {
-  graph: PositionedGraph | null;
-  error: ParseError | null;
+  graph: PositionedGraph | null
+  error: ParseError | null
 } {
-  if (mode === "flow") {
-    const { graph, error } = parseFlow(source);
-    if (graph.nodes.length === 0) return { graph: null, error };
+  if (mode === 'flow') {
+    const { graph, error } = parseFlow(source)
+    if (graph.nodes.length === 0) return { graph: null, error }
     return {
       graph: layoutFlow(graph, { direction: directionOf(graph), edgeStyle }),
       error,
-    };
+    }
   }
-  const { graph, error } = parseDsl(source);
-  if (graph.commits.length === 0) return { graph: null, error };
+  if (mode === 'sequence') {
+    const { graph, error } = parseSequence(source)
+    if (graph.participants.length === 0) return { graph: null, error }
+    return { graph: layoutSequence(graph), error }
+  }
+  if (mode === 'block') {
+    const { graph, error } = parseBlock(source)
+    if (graph.cells.length === 0) return { graph: null, error }
+    return { graph: layoutBlock(graph), error }
+  }
+  const { graph, error } = parseDsl(source)
+  if (graph.commits.length === 0) return { graph: null, error }
   return {
     graph: layoutGit(graph, {
       edgeStyle,
@@ -76,166 +92,159 @@ function build(
       labelSide: git.labelSide,
     }),
     error,
-  };
+  }
 }
 
 export interface InspectorProps {
   /** Which mode the server rendered (and the initial active tab). */
-  initialMode: Mode;
+  initialMode: Mode
   /** The seed source for `initialMode` — identical to what the server rendered. */
-  initialSource: string;
+  initialSource: string
   /** The server-computed layout for `initialSource` (avoids re-layout on mount). */
-  initialGraph: PositionedGraph;
+  initialGraph: PositionedGraph
 }
 
-export function Inspector({
-  initialMode,
-  initialSource,
-  initialGraph,
-}: InspectorProps) {
-  const [mode, setMode] = useState<Mode>(initialMode);
+export function Inspector({ initialMode, initialSource, initialGraph }: InspectorProps) {
+  const [mode, setMode] = useState<Mode>(initialMode)
   // One source per mode so switching tabs preserves each editor's content. The
   // server-rendered mode keeps its exact seed; the other gets its default.
   const [sources, setSources] = useState<Record<Mode, string>>({
-    git: initialMode === "git" ? initialSource : SEED_PROGRAM,
-    flow: initialMode === "flow" ? initialSource : SEED_FLOW,
-  });
+    git: initialMode === 'git' ? initialSource : SEED_PROGRAM,
+    flow: initialMode === 'flow' ? initialSource : SEED_FLOW,
+    sequence: initialMode === 'sequence' ? initialSource : SEED_SEQUENCE,
+    block: initialMode === 'block' ? initialSource : SEED_BLOCK,
+  })
   // The active mode's graph is seeded from the server; the other lays out lazily.
-  const [graph, setGraph] = useState<PositionedGraph>(initialGraph);
-  const [error, setError] = useState<ParseError | null>(null);
+  const [graph, setGraph] = useState<PositionedGraph>(initialGraph)
+  const [error, setError] = useState<ParseError | null>(null)
   // Edge routing. Defaults to "elbow45" — the same default the server used for
   // `initialGraph`, so the first client render matches the SSR markup.
-  const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>("elbow45");
+  const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>('elbow45')
   // Git-only preview options. Defaults ("vertical" / "right") match the server's
   // `initialGraph`, so the first client render stays byte-identical.
   const [git, setGit] = useState<GitOptions>({
-    orientation: "vertical",
-    labelSide: "right",
-  });
+    orientation: 'vertical',
+    labelSide: 'right',
+  })
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const graphRef = useRef<HTMLDivElement>(null);
-  const [codeCopied, setCodeCopied] = useState(false);
-  const [svgCopied, setSvgCopied] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const graphRef = useRef<HTMLDivElement>(null)
+  const [codeCopied, setCodeCopied] = useState(false)
+  const [svgCopied, setSvgCopied] = useState(false)
 
-  const source = sources[mode];
+  const source = sources[mode]
 
-  const recompute = useCallback(
-    (
-      nextMode: Mode,
-      nextSource: string,
-      nextEdgeStyle: EdgeStyle,
-      nextGit: GitOptions,
-    ) => {
-      const { graph: next, error: nextError } = build(
-        nextMode,
-        nextSource,
-        nextEdgeStyle,
-        nextGit,
-      );
-      setError(nextError);
-      if (next) setGraph(next); // keep last good graph when parse yields nothing
-    },
-    [],
-  );
+  const recompute = useCallback((nextMode: Mode, nextSource: string, nextEdgeStyle: EdgeStyle, nextGit: GitOptions) => {
+    const { graph: next, error: nextError } = build(nextMode, nextSource, nextEdgeStyle, nextGit)
+    setError(nextError)
+    if (next) setGraph(next) // keep last good graph when parse yields nothing
+  }, [])
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const next = event.target.value;
-      setSources((prev) => ({ ...prev, [mode]: next }));
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(
-        () => recompute(mode, next, edgeStyle, git),
-        DEBOUNCE_MS,
-      );
+      const next = event.target.value
+      setSources((prev) => ({ ...prev, [mode]: next }))
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      debounceRef.current = setTimeout(() => recompute(mode, next, edgeStyle, git), DEBOUNCE_MS)
     },
-    [mode, recompute, edgeStyle, git],
-  );
+    [mode, recompute, edgeStyle, git]
+  )
 
   const handleMode = useCallback(
     (next: string) => {
-      const m = next as Mode;
-      setMode(m);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(m, sources[m], edgeStyle, git); // immediate on an explicit switch
+      const m = next as Mode
+      setMode(m)
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      recompute(m, sources[m], edgeStyle, git) // immediate on an explicit switch
     },
-    [recompute, sources, edgeStyle, git],
-  );
+    [recompute, sources, edgeStyle, git]
+  )
 
   const handleEdgeStyle = useCallback(
     (elbow45: boolean) => {
-      const next: EdgeStyle = elbow45 ? "elbow45" : "orthogonal";
-      setEdgeStyle(next);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(mode, source, next, git); // re-layout immediately on toggle
+      const next: EdgeStyle = elbow45 ? 'elbow45' : 'orthogonal'
+      setEdgeStyle(next)
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      recompute(mode, source, next, git) // re-layout immediately on toggle
     },
-    [recompute, mode, source, git],
-  );
+    [recompute, mode, source, git]
+  )
 
   const handleOrientation = useCallback(
     (horizontal: boolean) => {
       const next: GitOptions = {
         ...git,
-        orientation: horizontal ? "horizontal" : "vertical",
-      };
-      setGit(next);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(mode, source, edgeStyle, next);
+        orientation: horizontal ? 'horizontal' : 'vertical',
+      }
+      setGit(next)
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      recompute(mode, source, edgeStyle, next)
     },
-    [recompute, mode, source, edgeStyle, git],
-  );
+    [recompute, mode, source, edgeStyle, git]
+  )
 
   const handleLabelSide = useCallback(
     (leading: boolean) => {
       const next: GitOptions = {
         ...git,
-        labelSide: leading ? "left" : "right",
-      };
-      setGit(next);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      recompute(mode, source, edgeStyle, next);
+        labelSide: leading ? 'left' : 'right',
+      }
+      setGit(next)
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      recompute(mode, source, edgeStyle, next)
     },
-    [recompute, mode, source, edgeStyle, git],
-  );
+    [recompute, mode, source, edgeStyle, git]
+  )
 
   const handleCopyCode = useCallback(() => {
-    navigator.clipboard.writeText(source).then(() => {
-      setCodeCopied(true);
-      setTimeout(() => setCodeCopied(false), 1500);
-    }).catch(() => {});
-  }, [source]);
+    navigator.clipboard
+      .writeText(source)
+      .then(() => {
+        setCodeCopied(true)
+        setTimeout(() => setCodeCopied(false), 1500)
+      })
+      .catch(() => {})
+  }, [source])
 
   const getSvgString = useCallback((): string | null => {
-    const svgEl = graphRef.current?.querySelector<SVGElement>(
-      '[data-slot="trazo-graph"]',
-    );
-    if (!svgEl) return null;
-    return new XMLSerializer().serializeToString(svgEl);
-  }, []);
+    const svgEl = graphRef.current?.querySelector<SVGElement>('[data-slot="trazo-graph"]')
+    if (!svgEl) return null
+    return new XMLSerializer().serializeToString(svgEl)
+  }, [])
 
   const handleCopySvg = useCallback(() => {
-    const svg = getSvgString();
-    if (!svg) return;
-    navigator.clipboard.writeText(svg).then(() => {
-      setSvgCopied(true);
-      setTimeout(() => setSvgCopied(false), 1500);
-    }).catch(() => {});
-  }, [getSvgString]);
+    const svg = getSvgString()
+    if (!svg) return
+    navigator.clipboard
+      .writeText(svg)
+      .then(() => {
+        setSvgCopied(true)
+        setTimeout(() => setSvgCopied(false), 1500)
+      })
+      .catch(() => {})
+  }, [getSvgString])
 
   const handleDownloadSvg = useCallback(() => {
-    const svg = getSvgString();
-    if (!svg) return;
-    const blob = new Blob([svg], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `trazo-${mode}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [getSvgString, mode]);
+    const svg = getSvgString()
+    if (!svg) return
+    const blob = new Blob([svg], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `trazo-${mode}.svg`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [getSvgString, mode])
 
-  const lineCount = useMemo(() => source.split("\n").length, [source]);
-  const unit = mode === "flow" ? "nodes" : "commits";
+  const lineCount = useMemo(() => source.split('\n').length, [source])
+  // The noun for the left-pane status count + the editor/preview labels, per mode.
+  const unit = mode === 'git' ? 'commits' : mode === 'block' ? 'cells' : 'nodes'
+  const modeLabel: Record<Mode, string> = {
+    flow: 'Flowchart',
+    git: 'Commit graph',
+    sequence: 'Sequence diagram',
+    block: 'Block grid',
+  }
 
   return (
     // Two bento panes. The wrapper is transparent; the gap-px seams reveal the
@@ -247,16 +256,14 @@ export function Inspector({
       className="w-full flex-1 gap-px **:data-[slot=cluster-filler]:hidden lg:flex-nowrap"
     >
       {/* LEFT — editor pane */}
-      <Cluster
-        direction="col"
-        align="stretch"
-        className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2"
-      >
-        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground gap-3 px-3 py-1.5">
+      <Cluster direction="col" align="stretch" className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2">
+        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground py-gap gap-3">
           <Tabs value={mode} onValueChange={handleMode}>
             <TabsList>
               <TabsTrigger value="flow">flowchart</TabsTrigger>
               <TabsTrigger value="git">git</TabsTrigger>
+              <TabsTrigger value="sequence">sequence</TabsTrigger>
+              <TabsTrigger value="block">block</TabsTrigger>
             </TabsList>
           </Tabs>
           <Filler />
@@ -264,18 +271,18 @@ export function Inspector({
             variant="ghost"
             size="icon-sm"
             onClick={handleCopyCode}
-            aria-label={codeCopied ? "Copied" : "Copy code"}
+            aria-label={codeCopied ? 'Copied' : 'Copy code'}
             className="text-muted-foreground"
           >
             {codeCopied ? <Check /> : <Copy />}
           </Button>
           <span className="font-mono text-xs tabular-nums">
-            {lineCount} {lineCount === 1 ? "line" : "lines"}
+            {lineCount} {lineCount === 1 ? 'line' : 'lines'}
           </span>
         </Cluster>
 
         <label htmlFor="dsl-editor" className="sr-only">
-          {mode === "flow" ? "Flowchart" : "Commit-graph"} pseudo-code editor
+          {modeLabel[mode]} pseudo-code editor
         </label>
         <Textarea
           id="dsl-editor"
@@ -286,7 +293,7 @@ export function Inspector({
           autoCapitalize="off"
           autoCorrect="off"
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? "dsl-error" : undefined}
+          aria-describedby={error ? 'dsl-error' : undefined}
           className="bg-card min-h-[55vh] flex-1 resize-none rounded-none border-0 px-4 py-4 font-mono text-sm leading-relaxed shadow-none focus-visible:ring-0 lg:min-h-0"
         />
 
@@ -296,19 +303,13 @@ export function Inspector({
               <Badge variant="destructive" size="sm">
                 line&nbsp;{error.line}
               </Badge>
-              <p
-                id="dsl-error"
-                className="text-destructive min-w-0 truncate font-mono text-xs"
-              >
+              <p id="dsl-error" className="text-destructive min-w-0 truncate font-mono text-xs">
                 {error.message}
               </p>
             </Cluster>
           ) : (
             <Cluster align="center" className="bg-card text-muted-foreground px-3 py-2">
-              <span
-                className="bg-mint-green inline-block size-2 rounded-full"
-                aria-hidden="true"
-              />
+              <span className="bg-mint-green inline-block size-2 rounded-full" aria-hidden="true" />
               <p className="font-mono text-xs">
                 {graph.nodes.length} {unit} · {graph.edges.length} edges
               </p>
@@ -318,104 +319,98 @@ export function Inspector({
       </Cluster>
 
       {/* RIGHT — live preview pane */}
-      <Cluster
-        direction="col"
-        align="stretch"
-        className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2"
-      >
-        <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground gap-3 px-3 py-2">
-          <Badge variant="muted" size="sm">
-            preview
-          </Badge>
-          <Filler />
-          {/* Git-only: orientation + label-side toggles. Hidden in flow mode
+      <Cluster direction="col" align="stretch" className="min-w-0 flex-1 basis-full gap-px lg:basis-1/2">
+        <GraphViewport contentWidth={graph.width} contentHeight={graph.height}>
+          <Cluster bg="muted" align="center" className="bg-muted text-muted-foreground py-gap gap-3">
+            <Badge variant="muted" size="sm">
+              preview
+            </Badge>
+            <GraphViewport.Controls />
+            <Filler />
+            {/* Git-only: orientation + label-side toggles. Hidden in flow mode
               since they only affect the commit-lane layout. */}
-          {mode === "git" ? (
-            <>
-              {/* Orientation: off = vertical (default), on = horizontal. */}
-              <label className="flex cursor-pointer items-center gap-2">
-                <span className="font-mono text-xs tracking-wide uppercase">
-                  horiz
-                </span>
-                <Switch
-                  checked={git.orientation === "horizontal"}
-                  onCheckedChange={handleOrientation}
-                  aria-label="Toggle horizontal git layout (off = vertical)"
-                />
-              </label>
-              {/* Label side: off = trailing (right/below), on = leading (left/above). */}
-              <label className="flex cursor-pointer items-center gap-2">
-                <span className="font-mono text-xs tracking-wide uppercase">
-                  {git.orientation === "horizontal" ? "above" : "left"}
-                </span>
-                <Switch
-                  checked={git.labelSide === "left"}
-                  onCheckedChange={handleLabelSide}
-                  aria-label={
-                    git.orientation === "horizontal"
-                      ? "Toggle labels above the commits (off = below)"
-                      : "Toggle labels left of the commits (off = right)"
-                  }
-                />
-              </label>
-              <span
-                aria-hidden="true"
-                className="bg-border h-4 w-px self-center"
-              />
-            </>
-          ) : null}
-          {/* Edge-style toggle: on = 45° diagonals, off = 90° orthogonal. */}
-          <label className="flex cursor-pointer items-center gap-2">
-            <span className="font-mono text-xs tracking-wide uppercase">45°</span>
-            <Switch
-              checked={edgeStyle === "elbow45"}
-              onCheckedChange={handleEdgeStyle}
-              aria-label="Toggle 45° edges (off = 90° orthogonal)"
-            />
-          </label>
-          <span
-            aria-hidden="true"
-            className="bg-border h-4 w-px self-center"
-          />
-          <span className="font-mono text-xs tabular-nums">
-            {Math.round(graph.width)}×{Math.round(graph.height)}
-          </span>
-          <span aria-hidden="true" className="bg-border h-4 w-px self-center" />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={handleCopySvg}
-            aria-label={svgCopied ? "SVG copied" : "Copy SVG"}
-            className="text-muted-foreground"
-          >
-            {svgCopied ? <Check /> : <Copy />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={handleDownloadSvg}
-            aria-label="Download SVG"
-            className="text-muted-foreground"
-          >
-            <Download />
-          </Button>
-        </Cluster>
+            {mode === 'git' ? (
+              <>
+                {/* Orientation: off = vertical (default), on = horizontal. */}
+                <label className="flex cursor-pointer items-center gap-2">
+                  <span className="font-mono text-xs tracking-wide uppercase">horiz</span>
+                  <Switch
+                    checked={git.orientation === 'horizontal'}
+                    onCheckedChange={handleOrientation}
+                    aria-label="Toggle horizontal git layout (off = vertical)"
+                  />
+                </label>
+                {/* Label side: off = trailing (right/below), on = leading (left/above). */}
+                <label className="flex cursor-pointer items-center gap-2">
+                  <span className="font-mono text-xs tracking-wide uppercase">
+                    {git.orientation === 'horizontal' ? 'above' : 'left'}
+                  </span>
+                  <Switch
+                    checked={git.labelSide === 'left'}
+                    onCheckedChange={handleLabelSide}
+                    aria-label={
+                      git.orientation === 'horizontal'
+                        ? 'Toggle labels above the commits (off = below)'
+                        : 'Toggle labels left of the commits (off = right)'
+                    }
+                  />
+                </label>
+                <span aria-hidden="true" className="bg-border h-4 w-px self-center" />
+              </>
+            ) : null}
+            {/* Edge-style toggle: on = 45° diagonals, off = 90° orthogonal. Only
+              flow + git honor it; sequence uses fixed orthogonal and block has
+              no edges, so hide it there. */}
+            {mode === 'flow' || mode === 'git' ? (
+              <>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <span className="font-mono text-xs tracking-wide uppercase">45°</span>
+                  <Switch
+                    checked={edgeStyle === 'elbow45'}
+                    onCheckedChange={handleEdgeStyle}
+                    aria-label="Toggle 45° edges (off = 90° orthogonal)"
+                  />
+                </label>
+                <span aria-hidden="true" className="bg-border h-4 w-px self-center" />
+              </>
+            ) : null}
+            <span className="font-mono text-xs tabular-nums">
+              {Math.round(graph.width)}×{Math.round(graph.height)}
+            </span>
+            <span aria-hidden="true" className="bg-border h-4 w-px self-center" />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleCopySvg}
+              aria-label={svgCopied ? 'SVG copied' : 'Copy SVG'}
+              className="text-muted-foreground"
+            >
+              {svgCopied ? <Check /> : <Copy />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleDownloadSvg}
+              aria-label="Download SVG"
+              className="text-muted-foreground"
+            >
+              <Download />
+            </Button>
+          </Cluster>
 
-        {/* The preview surface is `bg-card`, not the page background — so point
+          {/* The preview surface is `bg-card`, not the page background — so point
             the <Graph> node-border token (`--trazo-bg`) at the card color too,
             or the bg-colored chip seam shows as a ring against this panel. */}
-        <div
-          ref={graphRef}
-          className="bg-card relative min-h-[55vh] flex-1 lg:min-h-0 [--trazo-bg:var(--color-card)]"
-        >
-          <GraphViewport contentWidth={graph.width} contentHeight={graph.height}>
-            <Graph
-              graph={graph}
-              title={mode === "flow" ? "Flowchart" : "Commit graph"}
-            />
-          </GraphViewport>
-        </div>
+          <div
+            ref={graphRef}
+            className="bg-card relative min-h-[55vh] flex-1 [--trazo-bg:var(--color-card)] lg:min-h-0"
+          >
+            <GraphViewport.Canvas>
+              <Graph graph={graph} title={modeLabel[mode]} />
+            </GraphViewport.Canvas>
+          </div>
+        </GraphViewport>
       </Cluster>
     </Cluster>
-  );
+  )
 }

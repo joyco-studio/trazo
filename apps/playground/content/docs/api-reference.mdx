@@ -6,7 +6,10 @@ description: Types, functions, and the React component for @joycostudio/trazo.
 ## Entry points
 
 ```ts
-import { layoutFlow, layoutGit, layout } from "@joycostudio/trazo";
+import {
+  layoutFlow, layoutGit, layoutSequence, layoutBlock, layout,
+  flow, git, seq, block, // tagged-template parsers (throw on error)
+} from "@joycostudio/trazo";
 import { Graph } from "@joycostudio/trazo/react"; // React is a peer dependency
 ```
 
@@ -28,12 +31,43 @@ Lay out a commit DAG.
 layoutGit(input: CommitGraph, options?: LayoutOptions): PositionedGraph
 ```
 
-### `layout(input, options?)`
+### `layoutSequence(input, options?)`
 
-Convenience dispatcher — calls `layoutFlow` when `input.kind === "flow"`, otherwise `layoutGit`.
+Lay out a sequence diagram (participants + ordered messages + notes).
 
 ```ts
-layout(input: CommitGraph | FlowGraph, options?): PositionedGraph
+layoutSequence(input: SequenceGraph, options?: SequenceLayoutOptions): PositionedGraph
+```
+
+### `layoutBlock(input, options?)`
+
+Lay out a block-grid wireframe (Mermaid `block-beta`).
+
+```ts
+layoutBlock(input: BlockGraph, options?: BlockLayoutOptions): PositionedGraph
+```
+
+### `layout(input, options?)`
+
+Convenience dispatcher — routes by `input.kind`: `"flow"` → `layoutFlow`, `"sequence"` → `layoutSequence`, `"block"` → `layoutBlock`, otherwise `layoutGit`.
+
+```ts
+layout(input: CommitGraph | FlowGraph | SequenceGraph | BlockGraph, options?): PositionedGraph
+```
+
+### Tagged templates
+
+`flow`, `git`, `seq`, and `block` parse DSL source inline and **throw** on a syntax error (vs `parseFlow`/`parseGit`/`parseSequence`/`parseBlock`, which return `{ graph, error }`):
+
+```ts
+import { seq, layoutSequence } from "@joycostudio/trazo";
+
+const positioned = layoutSequence(seq`
+  participant Client
+  participant Server
+  Client ->> Server : request
+  Server -->> Client : response
+`);
 ```
 
 ---
@@ -67,22 +101,64 @@ type FlowDirection = "TD" | "LR";
 
 interface FlowNode {
   id: NodeId;
-  label?: string;
+  label?: string;      // \n / <br> → multi-line
   shape?: NodeShape;   // default "box"
   role?: SemanticRole; // controls color
+  group?: NodeId;      // subgraph membership (see FlowGraph.groups)
 }
 
 interface FlowEdge {
   from: NodeId;
   to: NodeId;
   label?: string;
-  colored?: boolean;   // true → inherits source node's role color
+  colored?: boolean;            // true → inherits source node's role color
+  arrow?: "none" | "end" | "both"; // default "end" (directed); "none" = undirected
 }
 
 interface FlowGraph {
   kind: "flow";
   nodes: FlowNode[];
   edges: FlowEdge[];
+  direction?: FlowDirection;
+  groups?: { id: NodeId; label?: string }[]; // subgraph containers
+}
+```
+
+### `SequenceGraph`
+
+```ts
+type MessageKind = "sync" | "async" | "self";
+
+interface SequenceParticipant { id: NodeId; label?: string; role?: SemanticRole; }
+interface SequenceMessage { from: NodeId; to: NodeId; label?: string; kind: MessageKind; seq?: number; }
+interface SequenceNote { over: NodeId[]; text: string; seq?: number; }
+// `seq` is the global event order across messages AND notes (0-based). The
+// parser stamps it from source line order so notes interleave on the timeline;
+// omit it when building a graph by hand and notes sort after all messages.
+
+interface SequenceGraph {
+  kind: "sequence";
+  participants: SequenceParticipant[];
+  messages: SequenceMessage[];
+  notes?: SequenceNote[];
+}
+```
+
+### `BlockGraph`
+
+```ts
+interface BlockCell {
+  id: NodeId;
+  label?: string;
+  shape?: NodeShape;
+  role?: SemanticRole;
+  span?: number;       // column span, default 1
+}
+
+interface BlockGraph {
+  kind: "block";
+  columns: number;
+  cells: BlockCell[];
 }
 ```
 
@@ -98,7 +174,18 @@ interface PositionedGraph {
   edges: PositionedEdge[];
   width: number;   // total diagram width in px (use for container/viewBox sizing)
   height: number;  // total diagram height in px
+  laneCount: number;
+  groups?: PositionedGroup[]; // flow subgraph boxes / sequence note boxes
+  lifelines?: Lifeline[];     // sequence-diagram lifelines
 }
+
+interface PositionedGroup {
+  id: NodeId; label?: string;
+  x: number; y: number; w: number; h: number; // top-left + size (NOT center)
+  variant?: "group" | "note";
+}
+
+interface Lifeline { id: NodeId; x1: number; y1: number; x2: number; y2: number; }
 ```
 
 `width` and `height` include padding and are ready for `viewBox="0 0 {width} {height}"`.
@@ -137,6 +224,29 @@ interface FlowLayoutOptions {
 }
 ```
 
+### Sequence: `SequenceLayoutOptions`
+
+```ts
+interface SequenceLayoutOptions {
+  columnGap?: number;   // default 120 px — between lifeline columns
+  rowGap?: number;      // default 48 px — between message rows
+  headerHeight?: number;// default 40 px — participant header box height
+  padding?: number;     // default 24 px
+  edgeStyle?: "elbow45" | "orthogonal"; // default "orthogonal"
+}
+```
+
+### Block: `BlockLayoutOptions`
+
+```ts
+interface BlockLayoutOptions {
+  cellGap?: number;     // default 12 px
+  rowHeight?: number;   // default 48 px
+  minCellWidth?: number;// default 96 px
+  padding?: number;     // default 24 px
+}
+```
+
 ---
 
 ## `<Graph />` component
@@ -153,6 +263,15 @@ import { Graph } from "@joycostudio/trazo/react";
 - Pure function of props — no hooks, no effects, no browser globals.
 - Renders identically as a React Server Component or when client-hydrated.
 - Wraps output in `<svg data-slot="trazo-graph">`.
+
+Prefer styling via `data-slot` from CSS (`**:data-[slot=group]:…`). Inner slots: `edge`, `edge-label`, `node`, `label`, `group` (subgraph box), `note` (sequence note box), `group-label`, `lifelines` / `lifeline`. A narrow type-safe `classNames` map is also accepted:
+
+```ts
+interface GraphClassNames {
+  edge?: string; node?: string; label?: string; nodeBox?: string; edgeLabel?: string;
+  group?: string; groupLabel?: string; lifeline?: string;
+}
+```
 
 ---
 
@@ -180,9 +299,20 @@ Colors are CSS variables with hardcoded fallbacks, so the SVG works out of the b
 /* Thick arrows and highlights */
 --color-accent: #002cea;
 
+/* Subgraph container outline + sequence lifelines (a muted gray) */
+--color-muted-foreground: #a1a1a1;
+/* Sequence note box fill */
+--color-muted: #1c1c1c;
+
 /* Node "cutout" background — must match the surface behind the SVG */
 --trazo-bg: #ffffff;
 ```
+
+**Bring your own palette.** Every color the engine emits is a token key (never a literal) resolved here. A third-party app defines whatever values it likes for these variables — the diagram recolors with no engine changes. (The hub reuses the playground's exact palette; you don't have to.)
+
+**Arrowheads follow their edge.** A directed edge's arrowhead is filled with the same token as the edge's stroke, so `--color-accent` / `--color-role-*` / `--color-lane-*` recolor heads automatically — there's no separate arrowhead variable.
+
+**New surfaces.** Subgraph boxes and sequence lifelines use `--color-muted-foreground` for their outline; sequence note boxes fill with `--color-muted`. Override those to restyle the new primitives.
 
 **Example — dark branded theme:**
 

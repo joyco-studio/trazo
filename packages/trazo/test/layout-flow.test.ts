@@ -201,6 +201,32 @@ describe("layoutFlow()", () => {
     }
   });
 
+  it("grows a node's height for a multi-line label, width = widest line", () => {
+    const single = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "n", label: "Build", shape: "box" }],
+      edges: [],
+    }).nodes[0]!;
+    const multi = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "n", label: "Build\nlonger second line", shape: "box" }],
+      edges: [],
+    }).nodes[0]!;
+    // Two lines → taller than a one-line box.
+    expect(multi.h!).toBeGreaterThan(single.h!);
+    // Width tracks the WIDEST line ("longer second line" > "Build").
+    expect(multi.w!).toBeGreaterThan(single.w!);
+    // The stored label keeps its newline for the renderer to split.
+    expect(multi.label).toBe("Build\nlonger second line");
+  });
+
+  it("a three-line label is taller than a two-line label", () => {
+    const h = (label: string) =>
+      layoutFlow({ kind: "flow", nodes: [{ id: "n", label, shape: "box" }], edges: [] })
+        .nodes[0]!.h!;
+    expect(h("a\nb\nc")).toBeGreaterThan(h("a\nb"));
+  });
+
   it("every edge path is a valid SVG d string (M …)", () => {
     const { edges } = layoutFlow(fixture);
     for (const e of edges) expect(e.path).toMatch(/^M /);
@@ -280,6 +306,28 @@ describe("layoutFlow()", () => {
     expect(edges[0]?.color).toBe("role-primary");
   });
 
+  it("emits arrowHead 'end' by default, and honors none/both", () => {
+    const g = layoutFlow({
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+        { id: "d", label: "D" },
+      ],
+      edges: [
+        { from: "a", to: "b" }, // default → "end"
+        { from: "a", to: "c", arrow: "none" },
+        { from: "a", to: "d", arrow: "both" },
+      ],
+    });
+    const head = (from: string, to: string) =>
+      g.edges.find((e) => e.from === from && e.to === to)?.arrowHead;
+    expect(head("a", "b")).toBe("end");
+    expect(head("a", "c")).toBe("none");
+    expect(head("a", "d")).toBe("both");
+  });
+
   it("laneCount reports the layer count (>= number of ranks)", () => {
     const g = layoutFlow(fixture);
     // start(0) → a/b(1) → join(2) → end(3): 4 layers.
@@ -312,5 +360,140 @@ describe("layoutFlow()", () => {
     const g = layoutFlow(fixture);
     expect(g.width).toBeGreaterThan(0);
     expect(g.height).toBeGreaterThan(0);
+  });
+});
+
+// ── subgraphs / clustering ───────────────────────────────────────────────────
+
+const grouped: FlowGraph = {
+  kind: "flow",
+  nodes: [
+    { id: "a", label: "A", group: "P" },
+    { id: "b", label: "B", group: "P" },
+    { id: "c", label: "C", group: "Q" },
+    { id: "d", label: "D", group: "Q" },
+    { id: "sink", label: "Sink" },
+  ],
+  edges: [
+    { from: "a", to: "sink" },
+    { from: "b", to: "sink" },
+    { from: "c", to: "sink" },
+    { from: "d", to: "sink" },
+  ],
+  groups: [
+    { id: "P", label: "Group P" },
+    { id: "Q", label: "Group Q" },
+  ],
+};
+
+describe("layoutFlow() — subgraphs", () => {
+  it("is deterministic with groups (repeat + clone)", () => {
+    expect(layoutFlow(grouped)).toEqual(layoutFlow(grouped));
+    const clone: FlowGraph = JSON.parse(JSON.stringify(grouped));
+    expect(layoutFlow(grouped)).toEqual(layoutFlow(clone));
+  });
+
+  it("emits a PositionedGroup per declared group with members", () => {
+    const g = layoutFlow(grouped);
+    expect(g.groups).toBeDefined();
+    expect(g.groups!.map((gp) => gp.id).sort()).toEqual(["P", "Q"]);
+    for (const gp of g.groups!) {
+      expect(gp.variant).toBe("group");
+      expect(gp.w).toBeGreaterThan(0);
+      expect(gp.h).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps a group's members contiguous within their shared layer (no interleave)", () => {
+    // a,b (P) and c,d (Q) all share rank 0. Sorted by x, the two P nodes must be
+    // adjacent and the two Q nodes adjacent — never P,Q,P.
+    const g = layoutFlow(grouped, { direction: "TD" });
+    const row = ["a", "b", "c", "d"]
+      .map((id) => ({ id, x: g.nodes.find((n) => n.id === id)!.x, grp: id < "c" ? "P" : "Q" }))
+      .sort((u, v) => u.x - v.x);
+    const groupsInOrder = row.map((r) => r.grp);
+    // Collapse consecutive duplicates: a contiguous layout yields exactly 2 runs.
+    const runs = groupsInOrder.filter((gr, i) => i === 0 || gr !== groupsInOrder[i - 1]);
+    expect(runs.length).toBe(2);
+  });
+
+  it("group boxes that share a rank do not overlap", () => {
+    const g = layoutFlow(grouped);
+    const P = g.groups!.find((gp) => gp.id === "P")!;
+    const Q = g.groups!.find((gp) => gp.id === "Q")!;
+    const disjoint =
+      P.x + P.w <= Q.x + 0.5 ||
+      Q.x + Q.w <= P.x + 0.5 ||
+      P.y + P.h <= Q.y + 0.5 ||
+      Q.y + Q.h <= P.y + 0.5;
+    expect(disjoint).toBe(true);
+  });
+
+  it("each group box contains its members' shape boxes", () => {
+    const g = layoutFlow(grouped);
+    for (const gp of g.groups!) {
+      const members = g.nodes.filter((n) =>
+        gp.id === "P" ? n.id === "a" || n.id === "b" : n.id === "c" || n.id === "d",
+      );
+      for (const m of members) {
+        expect(m.x - m.w! / 2).toBeGreaterThanOrEqual(gp.x - 0.5);
+        expect(m.x + m.w! / 2).toBeLessThanOrEqual(gp.x + gp.w + 0.5);
+        expect(m.y - m.h! / 2).toBeGreaterThanOrEqual(gp.y - 0.5);
+        expect(m.y + m.h! / 2).toBeLessThanOrEqual(gp.y + gp.h + 0.5);
+      }
+    }
+  });
+
+  it("reserves title room and keeps all geometry within positive bounds", () => {
+    const g = layoutFlow(grouped);
+    for (const gp of g.groups!) {
+      expect(gp.x).toBeGreaterThanOrEqual(0);
+      expect(gp.y).toBeGreaterThanOrEqual(0);
+      expect(gp.x + gp.w).toBeLessThanOrEqual(g.width);
+      expect(gp.y + gp.h).toBeLessThanOrEqual(g.height);
+      expect(gp.label).toBeDefined();
+      expect(gp.labelWidth).toBeGreaterThan(0);
+    }
+  });
+
+  it("omits the groups key entirely when no node is grouped", () => {
+    expect(layoutFlow(fixture).groups).toBeUndefined();
+  });
+
+  it("skips an empty declared group (no members → no box)", () => {
+    const g = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "x", label: "X", group: "Real" }],
+      edges: [],
+      groups: [
+        { id: "Real", label: "Real" },
+        { id: "Empty", label: "Empty" },
+      ],
+    });
+    expect(g.groups!.map((gp) => gp.id)).toEqual(["Real"]);
+  });
+
+  it("reserves the title strip along the TOP in BOTH directions (TD and LR)", () => {
+    // The renderer places a subgraph title at the top of the box in both
+    // directions, so the layout must reserve the strip on top either way —
+    // otherwise an LR title overlaps the members.
+    const src = {
+      kind: "flow" as const,
+      nodes: [
+        { id: "a", label: "A", group: "G" },
+        { id: "b", label: "B", group: "G" },
+      ],
+      edges: [{ from: "a", to: "b" }],
+      groups: [{ id: "G", label: "Title" }],
+    };
+    for (const direction of ["TD", "LR"] as const) {
+      const g = layoutFlow(src, { direction });
+      const box = g.groups![0]!;
+      const topMemberEdge = Math.min(...g.nodes.map((n) => n.y - n.h! / 2));
+      // The title strip (box top → top + GROUP_TITLE_H) sits ABOVE every member.
+      expect(box.y + 22).toBeLessThanOrEqual(topMemberEdge + 0.5);
+      // And the box never escapes the top of the viewBox.
+      expect(box.y).toBeGreaterThanOrEqual(0);
+    }
   });
 });

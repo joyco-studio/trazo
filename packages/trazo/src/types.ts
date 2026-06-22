@@ -99,6 +99,19 @@ export interface FlowNode {
   label?: string;
   shape?: NodeShape;
   role?: SemanticRole;
+  /**
+   * Optional cluster membership — the id of a group declared in
+   * {@link FlowGraph.groups}. Grouped nodes are kept spatially contiguous by the
+   * layout and enclosed in a labeled container box (a "subgraph"). A node may
+   * belong to at most one group (first declaration wins in the DSL).
+   */
+  group?: NodeId;
+}
+
+/** A declared cluster (subgraph) — an id and an optional display title. */
+export interface FlowGroup {
+  id: NodeId;
+  label?: string;
 }
 
 /** A directed edge in a flow graph, from one node to another. */
@@ -112,7 +125,18 @@ export interface FlowEdge {
    * colored and neutral connectors.
    */
   colored?: boolean;
+  /**
+   * Which ends get an arrowhead:
+   *  - "end"  → a single arrowhead at `to` (the default; a directed `from → to`).
+   *  - "none" → a plain connector line with no head (an undirected association).
+   *  - "both" → arrowheads at both ends (a bidirectional / two-way relation).
+   * Absent is treated as "end" so existing directed edges are unchanged.
+   */
+  arrow?: ArrowEnds;
 }
+
+/** Which ends of an edge carry an arrowhead. */
+export type ArrowEnds = "none" | "end" | "both";
 
 /** The full input for a flow layout. `kind` discriminates from `CommitGraph`. */
 export interface FlowGraph {
@@ -125,6 +149,102 @@ export interface FlowGraph {
    * `FlowLayoutOptions`. An explicit `options.direction` always wins.
    */
   direction?: FlowDirection;
+  /**
+   * Declared clusters (subgraphs). A node opts into one via {@link FlowNode.group}.
+   * The layout keeps each group's members contiguous and emits a
+   * {@link PositionedGroup} bounding box per group with ≥1 positioned member.
+   */
+  groups?: FlowGroup[];
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Input — a sequence diagram
+// ──────────────────────────────────────────────────────────────────────────
+
+/** A participant (actor) in a sequence diagram — one vertical lifeline. */
+export interface SequenceParticipant {
+  id: NodeId;
+  label?: string;
+  role?: SemanticRole;
+}
+
+/**
+ * Kind of a sequence message:
+ *  - "sync"  → a solid arrow (synchronous call `->>`).
+ *  - "async" → a dashed arrow (asynchronous return/signal `-->>`).
+ *  - "self"  → a self-message (from === to) drawn as a small loop.
+ */
+export type MessageKind = "sync" | "async" | "self";
+
+/** A single ordered message between two participants. */
+export interface SequenceMessage {
+  from: NodeId;
+  to: NodeId;
+  label?: string;
+  kind: MessageKind;
+  /**
+   * Global event order across messages AND notes (0-based). The parser stamps it
+   * from the source line order so the layout can interleave messages and notes
+   * on one timeline. Absent → the layout falls back to the message's array order
+   * (notes then sort after all messages).
+   */
+  seq?: number;
+}
+
+/** A note spanning one or more participants at a point in the sequence. */
+export interface SequenceNote {
+  /** Participant ids the note covers (its box spans from the first to the last). */
+  over: NodeId[];
+  text: string;
+  /** Global event order across messages AND notes (0-based); see {@link SequenceMessage.seq}. */
+  seq?: number;
+}
+
+/** The full input for a sequence layout. `kind` discriminates from the others. */
+export interface SequenceGraph {
+  kind: "sequence";
+  participants: SequenceParticipant[];
+  messages: SequenceMessage[];
+  notes?: SequenceNote[];
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Input — a block-grid wireframe (block-beta)
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * A single cell in a block-grid layout. `span` is how many columns the cell
+ * occupies (default 1). Cells flow left→right and wrap to the next row.
+ */
+export interface BlockCell {
+  id: NodeId;
+  label?: string;
+  shape?: NodeShape;
+  role?: SemanticRole;
+  span?: number;
+}
+
+/**
+ * The full input for a block-grid layout — a 2-D wireframe of boxes (no edges),
+ * used for layout/composition diagrams (Mermaid's `block-beta`). `kind`
+ * discriminates from the other graph inputs.
+ */
+export interface BlockGraph {
+  kind: "block";
+  columns: number;
+  cells: BlockCell[];
+}
+
+/** Tunable spacing for the block layout (`layoutBlock`). All optional. */
+export interface BlockLayoutOptions {
+  /** Gap (px) between cells, both axes. */
+  cellGap?: number;
+  /** Row height (px). */
+  rowHeight?: number;
+  /** Minimum width (px) a single column may have. */
+  minCellWidth?: number;
+  /** Outer padding around the whole grid (px). */
+  padding?: number;
 }
 
 /** Error reported by `parseGit` or `parseFlow` when the source is invalid. */
@@ -213,9 +333,40 @@ export interface PositionedEdge {
   labelPoint?: Point;
   /** Flow: measured pixel width of `label` (via `measure`). */
   labelWidth?: number;
+  /**
+   * Which ends of the edge carry an arrowhead (flow + sequence). Absent → the
+   * renderer draws no head (git edges). `layoutFlow` emits "end" by default and
+   * `layoutSequence` emits "end" on every message, so directed edges render an
+   * arrowhead; "both" draws one at each end, "none" a plain line.
+   */
+  arrowHead?: ArrowEnds;
+  /**
+   * Render the edge as a dashed line. Used for async sequence messages
+   * (`-->>`). Flow/git edges leave it unset (solid).
+   */
+  dashed?: boolean;
 }
 
-export type EdgeKind = "normal" | "branch" | "merge" | "flow";
+export type EdgeKind = "normal" | "branch" | "merge" | "flow" | "message";
+
+/**
+ * A laid-out cluster container (subgraph box) or sequence note box. Unlike a
+ * node, `x`/`y` are the TOP-LEFT corner (mirroring an SVG `<rect>`), not the
+ * center. `variant` distinguishes a flow subgraph container ("group") from a
+ * sequence note box ("note") so the renderer can style each differently.
+ */
+export interface PositionedGroup {
+  id: NodeId;
+  label?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Measured pixel width of `label` (via `measure`), if present. */
+  labelWidth?: number;
+  /** Container kind. Default "group" (flow subgraph); "note" for sequence notes. */
+  variant?: "group" | "note";
+}
 
 /**
  * The complete layout result. `width`/`height` bound all geometry so a
@@ -229,6 +380,26 @@ export interface PositionedGraph {
   width: number;
   height: number;
   laneCount: number;
+  /**
+   * Flow subgraph containers / sequence note boxes, when the input declared any.
+   * Absent for plain graphs with no groups/notes (renderers can skip the slot).
+   */
+  groups?: PositionedGroup[];
+  /** Sequence-diagram lifelines (vertical dashed lines under each participant). */
+  lifelines?: Lifeline[];
+}
+
+/**
+ * A sequence-diagram lifeline: the vertical line dropping from a participant's
+ * header down through the messages. `(x1,y1)` is the top (under the header),
+ * `(x2,y2)` the bottom (past the last message row).
+ */
+export interface Lifeline {
+  id: NodeId;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -307,6 +478,23 @@ export interface FlowLayoutOptions {
   /** Horizontal padding (px) added around a node's measured label. */
   labelPadX?: number;
   /** Edge connector style. Default "elbow45". */
+  edgeStyle?: EdgeStyle;
+}
+
+/**
+ * Tunable spacing for the sequence layout (`layoutSequence`). All optional; the
+ * engine supplies defaults.
+ */
+export interface SequenceLayoutOptions {
+  /** Horizontal distance between participant lifeline columns (px). */
+  columnGap?: number;
+  /** Vertical distance between successive message rows (px). */
+  rowGap?: number;
+  /** Participant header box height (px). */
+  headerHeight?: number;
+  /** Outer padding around the whole diagram (px). */
+  padding?: number;
+  /** Edge connector style for messages. Default "orthogonal". */
   edgeStyle?: EdgeStyle;
 }
 

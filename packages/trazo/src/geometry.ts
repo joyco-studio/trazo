@@ -12,8 +12,17 @@
  *    Bézier between layers) from an ordered point list.
  */
 
-import type { EdgeStyle, FlowDirection, NodeShape, Point } from "./types.js";
+import type { EdgeStyle, FlowDirection, NodeShape, Point, SemanticRole } from "./types.js";
 import { measure } from "./measure.js";
+
+/**
+ * Token key for a node/edge color from its semantic role (`"role-<role>"`). The
+ * single source of truth for the role color-key format, shared by every flow-
+ * style layout so they never diverge. The renderer maps the key onto a theme var.
+ */
+export function roleColorKey(role: SemanticRole): string {
+  return `role-${role}`;
+}
 
 /** Font used to size flow-node labels — Public Sans, hub body size. */
 const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
@@ -44,6 +53,45 @@ export function measureLabel(text: string, size = LABEL_FONT.size): number {
 }
 
 /**
+ * Line height (px) for a stacked multi-line label at a given font size. The 1.3
+ * factor is the leading the renderer applies between `<tspan>` rows; shared so
+ * the engine reserves exactly the height the renderer draws.
+ */
+export const LABEL_LINE_HEIGHT_EM = 1.3;
+export function labelLineHeight(size = LABEL_FONT.size): number {
+  return size * LABEL_LINE_HEIGHT_EM;
+}
+
+/**
+ * Split a label into its display lines on hard `\n` breaks. A single-line label
+ * returns a one-element array. Empty/undefined → `[]`. The renderer stacks these
+ * as `<tspan>` rows and the engine sizes shapes to the widest line × line count.
+ */
+export function labelLines(label: string | undefined): string[] {
+  if (label === undefined || label === "") return [];
+  return label.split("\n");
+}
+
+/**
+ * Measured size of a (possibly multi-line) label, rendered uppercase with
+ * tracking: width = the widest line's `measureLabel`, height = `lineCount` rows
+ * at `labelLineHeight`. Pure. Single source of truth for node/group/note sizing.
+ */
+export function measureMultiline(
+  label: string | undefined,
+  size = LABEL_FONT.size,
+): { width: number; height: number; lines: number } {
+  const lines = labelLines(label);
+  if (lines.length === 0) return { width: 0, height: 0, lines: 0 };
+  let width = 0;
+  for (const line of lines) {
+    const w = measureLabel(line.toUpperCase(), size);
+    if (w > width) width = w;
+  }
+  return { width, height: lines.length * labelLineHeight(size), lines: lines.length };
+}
+
+/**
  * Git node visual geometry, shared between the layout (for bounds math) and the
  * renderer (for drawing), so the computed `width` always reserves room for the
  * label and nothing is cropped. Git commit markers are SQUARES of side
@@ -71,6 +119,49 @@ export const BADGE_H = 22;
  */
 export function badgeWidth(labelWidth: number): number {
   return labelWidth + LABEL_BADGE_PAD * 2 + LABEL_BADGE_PAD_RIGHT_EXTRA;
+}
+
+/**
+ * Padding (px) between a subgraph's member nodes and its container box edge.
+ * Shared so the layout reserves bounds and the renderer draws to match.
+ */
+export const GROUP_PAD = 16;
+/**
+ * Height (px) reserved at the top (TD) / left (LR) of a subgraph box for its
+ * title, inside the padded container. Echoes the git badge height.
+ */
+export const GROUP_TITLE_H = 22;
+
+/**
+ * Axis-aligned bounding box of a set of node shape-boxes (each given by its
+ * center + full w/h), grown by `pad` on every side. Returns top-left + size.
+ * Pure. Used to place a subgraph container around its members.
+ */
+export function groupBounds(
+  members: ReadonlyArray<{ x: number; y: number; w: number; h: number }>,
+  pad: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (members.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const m of members) {
+    const left = m.x - m.w / 2;
+    const right = m.x + m.w / 2;
+    const top = m.y - m.h / 2;
+    const bottom = m.y + m.h / 2;
+    if (left < minX) minX = left;
+    if (right > maxX) maxX = right;
+    if (top < minY) minY = top;
+    if (bottom > maxY) maxY = bottom;
+  }
+  return {
+    x: minX - pad,
+    y: minY - pad,
+    w: maxX - minX + pad * 2,
+    h: maxY - minY + pad * 2,
+  };
 }
 
 /** Defaults for shape sizing; callers may override width/height bases. */
@@ -104,10 +195,13 @@ export function sizeShape(
   const labelPadX = options?.labelPadX ?? SIZE_DEFAULTS.labelPadX;
 
   // Labels render UPPERCASE (JOYCO style) with letter-spacing — measure the
-  // uppercased text WITH tracking so the shape reserves the right width.
-  const labelWidth = label ? measureLabel(label.toUpperCase()) : 0;
+  // uppercased text WITH tracking so the shape reserves the right width. A
+  // multi-line label (hard `\n` breaks) sizes to its WIDEST line and grows the
+  // box height by one line-height per extra line beyond the first.
+  const { width: labelWidth, lines } = measureMultiline(label);
   const boxW = Math.max(minNodeWidth, labelWidth + labelPadX * 2);
-  const h = nodeHeight;
+  const extraLines = lines > 1 ? lines - 1 : 0;
+  const h = nodeHeight + extraLines * labelLineHeight();
 
   switch (shape) {
     case "box":

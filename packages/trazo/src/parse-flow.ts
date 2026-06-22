@@ -5,10 +5,20 @@
  * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
  *
  *   flow TD | flow LR          set the layout direction (default: TD).
- *   <node> --> <node>          neutral edge (accent color).
- *   <node> ==> <node>          colored edge (source node's role color).
- *   <node> -->|label| <node>   edge with a label (works with ==> too).
+ *   <node> --> <node>          neutral directed edge (accent color).
+ *   <node> ==> <node>          colored directed edge (source node's role color).
+ *   <node> --- <node>          undirected edge (no arrowhead, neutral).
+ *   <node> === <node>          undirected colored edge.
+ *   <node> <--> <node>         bidirectional edge (arrowhead at both ends).
+ *   <node> <==> <node>         bidirectional colored edge.
+ *   <node> -->|label| <node>   edge with a label (works with every arrow above).
  *   <node>                     bare node declaration.
+ *   subgraph G ["Label"]       open a cluster; nodes declared until `end` join it.
+ *   end                        close the current cluster.
+ *
+ * Subgraphs are single-level (no nesting). A node belongs to at most one group
+ * (the first that declares it wins). Multi-line labels: a literal `\n` or `<br>`
+ * inside a label becomes a line break.
  *
  * Node ref syntax: `id["label"]`, `id(["label"])`, `id{"label"}`, `id[("label")]`
  * with an optional `:role` suffix (primary|good|bad|pending|streamed|neutral).
@@ -20,7 +30,16 @@
  * it up automatically without extra options.
  */
 
-import type { FlowDirection, FlowGraph, FlowNode, NodeShape, ParseError, SemanticRole } from "./types.js";
+import type {
+  ArrowEnds,
+  FlowDirection,
+  FlowGraph,
+  FlowGroup,
+  FlowNode,
+  NodeShape,
+  ParseError,
+  SemanticRole,
+} from "./types.js";
 
 export interface FlowParseResult {
   graph: FlowGraph;
@@ -64,6 +83,54 @@ function indexOutsideQuotes(s: string, needle: string): number {
   return -1;
 }
 
+/**
+ * Arrow tokens, longest first so a longer token is preferred when several match
+ * at the same position (`<-->` before `-->`, `---`/`===` before `-->`/`==>`).
+ * `colored` selects the source-role color; `arrow` selects which ends get a head.
+ */
+const ARROW_TOKENS: ReadonlyArray<{ token: string; colored: boolean; arrow: ArrowEnds }> = [
+  { token: "<==>", colored: true, arrow: "both" },
+  { token: "<-->", colored: false, arrow: "both" },
+  { token: "-->", colored: false, arrow: "end" },
+  { token: "==>", colored: true, arrow: "end" },
+  { token: "---", colored: false, arrow: "none" },
+  { token: "===", colored: true, arrow: "none" },
+];
+
+/**
+ * The first arrow token in `raw` that is not inside a quoted span. Scans
+ * left-to-right; at each position the longest matching token from `ARROW_TOKENS`
+ * wins. Returns its index + the resolved `colored`/`arrow` semantics, or null
+ * when the line has no arrow (a bare node declaration).
+ */
+function findArrow(
+  raw: string,
+): { index: number; token: string; colored: boolean; arrow: ArrowEnds } | null {
+  let inQuote = false;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '"' && (i === 0 || raw[i - 1] !== "\\")) inQuote = !inQuote;
+    if (inQuote) continue;
+    for (const t of ARROW_TOKENS) {
+      if (raw.startsWith(t.token, i)) {
+        return { index: i, token: t.token, colored: t.colored, arrow: t.arrow };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Convert explicit line breaks in a label to real newlines: a literal two-char
+ * `\n` sequence (the DSL is single-line, so authors type a backslash-n) and a
+ * `<br>` / `<br/>` tag (Mermaid compatibility). The layout sizes the box to the
+ * widest line and the renderer stacks the lines as `<tspan>` rows.
+ */
+function normalizeBreaks(label: string): string {
+  // `\n` is lowercase-only (so `\N` in a label like `C:\Newdir` is preserved);
+  // `<br>` is case-insensitive for Mermaid compatibility.
+  return label.replace(/\\n/g, "\n").replace(/<br\s*\/?>/gi, "\n");
+}
+
 function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
   const trimmed = input.trimStart();
   const idMatch = /^[A-Za-z0-9_]+/.exec(trimmed);
@@ -91,7 +158,7 @@ function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
         inner = inner.slice(1, -1);
       }
       shape = delim.shape;
-      if (inner) label = inner;
+      if (inner) label = normalizeBreaks(inner);
       cursor = cursor.slice(end + delim.close.length);
       break;
     }
@@ -115,14 +182,21 @@ function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
 export function parseFlow(source: string): FlowParseResult {
   const nodes = new Map<string, FlowNode>();
   const edges: FlowGraph["edges"] = [];
+  const groups = new Map<string, FlowGroup>();
   let direction: FlowDirection = "TD";
+  // The cluster currently being declared (between `subgraph` and `end`).
+  let currentGroup: string | undefined;
 
-  const graphOf = (): FlowGraph => ({
-    kind: "flow",
-    nodes: [...nodes.values()],
-    edges,
-    direction,
-  });
+  const graphOf = (): FlowGraph => {
+    const graph: FlowGraph = {
+      kind: "flow",
+      nodes: [...nodes.values()],
+      edges,
+      direction,
+    };
+    if (groups.size > 0) graph.groups = [...groups.values()];
+    return graph;
+  };
 
   const fail = (line: number, message: string): FlowParseResult => ({
     graph: graphOf(),
@@ -136,12 +210,16 @@ export function parseFlow(source: string): FlowParseResult {
       if (ref.label !== undefined) node.label = ref.label;
       if (ref.shape !== undefined) node.shape = ref.shape;
       if (ref.role !== undefined) node.role = ref.role;
+      // A node first declared inside an open subgraph joins that group.
+      if (currentGroup !== undefined) node.group = currentGroup;
       nodes.set(ref.id, node);
       return;
     }
     if (ref.label !== undefined && existing.label === undefined) existing.label = ref.label;
     if (ref.shape !== undefined && existing.shape === undefined) existing.shape = ref.shape;
     if (ref.role !== undefined && existing.role === undefined) existing.role = ref.role;
+    // First group to claim a node wins (mirrors first-writer-wins above).
+    if (currentGroup !== undefined && existing.group === undefined) existing.group = currentGroup;
   };
 
   const lines = source.split("\n");
@@ -161,18 +239,55 @@ export function parseFlow(source: string): FlowParseResult {
     }
     if (/^flow(?:chart)?$/i.test(raw)) continue;
 
+    // ── Subgraph block ────────────────────────────────────────────────────
+    // `end` closes the open cluster.
+    if (/^end$/i.test(raw)) {
+      if (currentGroup === undefined) return fail(lineNumber, `"end" with no open subgraph`);
+      currentGroup = undefined;
+      continue;
+    }
+    // `subgraph G ["Label"]` opens a cluster. Single-level only.
+    const subgraphMatch = /^subgraph\s+([A-Za-z0-9_]+)\s*(.*)$/i.exec(raw);
+    if (subgraphMatch) {
+      if (currentGroup !== undefined) {
+        return fail(lineNumber, `nested subgraphs are not supported`);
+      }
+      const groupId = subgraphMatch[1]!;
+      const rest = (subgraphMatch[2] ?? "").trim();
+      let groupLabel: string | undefined;
+      if (rest !== "") {
+        // Title is an optional `["Label"]` / `[Label]` / bare quoted string.
+        let inner = rest;
+        const boxed = /^\[(.*)\]$/.exec(rest);
+        if (boxed) inner = boxed[1]!.trim();
+        if (
+          (inner.startsWith('"') && inner.endsWith('"')) ||
+          (inner.startsWith("'") && inner.endsWith("'"))
+        ) {
+          inner = inner.slice(1, -1).replace(/\\"/g, '"');
+        }
+        if (inner) groupLabel = normalizeBreaks(inner);
+      }
+      const group: FlowGroup = { id: groupId };
+      if (groupLabel !== undefined) group.label = groupLabel;
+      // First declaration of a group id wins its label.
+      if (!groups.has(groupId)) groups.set(groupId, group);
+      currentGroup = groupId;
+      continue;
+    }
+
     // Arrow detection skips quoted spans so `id["A --> B"]` isn't treated as
-    // an edge and `id["x==>y"] --> id2` picks up the real `-->`.
-    const coloredIdx = indexOutsideQuotes(raw, "==>");
-    const plainIdx = indexOutsideQuotes(raw, "-->");
-    const arrowIdx =
-      coloredIdx !== -1 && (plainIdx === -1 || coloredIdx < plainIdx) ? coloredIdx : plainIdx;
-    if (arrowIdx !== -1) {
-      const colored = arrowIdx === coloredIdx;
+    // an edge and `id["x==>y"] --> id2` picks up the real `-->`. Scan the line
+    // left-to-right and take the FIRST arrow token; at a given position the
+    // LONGEST matching token wins so `<-->` isn't read as `-->` and `===` isn't
+    // read as `==>`. `colored` follows the `=` family; `arrow` (none/end/both)
+    // follows the head shape.
+    const arrowMatch = findArrow(raw);
+    if (arrowMatch) {
+      const { index: arrowIdx, token, colored, arrow } = arrowMatch;
       const left = parseNodeRef(raw.slice(0, arrowIdx));
-      const arrow = colored ? "==>" : "-->";
-      if (!left) return fail(lineNumber, `left side of ${arrow} is not a valid node`);
-      let afterArrow = raw.slice(arrowIdx + 3).trimStart();
+      if (!left) return fail(lineNumber, `left side of ${token} is not a valid node`);
+      let afterArrow = raw.slice(arrowIdx + token.length).trimStart();
 
       let edgeLabel: string | undefined;
       if (afterArrow.startsWith("|")) {
@@ -182,12 +297,12 @@ export function parseFlow(source: string): FlowParseResult {
         if (closeOffset === -1) return fail(lineNumber, `edge label is missing a closing "|"`);
         const close = closeOffset + 1;
         const lbl = afterArrow.slice(1, close).trim();
-        if (lbl) edgeLabel = lbl;
+        if (lbl) edgeLabel = normalizeBreaks(lbl);
         afterArrow = afterArrow.slice(close + 1).trimStart();
       }
 
       const right = parseNodeRef(afterArrow);
-      if (!right) return fail(lineNumber, `right side of ${arrow} is not a valid node`);
+      if (!right) return fail(lineNumber, `right side of ${token} is not a valid node`);
       if (right.rest.trim() !== "") {
         return fail(lineNumber, `unexpected "${right.rest.trim()}" after the edge target`);
       }
@@ -197,6 +312,9 @@ export function parseFlow(source: string): FlowParseResult {
       const edge: FlowGraph["edges"][number] = { from: left.ref.id, to: right.ref.id };
       if (edgeLabel !== undefined) edge.label = edgeLabel;
       if (colored) edge.colored = true;
+      // Default arrow ("end") is left implicit so existing output is unchanged;
+      // only record an explicit non-default head.
+      if (arrow !== "end") edge.arrow = arrow;
       edges.push(edge);
       continue;
     }
