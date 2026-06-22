@@ -48,6 +48,19 @@ const DEFAULT_BRANCH = "main";
 const HASH_RE = /^[0-9a-f]{6,}$/i;
 
 /**
+ * Returns the index of the first `needle` in `s` outside any double-quoted
+ * span (backslash-escaped quotes are honoured). Returns -1 if not found.
+ */
+function indexOutsideQuotes(s: string, needle: string): number {
+  let inQuote = false;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '"' && (i === 0 || s[i - 1] !== "\\")) inQuote = !inQuote;
+    if (!inQuote && s.startsWith(needle, i)) return i;
+  }
+  return -1;
+}
+
+/**
  * Pull an optional leading `(author)` group off a string, returning the author
  * (if present) and the remaining text.
  */
@@ -77,8 +90,10 @@ export function parseDsl(source: string): ParseResult {
 
   for (let i = 0; i < lines.length; i++) {
     const lineNumber = i + 1;
-    const withoutComment = lines[i].split("#")[0];
-    const raw = withoutComment.trim();
+    // Strip comments only outside quoted spans so `commit "fix #123"` survives.
+    const line = lines[i] ?? "";
+    const commentIdx = indexOutsideQuotes(line, "#");
+    const raw = (commentIdx === -1 ? line : line.slice(0, commentIdx)).trim();
     if (raw === "") continue;
 
     // Extract the optional message: quoted syntax ("...") takes priority over

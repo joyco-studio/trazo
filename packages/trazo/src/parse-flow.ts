@@ -13,6 +13,9 @@
  * Node ref syntax: `id["label"]`, `id(["label"])`, `id{"label"}`, `id[("label")]`
  * with an optional `:role` suffix (primary|good|bad|pending|streamed|neutral).
  *
+ * Labels may contain any characters including `#`, `]`, `-->`, `==>`, and `|`.
+ * Use `\"` to embed a double-quote inside a label (backslash-escape).
+ *
  * The parsed direction is stored on `graph.direction` so `layoutFlow` can pick
  * it up automatically without extra options.
  */
@@ -47,6 +50,20 @@ const SHAPE_DELIMS: ReadonlyArray<{ open: string; close: string; shape: NodeShap
   { open: "[", close: "]", shape: "box" },
 ];
 
+/**
+ * Returns the index of the first occurrence of `needle` in `s` that is not
+ * inside a double-quoted span. Backslash-escaped quotes (`\"`) are honoured
+ * and do not toggle the in-quote state. Returns -1 if not found.
+ */
+function indexOutsideQuotes(s: string, needle: string): number {
+  let inQuote = false;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '"' && (i === 0 || s[i - 1] !== "\\")) inQuote = !inQuote;
+    if (!inQuote && s.startsWith(needle, i)) return i;
+  }
+  return -1;
+}
+
 function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
   const trimmed = input.trimStart();
   const idMatch = /^[A-Za-z0-9_]+/.exec(trimmed);
@@ -61,13 +78,16 @@ function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
 
   for (const delim of SHAPE_DELIMS) {
     if (cursor.startsWith(delim.open)) {
-      const end = cursor.indexOf(delim.close, delim.open.length);
-      if (end === -1) return null;
+      // Search for the closing delimiter outside any quoted span so that
+      // labels like `id["step ] done"]` don't terminate early on the inner `]`.
+      const searchIn = cursor.slice(delim.open.length);
+      const relEnd = indexOutsideQuotes(searchIn, delim.close);
+      if (relEnd === -1) return null;
+      const end = delim.open.length + relEnd;
       let inner = cursor.slice(delim.open.length, end).trim();
-      if (
-        (inner.startsWith('"') && inner.endsWith('"')) ||
-        (inner.startsWith("'") && inner.endsWith("'"))
-      ) {
+      if (inner.startsWith('"') && inner.endsWith('"')) {
+        inner = inner.slice(1, -1).replace(/\\"/g, '"');
+      } else if (inner.startsWith("'") && inner.endsWith("'")) {
         inner = inner.slice(1, -1);
       }
       shape = delim.shape;
@@ -128,8 +148,10 @@ export function parseFlow(source: string): FlowParseResult {
 
   for (let i = 0; i < lines.length; i++) {
     const lineNumber = i + 1;
-    // noUncheckedIndexedAccess: loop stays within bounds; assertion is safe.
-    const raw = ((lines[i] ?? "").split("#")[0] ?? "").trim();
+    // Strip comments only outside quoted spans so `id["label #1"]` survives.
+    const line = lines[i] ?? "";
+    const commentIdx = indexOutsideQuotes(line, "#");
+    const raw = (commentIdx === -1 ? line : line.slice(0, commentIdx)).trim();
     if (raw === "") continue;
 
     const dirMatch = /^flow(?:chart)?\s+(TD|LR)$/i.exec(raw);
@@ -139,8 +161,10 @@ export function parseFlow(source: string): FlowParseResult {
     }
     if (/^flow(?:chart)?$/i.test(raw)) continue;
 
-    const coloredIdx = raw.indexOf("==>");
-    const plainIdx = raw.indexOf("-->");
+    // Arrow detection skips quoted spans so `id["A --> B"]` isn't treated as
+    // an edge and `id["x==>y"] --> id2` picks up the real `-->`.
+    const coloredIdx = indexOutsideQuotes(raw, "==>");
+    const plainIdx = indexOutsideQuotes(raw, "-->");
     const arrowIdx =
       coloredIdx !== -1 && (plainIdx === -1 || coloredIdx < plainIdx) ? coloredIdx : plainIdx;
     if (arrowIdx !== -1) {
@@ -152,8 +176,11 @@ export function parseFlow(source: string): FlowParseResult {
 
       let edgeLabel: string | undefined;
       if (afterArrow.startsWith("|")) {
-        const close = afterArrow.indexOf("|", 1);
-        if (close === -1) return fail(lineNumber, `edge label is missing a closing "|"`);
+        // Find the closing `|` outside any quoted span so that a label like
+        // `|step "a|b"|` doesn't close on the inner `|`.
+        const closeOffset = indexOutsideQuotes(afterArrow.slice(1), "|");
+        if (closeOffset === -1) return fail(lineNumber, `edge label is missing a closing "|"`);
+        const close = closeOffset + 1;
         const lbl = afterArrow.slice(1, close).trim();
         if (lbl) edgeLabel = lbl;
         afterArrow = afterArrow.slice(close + 1).trimStart();
