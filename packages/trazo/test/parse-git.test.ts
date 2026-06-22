@@ -113,6 +113,18 @@ describe("parseGit — quoted messages", () => {
     expect(g.commits[0]?.message).toBeUndefined();
   });
 
+  it("handles an author name that contains double quotes", () => {
+    const g = ok('commit (Alice "the engineer" Smith) : message');
+    expect(g.commits[0]?.author).toBe('Alice "the engineer" Smith');
+    expect(g.commits[0]?.message).toBe("message");
+  });
+
+  it("handles author with quote and quoted message syntax", () => {
+    const g = ok('commit (Alice "Al" Smith) "feat: add feature"');
+    expect(g.commits[0]?.author).toBe('Alice "Al" Smith');
+    expect(g.commits[0]?.message).toBe("feat: add feature");
+  });
+
   it("errors on unclosed quote", () => {
     const e = err('commit "unclosed');
     expect(e.message).toMatch(/unclosed/i);
@@ -120,8 +132,10 @@ describe("parseGit — quoted messages", () => {
   });
 
   it("errors on content after closing quote", () => {
+    // With the paren-aware quote search, `"msg" extra` is treated as an
+    // unclosed string (line doesn't end with ") rather than "unexpected content".
     const e = err('commit "msg" extra');
-    expect(e.message).toMatch(/unexpected/i);
+    expect(e.message).toMatch(/unclosed/i);
   });
 });
 

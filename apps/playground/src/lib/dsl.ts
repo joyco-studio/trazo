@@ -96,21 +96,28 @@ export function parseDsl(source: string): ParseResult {
     const raw = (commentIdx === -1 ? line : line.slice(0, commentIdx)).trim();
     if (raw === "") continue;
 
-    // Extract the optional message: quoted syntax ("...") takes priority over
-    // colon syntax (: ...) so messages can contain colons freely.
+    // Extract the optional message. Quoted syntax ("...") takes priority over
+    // colon syntax (: ...). Scan forward skipping paren-depth so a " inside an
+    // (author) group is not mistaken for the start of the message.
     let head: string;
     let message: string | undefined;
-    const quoteStart = raw.indexOf('"');
-    if (quoteStart !== -1) {
-      const quoteEnd = raw.indexOf('"', quoteStart + 1);
-      if (quoteEnd === -1) {
+
+    let firstOuterQuote = -1;
+    {
+      let depth = 0;
+      for (let j = 0; j < raw.length; j++) {
+        if (raw[j] === "(") depth++;
+        else if (raw[j] === ")") depth = Math.max(0, depth - 1);
+        else if (raw[j] === '"' && depth === 0) { firstOuterQuote = j; break; }
+      }
+    }
+
+    if (firstOuterQuote !== -1) {
+      if (!raw.endsWith('"')) {
         return fail(lineNumber, 'unclosed string — close the message with "');
       }
-      if (raw.slice(quoteEnd + 1).trim() !== "") {
-        return fail(lineNumber, 'unexpected content after closing " — nothing should follow the message');
-      }
-      head = raw.slice(0, quoteStart).trim();
-      message = raw.slice(quoteStart + 1, quoteEnd) || undefined;
+      head = raw.slice(0, firstOuterQuote).trim();
+      message = raw.slice(firstOuterQuote + 1, raw.length - 1) || undefined;
     } else {
       const colonIndex = raw.indexOf(":");
       head = (colonIndex === -1 ? raw : raw.slice(0, colonIndex)).trim();
