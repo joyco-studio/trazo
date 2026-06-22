@@ -138,14 +138,14 @@ const BADGE_CHAMFER = 6;
 const BADGE_PAD_X = LABEL_BADGE_PAD;
 
 /**
- * Arrowhead marker geometry — a small filled triangle in ABSOLUTE user units
- * (markerUnits="userSpaceOnUse"), so it does NOT scale with the 2.5px stroke
- * (which made it huge). `ARROW_LEN` is the tip-to-base length, `ARROW_WID` the
- * base height. The base is wider than the stroke so the line tucks fully under
- * the head instead of poking past its narrowing sides.
+ * Arrowhead marker geometry — a small solid triangle in ABSOLUTE user units
+ * (markerUnits="userSpaceOnUse") so it does NOT scale with the 2.5px stroke
+ * (which made it huge). `ARROW_LEN` is tip-to-base depth, `ARROW_WID` the base
+ * height. The edge stroke is trimmed back by ARROW_LEN so the line ends at the
+ * base and the tip lands on the node face (no gap, no stroke poking through).
  */
-const ARROW_LEN = 8;
-const ARROW_WID = 7;
+const ARROW_LEN = 7;
+const ARROW_WID = 6;
 /** Dash pattern for dashed edges (async sequence messages). */
 const EDGE_DASH = "6 4";
 
@@ -351,13 +351,13 @@ export function Graph(props: GraphProps): JSX.Element {
         <defs>
           {markerTokens.map((token) => {
             const fill = nodeColor(token);
-            // Triangle pointing along +x, base at x=0, tip at x=ARROW_LEN.
-            // refX at the tip → the point lands on the node face (where the path
-            // ends). markerUnits="userSpaceOnUse" keeps it an absolute ~8px
-            // instead of ×strokeWidth (which made it huge). The base (ARROW_WID,
-            // wider than the 2.5px stroke) covers the line end so it never pokes
-            // past the head. orient="auto-start-reverse" flips it for
-            // marker-start so a bidirectional edge's two heads point outward.
+            // Solid triangle pointing along +x: base at x=0, tip at x=ARROW_LEN.
+            // The edge stroke is trimmed back by ARROW_LEN (insetPathEnds), so
+            // refX=0 anchors the base at the trimmed line end and the tip extends
+            // forward to the node face — no gap, no stroke poking through.
+            // markerUnits="userSpaceOnUse" keeps it an absolute size (not
+            // ×strokeWidth). orient="auto-start-reverse" flips it for
+            // marker-start so a bidirectional edge's heads point outward.
             const half = ARROW_WID / 2;
             return (
               <marker
@@ -365,7 +365,7 @@ export function Graph(props: GraphProps): JSX.Element {
                 id={arrowMarkerId(token)}
                 markerWidth={ARROW_LEN}
                 markerHeight={ARROW_WID}
-                refX={ARROW_LEN}
+                refX={0}
                 refY={half}
                 orient="auto-start-reverse"
                 markerUnits="userSpaceOnUse"
