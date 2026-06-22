@@ -31,6 +31,7 @@ import type {
   FlowDirection,
   FlowEdge,
   FlowGraph,
+  FlowGroup,
   FlowLayoutOptions,
   FlowNode,
   NodeId,
@@ -38,14 +39,20 @@ import type {
   Point,
   PositionedEdge,
   PositionedGraph,
+  PositionedGroup,
   PositionedNode,
   SemanticRole,
 } from "./types.js";
 import {
   edgeLabelPoint,
   faceAnchor,
+  groupBounds,
+  GROUP_PAD,
+  GROUP_TITLE_H,
   measureLabel,
+  measureMultiline,
   pathThrough,
+  roleColorKey,
   sizeShape,
   type AnchorFace,
 } from "./geometry.js";
@@ -62,11 +69,6 @@ const DEFAULTS = {
 
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
 const ORDERING_SWEEPS = 4;
-
-/** Token key for a node's color from its semantic role. */
-function roleColorKey(role: SemanticRole): string {
-  return `role-${role}`;
-}
 
 /**
  * A point `stub` px outward from `anchor` along the perpendicular of its face,
@@ -110,6 +112,12 @@ interface Vertex {
   label: string | undefined;
   w: number;
   h: number;
+  /**
+   * Cluster id this vertex belongs to (real node's `group`, or a dummy whose
+   * edge is fully inside one group). Ungrouped → undefined. Drives contiguous
+   * ordering and the group's bounding box.
+   */
+  group: string | undefined;
   /** Resolved center after coordinate assignment. */
   center: Point;
 }
@@ -175,6 +183,7 @@ export function layoutFlow(
       label: n.label,
       w,
       h,
+      group: n.group,
       center: { x: 0, y: 0 },
     });
   }
@@ -189,6 +198,14 @@ export function layoutFlow(
     const r1 = rank.get(e.to) as number;
     const lo = Math.min(r0, r1);
     const hi = Math.max(r0, r1);
+    // A dummy belongs to a group only when BOTH endpoints are in that same
+    // group — so an intra-group long edge stays inside the box, but a
+    // cross-group edge routes through the ungrouped gutter and never stretches
+    // a foreign box.
+    const fromGroup = (byId.get(e.from) as FlowNode).group;
+    const toGroup = (byId.get(e.to) as FlowNode).group;
+    const dummyGroup =
+      fromGroup !== undefined && fromGroup === toGroup ? fromGroup : undefined;
     const chain: NodeId[] = [];
     for (let r = lo + 1; r < hi; r++) {
       const id = `__dummy_${ei}_${r}`;
@@ -203,6 +220,7 @@ export function layoutFlow(
         label: undefined,
         w: 0,
         h: 0,
+        group: dummyGroup,
         center: { x: 0, y: 0 },
       };
       vById.set(id, v);
@@ -211,6 +229,16 @@ export function layoutFlow(
     // Chain is ordered from the lower rank to the higher rank.
     dummyChain.set(e, chain);
   });
+
+  // ── Per-group deterministic sort key (min member input index) ─────────
+  // A group sorts as one unit against ungrouped vertices by the smallest input
+  // index among its members — a fixed function of input order.
+  const groupOrderKey = new Map<string, number>();
+  for (const v of vById.values()) {
+    if (v.group === undefined) continue;
+    const prev = groupOrderKey.get(v.group);
+    if (prev === undefined || v.index < prev) groupOrderKey.set(v.group, v.index);
+  }
 
   // ── Group vertices into layers by rank ────────────────────────────────
   let maxRank = 0;
@@ -249,16 +277,25 @@ export function layoutFlow(
     const goingDown = sweep % 2 === 0;
     if (goingDown) {
       for (let r = 1; r < layers.length; r++) {
-        reorderLayer(layers[r] as Vertex[], upNeighbors, vById);
+        reorderLayer(layers[r] as Vertex[], upNeighbors, vById, groupOrderKey);
       }
     } else {
       for (let r = layers.length - 2; r >= 0; r--) {
-        reorderLayer(layers[r] as Vertex[], downNeighbors, vById);
+        reorderLayer(layers[r] as Vertex[], downNeighbors, vById, groupOrderKey);
       }
     }
   }
 
   // ── 4. Coordinate assignment ──────────────────────────────────────────
+  // When the graph has clusters, reserve room up front so a subgraph container
+  // (its padding on every side + the title strip on the backward face) never
+  // pushes geometry past the origin. Seeding the leads here avoids a post-hoc
+  // global shift that would invalidate already-baked edge path strings.
+  const hasGroups = (graph.groups?.length ?? 0) > 0;
+  // Backward-face lead (title strip + padding) and cross-axis lead (padding).
+  const mainLead = hasGroups ? GROUP_PAD + GROUP_TITLE_H : 0;
+  const crossLead = hasGroups ? GROUP_PAD : 0;
+
   // Per-rank main-axis thickness = max node extent along the main axis.
   const rankThickness: number[] = layers.map((layer) => {
     let max = 0;
@@ -272,19 +309,29 @@ export function layoutFlow(
   // Main-axis origin per rank: padding + Σ(prev thickness + layerGap) + half.
   const rankMainStart: number[] = [];
   {
-    let acc = padding;
+    let acc = padding + mainLead;
     for (let r = 0; r < layers.length; r++) {
       rankMainStart[r] = acc;
       acc += (rankThickness[r] as number) + layerGap;
     }
   }
 
+  // Extra cross-axis gap inserted at a group boundary (between members of two
+  // different groups, or a group and an ungrouped node) so neither container box
+  // — each padded by GROUP_PAD — overlaps the other. Two abutting boxes need
+  // 2*GROUP_PAD between their member edges; nodeGap already covers part of it.
+  const groupBoundaryGap = hasGroups ? Math.max(0, GROUP_PAD * 2 - nodeGap) : 0;
+
   let crossMax = 0;
   for (const layer of layers) {
     // Cross-axis pack: running cursor by order, gap + half-widths.
-    let cursor = padding;
+    let cursor = padding + crossLead;
+    let prevGroup: string | undefined;
+    let prevSeen = false;
     for (let i = 0; i < layer.length; i++) {
       const v = layer[i] as Vertex;
+      // Open a little extra room when stepping across a group boundary.
+      if (prevSeen && v.group !== prevGroup) cursor += groupBoundaryGap;
       const crossExtent = direction === "TD" ? v.w : v.h;
       const half = crossExtent / 2;
       cursor += half;
@@ -297,6 +344,8 @@ export function layoutFlow(
         v.center = { x: mainCenter, y: cursor };
       }
       cursor += half + nodeGap;
+      prevGroup = v.group;
+      prevSeen = true;
     }
     const layerCrossEnd = cursor - nodeGap + padding;
     if (layerCrossEnd > crossMax) crossMax = layerCrossEnd;
@@ -343,12 +392,12 @@ export function layoutFlow(
       if (lead < minLead) minLead = lead;
       if (trail > maxTrail) maxTrail = trail;
     }
-    const shift = padding - minLead;
+    const shift = padding + crossLead - minLead;
     if (shift > 0.0001 || shift < -0.0001) {
       for (const v of vById.values()) setCross(v, crossOf(v) + shift);
       maxTrail += shift;
     }
-    crossMax = Math.max(crossMax, maxTrail + padding);
+    crossMax = Math.max(crossMax, maxTrail + padding + crossLead);
   }
 
   // Total bounds. Main axis spans through the last rank's far edge + padding.
@@ -360,6 +409,57 @@ export function layoutFlow(
 
   let width = direction === "TD" ? crossMax : mainEnd;
   let height = direction === "TD" ? mainEnd : crossMax;
+
+  // ── 4.5 Subgraph container boxes ──────────────────────────────────────
+  // Bound each declared group by its members' final shape boxes (+ padding), and
+  // reserve a title strip on the backward face (TD: top, LR: left). Runs after
+  // node centers are final so the box is tight; grows the viewBox to contain it.
+  let positionedGroups: PositionedGroup[] | undefined;
+  if (hasGroups) {
+    const membersByGroup = new Map<string, Vertex[]>();
+    for (const v of vById.values()) {
+      if (v.isDummy || v.group === undefined) continue;
+      const list = membersByGroup.get(v.group);
+      if (list) list.push(v);
+      else membersByGroup.set(v.group, [v]);
+    }
+    const out: PositionedGroup[] = [];
+    // Emit in declared order for determinism.
+    for (const g of graph.groups as FlowGroup[]) {
+      const members = membersByGroup.get(g.id);
+      if (!members || members.length === 0) continue;
+      const box = groupBounds(
+        members.map((v) => ({ x: v.center.x, y: v.center.y, w: v.w, h: v.h })),
+        GROUP_PAD,
+      );
+      if (box === null) continue;
+      // Reserve the title strip on the backward face (top for TD, left for LR).
+      if (direction === "TD") {
+        box.y -= GROUP_TITLE_H;
+        box.h += GROUP_TITLE_H;
+      } else {
+        box.x -= GROUP_TITLE_H;
+        box.w += GROUP_TITLE_H;
+      }
+      const pg: PositionedGroup = {
+        id: g.id,
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        variant: "group",
+      };
+      if (g.label !== undefined) {
+        pg.label = g.label;
+        pg.labelWidth = measureMultiline(g.label).width;
+      }
+      out.push(pg);
+      // Grow the viewBox to contain the box (leads keep the near edges ≥ 0).
+      if (box.x + box.w + padding > width) width = box.x + box.w + padding;
+      if (box.y + box.h + padding > height) height = box.y + box.h + padding;
+    }
+    if (out.length > 0) positionedGroups = out;
+  }
 
   // ── Emit positioned real nodes (in input order) ───────────────────────
   const nodes: PositionedNode[] = graph.nodes.map((n) => {
@@ -376,8 +476,9 @@ export function layoutFlow(
     };
     if (n.label !== undefined) {
       node.label = n.label;
-      // Labels render uppercase (JOYCO style) with tracking; measure both.
-      node.labelWidth = measureLabel(n.label.toUpperCase());
+      // Labels render uppercase (JOYCO style) with tracking; a multi-line label
+      // reserves its WIDEST line's width.
+      node.labelWidth = measureMultiline(n.label).width;
     }
     return node;
   });
@@ -488,11 +589,15 @@ export function layoutFlow(
       kind: "flow",
       // Default edges are neutral accent; opt in to the source role's color.
       color: e.colored ? roleColorKey(fromV.role) : "accent",
+      // Flow edges are directed by default; the DSL's `---`/`<-->` opt into a
+      // headless or bidirectional arrow.
+      arrowHead: e.arrow ?? "end",
     };
     if (e.label !== undefined) {
       edge.label = e.label;
       edge.labelPoint = edgeLabelPoint(points, edgeStyle, direction);
-      edge.labelWidth = measureLabel(e.label.toUpperCase());
+      // Widest line, so a multi-line edge label reserves the right badge width.
+      edge.labelWidth = measureMultiline(e.label).width;
     }
     return edge;
   });
@@ -533,13 +638,15 @@ export function layoutFlow(
   void routeMinX;
   void routeMinY;
 
-  return {
+  const result: PositionedGraph = {
     nodes,
     edges: positionedEdges,
     width,
     height,
     laneCount: layers.length,
   };
+  if (positionedGroups !== undefined) result.groups = positionedGroups;
+  return result;
 }
 
 /**
@@ -709,34 +816,114 @@ function expandedPath(
   return [lowEnd, ...chain, highEnd];
 }
 
+/** Barycenter (mean neighbor order) of a vertex; falls back to its own order. */
+function barycenter(
+  v: Vertex,
+  neighbors: Map<NodeId, NodeId[]>,
+  vById: Map<NodeId, Vertex>,
+): number {
+  const nbrs = neighbors.get(v.id) as NodeId[];
+  if (nbrs.length === 0) return v.order;
+  let sum = 0;
+  for (const nb of nbrs) sum += (vById.get(nb) as Vertex).order;
+  return sum / nbrs.length;
+}
+
 /**
  * Reorder a layer by the barycenter (mean order) of each vertex's neighbors in
- * the adjacent layer. Stable sort on the computed key; vertices with no
- * neighbors keep their current order (key = their current order). Equal keys
- * preserve prior order.
+ * the adjacent layer, KEEPING every cluster's members contiguous (no group
+ * interleaves with another group or with ungrouped vertices).
+ *
+ * Two-level stable sort over "units": each ungrouped vertex is a singleton unit;
+ * each group's members in this layer form one unit. Units sort by their mean
+ * barycenter (ties broken by a fixed input-derived identity — an ungrouped
+ * vertex's `index`, a group's `groupOrderKey`); then members WITHIN a group sort
+ * by their own barycenter (ties by `index`). With no groups every unit is a
+ * singleton and this collapses to the plain barycenter sort, tie-broken by prior
+ * position — byte-identical to the pre-clustering behavior.
  */
 function reorderLayer(
   layer: Vertex[],
   neighbors: Map<NodeId, NodeId[]>,
   vById: Map<NodeId, Vertex>,
+  groupOrderKey: Map<string, number>,
 ): void {
-  const keyed = layer.map((v, i) => {
-    const nbrs = neighbors.get(v.id) as NodeId[];
-    let key: number;
-    if (nbrs.length === 0) {
-      key = v.order;
-    } else {
-      let sum = 0;
-      for (const nb of nbrs) sum += (vById.get(nb) as Vertex).order;
-      key = sum / nbrs.length;
+  const bary = new Map<NodeId, number>();
+  layer.forEach((v) => bary.set(v.id, barycenter(v, neighbors, vById)));
+  const priorPos = new Map<NodeId, number>();
+  layer.forEach((v, i) => priorPos.set(v.id, i));
+
+  // Partition into units, recording each unit's first-seen position so a
+  // group-less layer keeps the old prior-position tie-break exactly.
+  type Unit = {
+    members: Vertex[];
+    /** Sort key: mean barycenter of members. */
+    key: number;
+    /** Tie-break identity: group → groupOrderKey; singleton → vertex index. */
+    tie: number;
+    /** First-seen position in the layer (for byte-identical no-group order). */
+    firstPos: number;
+    group: string | undefined;
+  };
+  const byGroup = new Map<string, Unit>();
+  const units: Unit[] = [];
+  layer.forEach((v, i) => {
+    if (v.group === undefined) {
+      units.push({
+        members: [v],
+        key: bary.get(v.id) as number,
+        tie: v.index,
+        firstPos: i,
+        group: undefined,
+      });
+      return;
     }
-    return { v, key, i };
+    const existing = byGroup.get(v.group);
+    if (existing) {
+      existing.members.push(v);
+      return;
+    }
+    const unit: Unit = {
+      members: [v],
+      key: 0,
+      tie: groupOrderKey.get(v.group) ?? v.index,
+      firstPos: i,
+      group: v.group,
+    };
+    byGroup.set(v.group, unit);
+    units.push(unit);
   });
-  // Stable sort: compare by key, break ties by prior position `i`.
-  keyed.sort((a, b) => (a.key === b.key ? a.i - b.i : a.key - b.key));
-  for (let i = 0; i < keyed.length; i++) {
-    const entry = keyed[i] as { v: Vertex };
-    layer[i] = entry.v;
-    entry.v.order = i;
+
+  // Finalize each group unit's key (mean of member barycenters) and sort its
+  // members internally by barycenter, ties by input index.
+  for (const unit of units) {
+    if (unit.group === undefined) continue;
+    let sum = 0;
+    for (const m of unit.members) sum += bary.get(m.id) as number;
+    unit.key = sum / unit.members.length;
+    unit.members.sort((a, b) => {
+      const ka = bary.get(a.id) as number;
+      const kb = bary.get(b.id) as number;
+      return ka === kb ? a.index - b.index : ka - kb;
+    });
+  }
+
+  // Stable-sort the units by key; ties by prior position for singletons (to
+  // match the old behavior) and by the fixed identity for groups.
+  units.sort((a, b) => {
+    if (a.key !== b.key) return a.key - b.key;
+    // Equal keys: ungrouped-vs-ungrouped fall back to prior position; otherwise
+    // the fixed identity tie-break keeps a deterministic, input-derived order.
+    if (a.group === undefined && b.group === undefined) return a.firstPos - b.firstPos;
+    return a.tie - b.tie;
+  });
+
+  let i = 0;
+  for (const unit of units) {
+    for (const v of unit.members) {
+      layer[i] = v;
+      v.order = i;
+      i++;
+    }
   }
 }

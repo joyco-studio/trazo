@@ -19,7 +19,12 @@ import {
   LABEL_BADGE_PAD,
   BADGE_H,
   badgeWidth,
+  labelLines,
+  labelLineHeight,
+  GROUP_PAD,
+  GROUP_TITLE_H,
 } from "../geometry.js";
+import type { PositionedGroup } from "../types.js";
 import type { JSX } from "react";
 
 /**
@@ -122,10 +127,21 @@ const ACCENT_FG =
 /** Dim foreground for secondary badge text (hash, author), on the accent badge. */
 const MUTED_FG =
   "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))";
+/** Muted surface for sequence note boxes (a filled, low-contrast panel). */
+const MUTED =
+  "var(--color-muted, var(--muted, #1c1c1c))";
+/** Subgraph container stroke — a light, on-brand gray outline. */
+const GROUP_STROKE = MUTED_FG;
 
 /** Sliced-corner badge metrics (matches the hub Badge: TL + BR chamfer). */
 const BADGE_CHAMFER = 6;
 const BADGE_PAD_X = LABEL_BADGE_PAD;
+
+/** Arrowhead marker geometry (a filled triangle), sized in stroke-width units. */
+const ARROW_LEN = 7;
+const ARROW_WID = 6;
+/** Dash pattern for dashed edges (async sequence messages). */
+const EDGE_DASH = "6 4";
 
 /**
  * SVG path for a sliced-corner badge rect (hub Badge geometry): top-left and
@@ -146,6 +162,73 @@ function badgePath(x: number, y: number, w: number, h: number): string {
 }
 
 /**
+ * Render a label as one or more centered `<tspan>` rows. A single-line label is
+ * one tspan; a multi-line label (hard `\n` breaks) stacks rows at
+ * `labelLineHeight`, with the whole block vertically centered on `y` (so it
+ * works under `dominantBaseline="central"`): the first row is lifted by
+ * `(n-1)/2` line-heights and each subsequent row drops by one. Pure.
+ */
+function renderMultilineText(text: string, x: number, y: number): JSX.Element {
+  const lines = labelLines(text);
+  const lh = labelLineHeight();
+  const firstDy = -((lines.length - 1) / 2) * lh;
+  return (
+    <>
+      {lines.map((line, i) => (
+        <tspan key={i} x={x} dy={i === 0 ? firstDy : lh}>
+          {line}
+        </tspan>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Render a subgraph container / note box: an outlined (group) or filled (note)
+ * rounded rect with an optional title in its reserved top strip. Drawn BEFORE
+ * nodes and edges so they paint on top of the container. Pure.
+ */
+function renderGroup(
+  group: PositionedGroup,
+  groupClass: string | undefined,
+  labelClass: string | undefined,
+): JSX.Element {
+  const isNote = group.variant === "note";
+  // Title sits in the reserved strip on the box's top-left.
+  const titleX = group.x + GROUP_PAD;
+  const titleY = group.y + GROUP_TITLE_H / 2;
+  return (
+    <g key={group.id} data-slot={isNote ? "note" : "group"} className={groupClass}>
+      <rect
+        x={group.x}
+        y={group.y}
+        width={group.w}
+        height={group.h}
+        rx={8}
+        fill={isNote ? MUTED : "none"}
+        stroke={GROUP_STROKE}
+        strokeWidth={1.5}
+      />
+      {group.label !== undefined ? (
+        <text
+          data-slot="group-label"
+          className={labelClass}
+          x={titleX}
+          y={titleY}
+          dominantBaseline="central"
+          fill={MUTED_FG}
+          fontFamily={LABEL_FONT}
+          fontSize={LABEL_SIZE}
+          style={UPPERCASE}
+        >
+          {renderMultilineText(group.label, titleX, titleY)}
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
+/**
  * Order edges for painting so neutral (accent) edges draw first and colored
  * edges draw on top — where they overlap, the colored one wins visually. A
  * stable partition (input order preserved within each group) keeps the output
@@ -158,12 +241,42 @@ function orderEdgesByPaint(edges: PositionedEdge[]): PositionedEdge[] {
 }
 
 /**
+ * Arrowheads are SVG `<marker>`s, one per distinct edge color token used by a
+ * directed edge. A marker can't inherit its host path's `stroke` across our
+ * theme tokens (each token resolves to a different CSS var), so we mint a marker
+ * per color with that color baked into its `fill`, and the path references it by
+ * a deterministic id derived from the token key. Pure: same edges → same ids.
+ */
+const ARROW_MARKER_PREFIX = "trazo-arrow";
+
+/** Stable, DOM-id-safe marker id for an edge color token (e.g. "role-good"). */
+function arrowMarkerId(colorToken: string): string {
+  const safe = colorToken.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `${ARROW_MARKER_PREFIX}-${safe}`;
+}
+
+/** Distinct color tokens among edges that carry an arrowhead, in first-seen order. */
+function arrowColorTokens(edges: PositionedEdge[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of edges) {
+    if (e.arrowHead === undefined || e.arrowHead === "none") continue;
+    if (seen.has(e.color)) continue;
+    seen.add(e.color);
+    out.push(e.color);
+  }
+  return out;
+}
+
+/**
  * Render a `PositionedGraph` as an inline `<svg>`. Pure: same `graph` → same
  * markup, on server or client.
  */
 export function Graph(props: GraphProps): JSX.Element {
   const { graph, className, classNames, title } = props;
   const label = title ?? "Commit graph";
+  // Distinct edge colors needing an arrowhead marker — computed once.
+  const markerTokens = arrowColorTokens(graph.edges);
 
   return (
     <svg
@@ -178,28 +291,91 @@ export function Graph(props: GraphProps): JSX.Element {
     >
       <title>{label}</title>
 
+      {markerTokens.length > 0 ? (
+        <defs>
+          {markerTokens.map((token) => {
+            const fill = nodeColor(token);
+            // Triangle pointing along +x. `orient="auto-start-reverse"` rotates
+            // it to the path tangent AND flips it when used as `marker-start`, so
+            // a bidirectional edge's two heads point outward (not both downstream).
+            // `markerUnits="strokeWidth"` scales it with the line.
+            const half = ARROW_WID / 2;
+            return (
+              <marker
+                key={token}
+                id={arrowMarkerId(token)}
+                markerWidth={ARROW_LEN}
+                markerHeight={ARROW_WID}
+                refX={ARROW_LEN}
+                refY={half}
+                orient="auto-start-reverse"
+                markerUnits="strokeWidth"
+              >
+                <path d={`M 0 0 L ${ARROW_LEN} ${half} L 0 ${ARROW_WID} Z`} fill={fill} />
+              </marker>
+            );
+          })}
+        </defs>
+      ) : null}
+
+      {graph.groups && graph.groups.length > 0 ? (
+        <g data-slot="groups">
+          {graph.groups.map((group) =>
+            renderGroup(group, classNames?.group, classNames?.groupLabel),
+          )}
+        </g>
+      ) : null}
+
+      {graph.lifelines && graph.lifelines.length > 0 ? (
+        <g data-slot="lifelines" aria-hidden="true">
+          {graph.lifelines.map((ll) => (
+            <line
+              key={ll.id}
+              data-slot="lifeline"
+              className={classNames?.lifeline}
+              x1={ll.x1}
+              y1={ll.y1}
+              x2={ll.x2}
+              y2={ll.y2}
+              stroke={EDGE_ACCENT}
+              strokeWidth={1.5}
+              strokeDasharray={EDGE_DASH}
+            />
+          ))}
+        </g>
+      ) : null}
+
       <g data-slot="edges" aria-hidden="true">
-        {orderEdgesByPaint(graph.edges).map((edge) => (
-          <path
-            key={`${edge.from}->${edge.to}`}
-            data-slot="edge"
-            data-kind={edge.kind}
-            className={classNames?.edge}
-            d={edge.path}
-            fill="none"
-            stroke={nodeColor(edge.color)}
-            strokeWidth={EDGE_WIDTH}
-            strokeLinecap="butt"
-            strokeLinejoin="miter"
-          />
-        ))}
+        {orderEdgesByPaint(graph.edges).map((edge, i) => {
+          const head = edge.arrowHead;
+          const markerRef = head && head !== "none" ? `url(#${arrowMarkerId(edge.color)})` : undefined;
+          return (
+            <path
+              // Index-suffixed: a sequence/multigraph can have multiple edges
+              // between the same pair (request + retry), so from->to isn't unique.
+              key={`${edge.from}->${edge.to}:${i}`}
+              data-slot="edge"
+              data-kind={edge.kind}
+              className={classNames?.edge}
+              d={edge.path}
+              fill="none"
+              stroke={nodeColor(edge.color)}
+              strokeWidth={EDGE_WIDTH}
+              strokeLinecap="butt"
+              strokeLinejoin="miter"
+              strokeDasharray={edge.dashed ? EDGE_DASH : undefined}
+              markerEnd={head === "end" || head === "both" ? markerRef : undefined}
+              markerStart={head === "both" ? markerRef : undefined}
+            />
+          );
+        })}
       </g>
 
       {graph.edges.some(
         (e) => e.label !== undefined && e.labelPoint !== undefined,
       ) ? (
         <g data-slot="edge-labels" aria-hidden="true">
-          {graph.edges.map((edge) => {
+          {graph.edges.map((edge, i) => {
             if (edge.label === undefined || edge.labelPoint === undefined) {
               return null;
             }
@@ -211,7 +387,7 @@ export function Graph(props: GraphProps): JSX.Element {
             const badgeY = edge.labelPoint.y - BADGE_H / 2;
             return (
               <g
-                key={`${edge.from}->${edge.to}:label`}
+                key={`${edge.from}->${edge.to}:label:${i}`}
                 data-slot="edge-label"
                 className={classNames?.edgeLabel}
               >
@@ -378,7 +554,7 @@ function renderNodeLabel(
         fontSize={LABEL_SIZE}
         style={UPPERCASE}
       >
-        {node.label}
+        {renderMultilineText(node.label, node.x, node.y)}
       </text>
     );
   }

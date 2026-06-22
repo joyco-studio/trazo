@@ -17,16 +17,24 @@
  */
 
 import type {
+  BlockGraph,
+  BlockLayoutOptions,
   CommitGraph,
   FlowGraph,
   FlowLayoutOptions,
   LayoutOptions,
   PositionedGraph,
+  SequenceGraph,
+  SequenceLayoutOptions,
 } from "./types.js";
 import { layoutGit } from "./layout-git.js";
 import { layoutFlow } from "./layout-flow.js";
+import { layoutSequence } from "./layout-sequence.js";
+import { layoutBlock } from "./layout-block.js";
 import { parseGit } from "./parse-git.js";
 import { parseFlow } from "./parse-flow.js";
+import { parseSequence } from "./parse-sequence.js";
+import { parseBlock } from "./parse-block.js";
 
 export type {
   NodeId,
@@ -38,11 +46,15 @@ export type {
   FlowDirection,
   FlowNode,
   FlowEdge,
+  ArrowEnds,
+  FlowGroup,
   FlowGraph,
   ParseError,
   Point,
   PositionedNode,
   PositionedEdge,
+  PositionedGroup,
+  Lifeline,
   EdgeKind,
   EdgeStyle,
   PositionedGraph,
@@ -51,16 +63,31 @@ export type {
   GitOrientation,
   GitLabelSide,
   FlowLayoutOptions,
+  SequenceGraph,
+  SequenceParticipant,
+  SequenceMessage,
+  SequenceNote,
+  MessageKind,
+  SequenceLayoutOptions,
+  BlockGraph,
+  BlockCell,
+  BlockLayoutOptions,
   FontSpec,
 } from "./types.js";
 
 export { layoutGit } from "./layout-git.js";
 export { layoutFlow } from "./layout-flow.js";
+export { layoutSequence } from "./layout-sequence.js";
+export { layoutBlock } from "./layout-block.js";
 export { measure } from "./measure.js";
 export { parseGit } from "./parse-git.js";
 export { parseFlow } from "./parse-flow.js";
+export { parseSequence } from "./parse-sequence.js";
+export { parseBlock } from "./parse-block.js";
 export type { GitParseResult } from "./parse-git.js";
 export type { FlowParseResult } from "./parse-flow.js";
+export type { SequenceParseResult } from "./parse-sequence.js";
+export type { BlockParseResult } from "./parse-block.js";
 
 /**
  * Dispatch to the correct layout engine by input shape. A `FlowGraph` carries
@@ -72,15 +99,29 @@ export function layout(
   options?: FlowLayoutOptions,
 ): PositionedGraph;
 export function layout(
+  input: SequenceGraph,
+  options?: SequenceLayoutOptions,
+): PositionedGraph;
+export function layout(
+  input: BlockGraph,
+  options?: BlockLayoutOptions,
+): PositionedGraph;
+export function layout(
   input: CommitGraph,
   options?: LayoutOptions,
 ): PositionedGraph;
 export function layout(
-  input: FlowGraph | CommitGraph,
-  options?: FlowLayoutOptions | LayoutOptions,
+  input: FlowGraph | SequenceGraph | BlockGraph | CommitGraph,
+  options?: FlowLayoutOptions | SequenceLayoutOptions | BlockLayoutOptions | LayoutOptions,
 ): PositionedGraph {
   if ((input as FlowGraph).kind === "flow") {
     return layoutFlow(input as FlowGraph, options as FlowLayoutOptions);
+  }
+  if ((input as SequenceGraph).kind === "sequence") {
+    return layoutSequence(input as SequenceGraph, options as SequenceLayoutOptions);
+  }
+  if ((input as BlockGraph).kind === "block") {
+    return layoutBlock(input as BlockGraph, options as BlockLayoutOptions);
   }
   return layoutGit(input as CommitGraph, options as LayoutOptions);
 }
@@ -137,5 +178,53 @@ export function flow(strings: TemplateStringsArray, ...values: unknown[]): FlowG
   const source = joinTemplate(strings, values);
   const { graph, error } = parseFlow(source);
   if (error) throw new Error(`trazo flow DSL line ${error.line}: ${error.message}`);
+  return graph;
+}
+
+/**
+ * Tagged template literal for the sequence DSL. Parses inline and throws a
+ * descriptive `Error` if the source is invalid. Returns a `SequenceGraph` ready
+ * to pass to `layoutSequence` or `layout`.
+ *
+ * @example
+ * ```ts
+ * import { seq, layoutSequence } from "@joycostudio/trazo";
+ *
+ * const positioned = layoutSequence(seq`
+ *   participant Client
+ *   participant Server
+ *   Client ->> Server : request
+ *   Server -->> Client : response
+ * `);
+ * ```
+ */
+export function seq(strings: TemplateStringsArray, ...values: unknown[]): SequenceGraph {
+  const source = joinTemplate(strings, values);
+  const { graph, error } = parseSequence(source);
+  if (error) throw new Error(`trazo sequence DSL line ${error.line}: ${error.message}`);
+  return graph;
+}
+
+/**
+ * Tagged template literal for the block DSL. Parses inline and throws a
+ * descriptive `Error` if the source is invalid. Returns a `BlockGraph` ready to
+ * pass to `layoutBlock` or `layout`.
+ *
+ * @example
+ * ```ts
+ * import { block, layoutBlock } from "@joycostudio/trazo";
+ *
+ * const positioned = layoutBlock(block`
+ *   columns 2
+ *   Nav["Navigation"] :2
+ *   A["Sidebar"]
+ *   B["Content"]
+ * `);
+ * ```
+ */
+export function block(strings: TemplateStringsArray, ...values: unknown[]): BlockGraph {
+  const source = joinTemplate(strings, values);
+  const { graph, error } = parseBlock(source);
+  if (error) throw new Error(`trazo block DSL line ${error.line}: ${error.message}`);
   return graph;
 }

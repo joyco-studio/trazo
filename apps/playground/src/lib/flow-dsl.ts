@@ -29,7 +29,14 @@
  * caller keeps the last good graph rendered.
  */
 
-import type { FlowDirection, FlowGraph, FlowNode, NodeShape, SemanticRole } from "@joycostudio/trazo";
+import type {
+  ArrowEnds,
+  FlowDirection,
+  FlowGraph,
+  FlowNode,
+  NodeShape,
+  SemanticRole,
+} from "@joycostudio/trazo";
 
 export interface FlowParseError {
   line: number;
@@ -49,6 +56,42 @@ const ROLES: ReadonlySet<string> = new Set([
   "streamed",
   "neutral",
 ]);
+
+/** Arrow tokens, longest first (so `<-->` beats `-->`, `---`/`===` beat the heads). */
+const ARROW_TOKENS: ReadonlyArray<{ token: string; colored: boolean; arrow: ArrowEnds }> = [
+  { token: "<-->", colored: false, arrow: "both" },
+  { token: "-->", colored: false, arrow: "end" },
+  { token: "==>", colored: true, arrow: "end" },
+  { token: "---", colored: false, arrow: "none" },
+  { token: "===", colored: true, arrow: "none" },
+];
+
+/**
+ * First arrow token in `raw` outside any quoted span (longest-match per
+ * position), or null for none. Quote-aware so a token inside `["a---b"]` isn't
+ * mistaken for an edge — mirrors the published parser.
+ */
+function findArrow(
+  raw: string,
+): { index: number; token: string; colored: boolean; arrow: ArrowEnds } | null {
+  let inQuote = false;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '"' && (i === 0 || raw[i - 1] !== "\\")) inQuote = !inQuote;
+    if (inQuote) continue;
+    for (const t of ARROW_TOKENS) {
+      if (raw.startsWith(t.token, i)) {
+        return { index: i, token: t.token, colored: t.colored, arrow: t.arrow };
+      }
+    }
+  }
+  return null;
+}
+
+/** Convert `\n` and `<br>` in a label to real newlines (multi-line support). */
+function normalizeBreaks(label: string): string {
+  // `\n` lowercase-only; `<br>` case-insensitive (Mermaid compatibility).
+  return label.replace(/\\n/g, "\n").replace(/<br\s*\/?>/gi, "\n");
+}
 
 /** Parse a single node ref like `A`, `A["label"]`, `B{"decide"}:bad`. */
 interface NodeRef {
@@ -93,7 +136,7 @@ function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
         inner = inner.slice(1, -1);
       }
       shape = s;
-      label = inner || undefined;
+      label = inner ? normalizeBreaks(inner) : undefined;
       cursor = cursor.slice(end + close.length);
       break;
     }
@@ -160,29 +203,30 @@ export function parseFlow(source: string): FlowParseResult {
     }
     if (/^flow(?:chart)?$/i.test(raw)) continue; // bare `flow` keyword, no dir
 
-    // Edge: <ref> --> [|label|] <ref>  (neutral accent line, default)
-    //   or: <ref> ==> [|label|] <ref>  (colored — takes the source box color)
-    const coloredIdx = raw.indexOf("==>");
-    const plainIdx = raw.indexOf("-->");
-    const arrowIdx = coloredIdx !== -1 ? coloredIdx : plainIdx;
-    if (arrowIdx !== -1) {
-      const colored = coloredIdx !== -1;
+    // Edge: <ref> <arrow> [|label|] <ref>. Arrow tokens, longest first:
+    //   -->  directed         ==>  directed colored
+    //   ---  undirected       ===  undirected colored
+    //   <--> bidirectional
+    const arrowMatch = findArrow(raw);
+    if (arrowMatch) {
+      const { index: arrowIdx, token, colored, arrow } = arrowMatch;
       const left = parseNodeRef(raw.slice(0, arrowIdx));
-      const arrow = colored ? "==>" : "-->";
-      if (!left) return fail(lineNumber, `left side of ${arrow} is not a valid node`);
-      let afterArrow = raw.slice(arrowIdx + 3).trimStart();
+      if (!left) return fail(lineNumber, `left side of ${token} is not a valid node`);
+      let afterArrow = raw.slice(arrowIdx + token.length).trimStart();
 
       // optional |label|
       let edgeLabel: string | undefined;
       if (afterArrow.startsWith("|")) {
         const close = afterArrow.indexOf("|", 1);
         if (close === -1) return fail(lineNumber, "edge label is missing a closing “|”");
-        edgeLabel = afterArrow.slice(1, close).trim() || undefined;
+        edgeLabel = ((s) => (s ? normalizeBreaks(s) : undefined))(
+          afterArrow.slice(1, close).trim(),
+        );
         afterArrow = afterArrow.slice(close + 1).trimStart();
       }
 
       const right = parseNodeRef(afterArrow);
-      if (!right) return fail(lineNumber, `right side of ${arrow} is not a valid node`);
+      if (!right) return fail(lineNumber, `right side of ${token} is not a valid node`);
       if (right.rest.trim() !== "") {
         return fail(lineNumber, `unexpected “${right.rest.trim()}” after the edge target`);
       }
@@ -194,6 +238,7 @@ export function parseFlow(source: string): FlowParseResult {
         to: right.ref.id,
         ...(edgeLabel !== undefined ? { label: edgeLabel } : {}),
         ...(colored ? { colored: true } : {}),
+        ...(arrow !== "end" ? { arrow } : {}),
       });
       continue;
     }

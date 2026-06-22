@@ -22,6 +22,12 @@ export interface GraphClassNames {
   nodeBox?: string;
   /** The flow edge labels. */
   edgeLabel?: string;
+  /** The subgraph container boxes (flow) / note boxes (sequence). */
+  group?: string;
+  /** The subgraph / note container titles. */
+  groupLabel?: string;
+  /** The sequence-diagram lifelines (vertical dashed lines). */
+  lifeline?: string;
 }
 
 export interface GraphProps {

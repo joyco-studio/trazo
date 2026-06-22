@@ -1,9 +1,9 @@
 ---
 title: DSL Reference
-description: Grammar for the flow and git pseudo-code languages.
+description: Grammar for the flow, git, sequence, and block pseudo-code languages.
 ---
 
-Trazo turns a few lines of line-based pseudo-code into a deterministic SVG diagram. There are two languages: a **flow** DSL (flowcharts) and a **git** DSL (commit-history graphs).
+Trazo turns a few lines of line-based pseudo-code into a deterministic SVG diagram. There are four languages: a **flow** DSL (flowcharts), a **git** DSL (commit-history graphs), a **sequence** DSL (sequence diagrams), and a **block** DSL (block-grid wireframes).
 
 ## Universal rules
 
@@ -13,6 +13,8 @@ Trazo turns a few lines of line-based pseudo-code into a deterministic SVG diagr
 - The first non-comment line **chooses the language**:
   - starts with `flow` / `flowchart` → flow DSL
   - starts with `commit` / `branch` / `checkout` / `merge` → git DSL
+  - starts with `sequence` / `participant` / a `A ->> B` message → sequence DSL
+  - starts with `block` / `columns` → block DSL
 - **Deterministic:** the same source always produces the same diagram.
 
 ---
@@ -47,15 +49,42 @@ D["Queued"]:pending
 E["Streamed"]:streamed
 ```
 
+**Multi-line labels.** A literal `\n` or a `<br>` inside a label becomes a line break. The box grows taller to fit the lines and sizes to its widest line:
+
+```
+A["Build step\nruns at deploy"]
+B["one<br>two<br>three"]
+```
+
 ### Edges
 
 | Syntax | Style |
 |--------|-------|
-| `A --> B` | thin arrow (neutral) |
-| `A ==> B` | thick arrow (accent) |
-| `A --> B : label` | labeled thin arrow |
-| `A ==> B : label` | labeled thick arrow |
-| `A --> B : label :colored` | label inherits source color |
+| `A --> B` | directed arrow, neutral (arrowhead at `B`) |
+| `A ==> B` | directed arrow, colored (source role) |
+| `A --- B` | **undirected** — a plain line, no arrowhead |
+| `A === B` | undirected, colored |
+| `A <--> B` | **bidirectional** — an arrowhead at both ends |
+| `A -->\|label\| B` | labeled edge (works with every arrow above) |
+
+Every flow edge is **directed by default** (`-->`/`==>` draw an arrowhead at the target). Use `---` when you want a plain connector with no head, and `<-->` for a two-way relation.
+
+### Subgraphs
+
+Wrap a set of nodes in a labeled container box. Nodes declared between `subgraph` and `end` join the group and are kept spatially together:
+
+```
+flow TD
+subgraph Build ["Build time"]
+  A["Compile"] --> B["Bundle"]
+end
+subgraph Request ["Request time"]
+  C["Render"] --> D["Stream"]
+end
+B --> C
+```
+
+Subgraphs are **single-level** (no nesting). A node belongs to at most one group — the first `subgraph` that declares it wins.
 
 ### Example
 
@@ -63,8 +92,8 @@ E["Streamed"]:streamed
 flow TD
 A(["Request arrives"]):primary ==> B["getCart()"]
 B --> C{Cache?}
-C --> D["Cache hit"]:good
-C --> E["DB query"]:pending
+C -->|hit| D["Cache hit"]:good
+C -->|miss| E["DB query"]:pending
 D ==> F(["Response"]):good
 E ==> F
 ```
@@ -110,3 +139,68 @@ merge feat/checkout : merge checkout feature
 | Edge style | `elbow45` / `orthogonal` | `elbow45` |
 
 **Tip — horizontal mode and label width.** In horizontal orientation, each commit's label badge is centered above the commit dot. Long messages push adjacent commits further apart to prevent overlap — the diagram widens automatically but can become very wide with verbose messages. Keep horizontal-mode labels short: a branch name or a 2–3 word subject. Save full messages for vertical orientation where labels sit to the side and don't affect the horizontal spacing.
+
+---
+
+## Sequence DSL
+
+Sequence diagrams: participants with vertical lifelines and ordered messages between them.
+
+### Participants
+
+```
+participant C ["Client"]:primary
+participant S ["Server"]
+```
+
+`participant` declares an actor with an optional `["label"]` and `:role`. Participants are also auto-created the first time they appear in a message, in first-seen order (which sets their column order).
+
+### Messages
+
+| Syntax | Meaning |
+|--------|---------|
+| `A ->> B : label` | synchronous message (solid arrow) |
+| `A -->> B : label` | asynchronous message (dashed arrow) |
+| `A ->> A : label` | self-message (a small loop on one lifeline) |
+
+### Notes
+
+```
+Note over A,B : both participants are busy
+```
+
+A note draws a box spanning from the first to the last participant it covers. Note text may use `\n` / `<br>` for line breaks.
+
+### Example
+
+```
+sequence
+participant C ["Client"]:primary
+participant S ["Server"]
+C ->> S : GET /cart
+Note over S : reads from cache
+S -->> C : 200 OK (streamed)
+C ->> C : hydrate
+```
+
+---
+
+## Block DSL
+
+A 2-D wireframe grid of boxes (no edges) — Mermaid's `block-beta`. Cells flow left→right and wrap to the next row; a cell can span multiple columns.
+
+```
+block
+columns 2
+Nav["Navigation"] :2
+Side["Sidebar"]
+Main["Content"]
+```
+
+| Syntax | Meaning |
+|--------|---------|
+| `columns N` | set the grid width (number of columns) |
+| `A["label"]` | a span-1 cell (shapes + `:role` work as in flow) |
+| `A["label"] :2` | a cell spanning 2 columns |
+
+A trailing bare number (`:2`) is the column span; a known role name (`:good`) is the color. Both may be combined.
