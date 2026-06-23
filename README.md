@@ -12,7 +12,7 @@ server and the client.
 flow TD                                    commit : init repo
 A(["Request"]):primary --> B["work"]       branch feature
 A --> C["render shell"]:streamed           commit : sketch solver
-B --> D["stream"]:good                      checkout main
+B --> D["stream"]:success                      checkout main
 C --> D                                     merge feature : land it
 ```
 
@@ -40,7 +40,8 @@ A pnpm + turbo monorepo with two pieces:
   hooks or effects, so it renders as a React Server Component (zero client JS, for
   static illustrations) **and** hydrated (for Trazo Playground's live preview), producing
   identical markup either way.
-- **On-brand by default.** joyco-blue primary with semantic role colors, square
+- **On-brand by default.** Adopts your app's shadcn `--primary` and chart tokens
+  for lane/role colors, square
   commit nodes, hard 45° edge elbows, uppercase labels, the bento console
   aesthetic from the `@joyco/ui` kit. Colors ship with layered CSS-var fallbacks
   so illustrations are never colorless in any consuming app.
@@ -60,7 +61,7 @@ The essentials:
 flow TD                     # or LR; TD is the default
 A["Start"] --> B{"Decide?"} # box, diamond; --> neutral edge, ==> colored edge
 B -->|Yes| C(["Done"])      # labeled edge; stadium terminal
-B -->|No|  D[("store")]:bad # cylinder; :role colors a node
+B -->|No|  D[("store")]:error # cylinder; :role colors a node
 
 # GIT — commit graphs
 commit a1b2c3d (JOYCO) : init   # [hash] (author) : message — all optional

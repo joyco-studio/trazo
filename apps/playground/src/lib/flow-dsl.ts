@@ -32,10 +32,10 @@ export const SEED_FLOW = `# playground — flowchart mode
 # group nodes with: subgraph G ["Label"] … end
 flow TD
 
-A(["Request arrives"]):primary --> B["getCart() started"]:pending
-A --> C["getFlags() started"]:pending
+A(["Request arrives"]):primary --> B["getCart() started"]:warning
+A --> C["getFlags() started"]:warning
 A --> D["Render shell immediately"]:streamed
-B ==> E["Stream data as promises settle"]:good
+B ==> E["Stream data as promises settle"]:success
 C --> E
 D --> E
 `;

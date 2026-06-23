@@ -29,9 +29,9 @@ export interface BlockParseResult {
 
 const ROLES: ReadonlySet<string> = new Set([
   "primary",
-  "good",
-  "bad",
-  "pending",
+  "success",
+  "error",
+  "warning",
   "streamed",
   "neutral",
 ]);

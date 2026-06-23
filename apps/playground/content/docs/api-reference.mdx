@@ -96,7 +96,7 @@ interface CommitGraph {
 
 ```ts
 type NodeShape    = "dot" | "box" | "stadium" | "diamond" | "cylinder";
-type SemanticRole = "primary" | "good" | "bad" | "pending" | "streamed" | "neutral";
+type SemanticRole = "primary" | "success" | "error" | "warning" | "streamed" | "neutral";
 type FlowDirection = "TD" | "LR";
 
 interface FlowNode {
@@ -277,64 +277,86 @@ interface GraphClassNames {
 
 ## Theming
 
-Colors are CSS variables with hardcoded fallbacks, so the SVG works out of the box without any theme setup. Override them on any ancestor element to match your brand.
+Every color the engine emits is a token key (never a literal), resolved through a three-layer CSS-variable chain:
 
-```css
-/* Available variables and their built-in fallbacks */
-
-/* Flow node roles */
---color-role-primary:  #002cea;  /* joyco blue  */
---color-role-good:     #16a34a;  /* green       */
---color-role-bad:      #dc2626;  /* red         */
---color-role-pending:  #d97706;  /* amber       */
---color-role-streamed: #7c3aed;  /* purple      */
---color-role-neutral:  #6b7280;  /* gray        */
-
-/* Git lanes (auto-cycles for extra branches) */
---color-lane-0: #002cea;
---color-lane-1: #16a34a;
---color-lane-2: #d97706;
-/* add --color-lane-3, --color-lane-4, … as needed */
-
-/* Thick arrows and highlights */
---color-accent: #002cea;
-
-/* Subgraph container outline + sequence lifelines (a muted gray) */
---color-muted-foreground: #a1a1a1;
-/* Sequence note box fill */
---color-muted: #1c1c1c;
-
-/* Node "cutout" background — must match the surface behind the SVG */
---trazo-bg: #ffffff;
+```
+var(--trazo-<slot>, var(--color-<shadcn-token>, var(--<shadcn-token>, <hex>)))
 ```
 
-**Bring your own palette.** Every color the engine emits is a token key (never a literal) resolved here. A third-party app defines whatever values it likes for these variables — the diagram recolors with no engine changes. (The hub reuses the playground's exact palette; you don't have to.)
+1. **`--trazo-<slot>`** — trazo's own override knob. Unset by default, so it falls through. Set these to re-theme the graph.
+2. **`--color-<shadcn-token>` / `--<shadcn-token>`** — the stock shadcn token the slot adopts by default, so an *unthemed* graph already matches the consuming app's brand. (In the JOYCO UI kit `--primary` is the brand blue, so JOYCO apps stay on-brand with zero config.)
+3. **`<hex>`** — a last-resort literal, so the SVG is never colorless in an app with no shadcn tokens at all.
 
-**Arrowheads follow their edge.** A directed edge's arrowhead is filled with the same token as the edge's stroke, so `--color-accent` / `--color-role-*` / `--color-lane-*` recolor heads automatically — there's no separate arrowhead variable.
+To theme the graph, set the **`--trazo-*`** variables on any ancestor element. You don't need to know which shadcn token a slot maps to — the slot names are trazo's stable vocabulary.
 
-**New surfaces.** Subgraph boxes and sequence lifelines use `--color-muted-foreground` for their outline; sequence note boxes fill with `--color-muted`. Override those to restyle the new primitives.
+```css
+/* Override knob (default)          → shadcn token it adopts */
+
+/* Flow node roles */
+--trazo-primary:   /* → --primary    */
+--trazo-success:   /* → --chart-2    */
+--trazo-error:     /* → --destructive */
+--trazo-warning:   /* → --chart-4    */
+--trazo-streamed:  /* → --chart-3    */
+--trazo-neutral:   /* → --muted-foreground */
+/* Label text on each role box — a -foreground variant of each */
+--trazo-primary-foreground: /* … --success-foreground, --error-foreground, … */
+
+/* Git lanes — 6 distinct slots, auto-cycling (mod 6) for extra branches */
+--trazo-lane-1:  /* → --primary */
+--trazo-lane-2:  /* → --chart-1 */
+--trazo-lane-3:  /* → --chart-2 */
+--trazo-lane-4:  /* → --chart-3 */
+--trazo-lane-5:  /* → --chart-4 */
+--trazo-lane-6:  /* → --chart-5 */
+/* Label text on each lane chip */
+--trazo-lane-1-foreground: /* … --trazo-lane-6-foreground */
+
+/* Page text + strokes (git labels, neutral edges) */
+--trazo-foreground:        /* → --foreground */
+
+/* Git label badge accent surface + its text */
+--trazo-accent:            /* → --accent */
+--trazo-accent-foreground: /* → --accent-foreground */
+
+/* Subgraph container outline + sequence lifelines (a muted gray) */
+--trazo-muted-foreground:  /* → --muted-foreground */
+/* Sequence note box fill */
+--trazo-muted:             /* → --muted */
+
+/* Node "cutout" background — must match the surface behind the SVG */
+--trazo-bg:                /* → --background */
+```
+
+**Brand-matched by default.** Because each slot defaults to a stock shadcn token, dropping trazo into any Tailwind/shadcn app recolors the diagram to that app's palette with no setup. Set the `--trazo-*` slots only when you want to override that default.
+
+**Arrowheads follow their edge.** A directed edge's arrowhead is filled with the same token as the edge's stroke, so the `--trazo-*` role/lane/accent slots recolor heads automatically — there's no separate arrowhead variable.
+
+**Surfaces.** Subgraph boxes and sequence lifelines use `--trazo-muted-foreground` for their outline; sequence note boxes fill with `--trazo-muted`. The git label badge uses `--trazo-accent` / `--trazo-accent-foreground`. Override those to restyle the new primitives.
 
 **Example — dark branded theme:**
 
 ```tsx
-// Wrap the <Graph /> in a div that sets the variables
+// Wrap the <Graph /> in a div that sets the override slots
 <div
   style={{
     background: "#0f0f14",
-    "--trazo-bg":            "#0f0f14",
-    "--color-role-primary":  "#3b82f6",
-    "--color-role-good":     "#22c55e",
-    "--color-role-bad":      "#ef4444",
-    "--color-role-pending":  "#f59e0b",
-    "--color-role-streamed": "#a855f7",
-    "--color-lane-0":        "#3b82f6",
-    "--color-lane-1":        "#22c55e",
-    "--color-lane-2":        "#f59e0b",
-    "--color-accent":        "#3b82f6",
+    "--trazo-bg":          "#0f0f14",
+    "--trazo-primary":     "#3b82f6",
+    "--trazo-success":     "#22c55e",
+    "--trazo-error":       "#ef4444",
+    "--trazo-warning":     "#f59e0b",
+    "--trazo-streamed":    "#a855f7",
+    "--trazo-lane-1":      "#3b82f6",
+    "--trazo-lane-2":      "#22c55e",
+    "--trazo-lane-3":      "#f59e0b",
+    "--trazo-accent":      "#3b82f6",
   } as React.CSSProperties}
 >
   <Graph graph={graph} title="My diagram" />
 </div>
 ```
 
-`--trazo-bg` is the only variable that **must** be set explicitly when you change the background — commit circles use it to punch a gap around the center dot so it reads correctly against a colored lane line.
+You can also theme via a class instead of inline styles — e.g. `className="[--trazo-success:#16a34a]"`, or a named CSS rule (`.trazo-ocean { --trazo-primary: #0369a1; }`) on any ancestor.
+
+`--trazo-bg` is the one slot that **must** be set explicitly when you change the background — commit circles use it to punch a gap around the center dot so it reads correctly against a colored lane line. (It defaults to `--background`, so it only needs an explicit value when the graph sits on a non-`--background` surface like a `--card`/`--muted` panel.)

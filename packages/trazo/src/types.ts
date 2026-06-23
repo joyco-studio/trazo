@@ -84,9 +84,9 @@ export type NodeShape = "dot" | "box" | "stadium" | "diamond" | "cylinder";
  */
 export type SemanticRole =
   | "primary"
-  | "good"
-  | "bad"
-  | "pending"
+  | "success"
+  | "error"
+  | "warning"
   | "streamed"
   | "neutral";
 
@@ -279,7 +279,7 @@ export interface PositionedNode {
   lane?: number;
   x: number;
   y: number;
-  /** Token key for the node color, e.g. "lane-0" (git) or "role-good" (flow). */
+  /** Token key for the node color, e.g. "lane-0" (git) or "role-success" (flow). */
   color: string;
   branch?: string;
   message?: string;

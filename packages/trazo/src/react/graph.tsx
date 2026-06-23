@@ -28,8 +28,10 @@ import type { PositionedGroup } from "../types.js";
 import type { JSX } from "react";
 
 /**
- * Lane color palette: joyco-blue leads as the primary, followed by vivid brand
- * + chart tokens for contrast, cycled so adjacent lanes stay distinct. Pure
+ * Lane color palette: stock shadcn tokens only — `primary` leads, then
+ * `chart-1…5`, cycled so adjacent lanes stay distinct (6 distinct app-defined
+ * colors before reuse). Referencing the app's own tokens means trazo adopts its
+ * brand out of the box (in the JOYCO kit `--primary` is the brand blue). Pure
  * string lookup → identical on server/client.
  *
  * Each entry is a LAYERED fallback: `var(--color-x, var(--x, #hex))`. In
@@ -39,51 +41,123 @@ import type { JSX } from "react";
  * (`--x`, which survives) and finally a hard-coded hex, so illustrations are
  * never colorless in ANY consuming app (playground, the hub, anywhere).
  */
+/**
+ * Build a layered color chain: `var(--trazo-<slot>, var(--color-<token>,
+ * var(--<token>, <hex>)))`.
+ *
+ * The layers, outermost first:
+ * 1. `--trazo-<slot>` — trazo's OWN semantic override knob. Unset by default,
+ *    so it falls through. An app themes the graph by setting these (in CSS, on
+ *    the root via `className`, or anywhere above the graph) — no inline style,
+ *    no knowledge of which shadcn token a slot maps to.
+ * 2. `--color-<token>` / `--<token>` — the stock shadcn token this slot adopts
+ *    by default, so an unthemed graph matches the consuming app's brand. The
+ *    `--color-*` alias (Tailwind v4 `@theme inline`) is tried first since it may
+ *    be the only one exposed; `--<token>` is the raw token that always survives.
+ * 3. `<hex>` — last-resort literal so illustrations are never colorless in an
+ *    app with no shadcn tokens at all.
+ *
+ * Pure string construction → identical markup on server and client.
+ */
+function themed(slot: string, token: string, hex: string): string {
+  return `var(--trazo-${slot}, var(--color-${token}, var(--${token}, ${hex})))`;
+}
+
+/**
+ * Lane color palette (git): trazo's `--trazo-lane-1…6` semantic slots, each
+ * defaulting to a stock shadcn token (`primary` leads, then `chart-1…5`). Six
+ * distinct slots, cycled (`laneIndex` is mod 6) so adjacent lanes stay distinct
+ * and the loop is clean. Override any lane by setting its `--trazo-lane-N`.
+ */
 const LANE_VARS = [
-  "var(--color-joyco-blue, var(--joyco-blue, #002cea))",
-  "var(--color-mint-green, var(--mint-green, #36b37e))",
-  "var(--color-mustard-yellow, var(--mustard-yellow, #e6a700))",
-  "var(--color-chart-3, var(--chart-3, #2dd4bf))",
-  "var(--color-chart-4, var(--chart-4, #a78bfa))",
-  "var(--color-chart-5, var(--chart-5, #f472b6))",
-  "var(--color-chart-1, var(--chart-1, #1447e6))",
-  "var(--color-chart-2, var(--chart-2, #00bba7))",
+  themed("lane-1", "primary", "#002cea"),
+  themed("lane-2", "chart-1", "#36b37e"),
+  themed("lane-3", "chart-2", "#e6a700"),
+  themed("lane-4", "chart-3", "#2dd4bf"),
+  themed("lane-5", "chart-4", "#a78bfa"),
+  themed("lane-6", "chart-5", "#f472b6"),
+] as const;
+
+/**
+ * Readable text color paired to each LANE_VARS fill, index-aligned. Each entry
+ * has its own `--trazo-lane-N-foreground` override slot; by default it adopts
+ * the shadcn `*-foreground` token (so a fill whose lightness flips between
+ * light/dark gets the right text in each), and the hex fallback is the WCAG pick
+ * against this entry's own fallback fill — legible even in an app that defines
+ * no foreground tokens at all.
+ */
+const LANE_FG_VARS = [
+  themed("lane-1-foreground", "primary-foreground", "#ffffff"),
+  themed("lane-2-foreground", "chart-1-foreground", "#0a0a0a"),
+  themed("lane-3-foreground", "chart-2-foreground", "#0a0a0a"),
+  themed("lane-4-foreground", "chart-3-foreground", "#0a0a0a"),
+  themed("lane-5-foreground", "chart-4-foreground", "#0a0a0a"),
+  themed("lane-6-foreground", "chart-5-foreground", "#0a0a0a"),
 ] as const;
 
 function laneColor(tokenKey: string): string {
+  return LANE_VARS[laneIndex(tokenKey)] as string;
+}
+
+function laneForeground(tokenKey: string): string {
+  return LANE_FG_VARS[laneIndex(tokenKey)] as string;
+}
+
+function laneIndex(tokenKey: string): number {
   // tokenKey is "lane-<n>"; parse the index and cycle through the palette.
   const dash = tokenKey.lastIndexOf("-");
   const n = dash >= 0 ? Number.parseInt(tokenKey.slice(dash + 1), 10) : 0;
   const safe = Number.isFinite(n) ? n : 0;
-  const idx = ((safe % LANE_VARS.length) + LANE_VARS.length) % LANE_VARS.length;
-  return LANE_VARS[idx] as string;
+  return ((safe % LANE_VARS.length) + LANE_VARS.length) % LANE_VARS.length;
 }
 
 /**
- * Semantic role palette for flow nodes/edges. Same LAYERED fallback discipline
- * as `LANE_VARS`: `var(--color-x, var(--x, #hex))`. Two roles intentionally
- * point at shadcn-style tokens (destructive, muted-foreground) since those are
- * the conventional homes for "bad" and "neutral" in JOYCO consuming apps.
+ * Semantic role palette for flow nodes/edges. Each role is a trazo
+ * `--trazo-<role>` override slot defaulting to a stock shadcn token (primary,
+ * chart-*, destructive, muted-foreground) so the renderer adopts a consuming
+ * app's brand out of the box; the hex is only the last-resort fallback for an
+ * app with no shadcn tokens at all.
  */
 const ROLE_VARS: Record<SemanticRole, string> = {
-  primary: "var(--color-joyco-blue, var(--joyco-blue, #002cea))",
-  good: "var(--color-mint-green, var(--mint-green, #36b37e))",
-  bad: "var(--color-destructive, var(--destructive, #e5484d))",
-  pending: "var(--color-mustard-yellow, var(--mustard-yellow, #e6a700))",
-  streamed: "var(--color-chart-3, var(--chart-3, #2dd4bf))",
-  neutral: "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))",
+  primary: themed("primary", "primary", "#002cea"),
+  success: themed("success", "chart-2", "#36b37e"),
+  error: themed("error", "destructive", "#e5484d"),
+  warning: themed("warning", "chart-4", "#e6a700"),
+  streamed: themed("streamed", "chart-3", "#2dd4bf"),
+  neutral: themed("neutral", "muted-foreground", "#a1a1a1"),
+};
+
+/**
+ * Readable text color paired to each ROLE_VARS fill, with its own
+ * `--trazo-<role>-foreground` override slot. `neutral` sits on a muted-gray box,
+ * so its text defaults to the page foreground; its hex fallback is dark
+ * (`#0a0a0a`) to stay legible on the `#a1a1a1` neutral fill fallback.
+ */
+const ROLE_FG_VARS: Record<SemanticRole, string> = {
+  primary: themed("primary-foreground", "primary-foreground", "#ffffff"),
+  success: themed("success-foreground", "chart-2-foreground", "#0a0a0a"),
+  error: themed("error-foreground", "destructive-foreground", "#ffffff"),
+  warning: themed("warning-foreground", "chart-4-foreground", "#0a0a0a"),
+  streamed: themed("streamed-foreground", "chart-3-foreground", "#0a0a0a"),
+  neutral: themed("neutral-foreground", "foreground", "#0a0a0a"),
 };
 
 function roleColor(tokenKey: string): string {
-  // tokenKey is "role-<role>"; parse the role and look it up.
+  return ROLE_VARS[parseRole(tokenKey)] ?? ROLE_VARS.neutral;
+}
+
+function roleForeground(tokenKey: string): string {
+  return ROLE_FG_VARS[parseRole(tokenKey)] ?? ROLE_FG_VARS.neutral;
+}
+
+function parseRole(tokenKey: string): SemanticRole {
+  // tokenKey is "role-<role>"; parse the role.
   const dash = tokenKey.indexOf("-");
-  const role = (dash >= 0 ? tokenKey.slice(dash + 1) : "neutral") as SemanticRole;
-  return ROLE_VARS[role] ?? ROLE_VARS.neutral;
+  return (dash >= 0 ? tokenKey.slice(dash + 1) : "neutral") as SemanticRole;
 }
 
 /** Neutral edge color (the default for flow edges) — a light, on-brand gray. */
-const EDGE_ACCENT =
-  "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))";
+const EDGE_ACCENT = themed("neutral", "muted-foreground", "#a1a1a1");
 
 /**
  * Resolve any token color key. `"accent"` → the neutral edge gray; `role-*` →
@@ -95,8 +169,22 @@ function nodeColor(tokenKey: string): string {
   return tokenKey.startsWith("role-") ? roleColor(tokenKey) : laneColor(tokenKey);
 }
 
-/** Foreground (strokes, labels), with the same layered fallback as the palette. */
-const FG = "var(--color-foreground, var(--foreground, #ededed))";
+/**
+ * Readable label color for a node filled with `tokenKey`'s color. Mirrors
+ * `nodeColor`: the paired `*-foreground` for lanes/roles, the page foreground
+ * for the neutral accent fill.
+ */
+function nodeForeground(tokenKey: string): string {
+  if (tokenKey === "accent") return FG;
+  return tokenKey.startsWith("role-") ? roleForeground(tokenKey) : laneForeground(tokenKey);
+}
+
+/**
+ * Page foreground (strokes, git labels) — text on the page background, not on a
+ * colored box, so its `#ededed` fallback pairs with the dark page-bg fallback.
+ * `--trazo-foreground` overrides it.
+ */
+const FG = themed("foreground", "foreground", "#ededed");
 /** Label font stack, falling back to the raw token then a system sans. */
 const LABEL_FONT =
   "var(--font-sans, var(--font-public-sans, ui-sans-serif, system-ui, sans-serif))";
@@ -117,19 +205,15 @@ const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em"
  * border at it via `--trazo-bg` without the engine knowing app token names.
  * Falls back to the theme background, then a raw token, then a hard-coded hex.
  */
-const BG =
-  "var(--trazo-bg, var(--color-background, var(--background, #0a0a0a)))";
+const BG = themed("bg", "background", "#0a0a0a");
 /** Accent surface for the sliced-corner git label badge (hub Badge accent variant). */
-const ACCENT = "var(--color-accent, var(--accent, #2a2a2a))";
+const ACCENT = themed("accent", "accent", "#2a2a2a");
 /** Accent foreground — primary text on the accent badge. */
-const ACCENT_FG =
-  "var(--color-accent-foreground, var(--accent-foreground, #fafafa))";
+const ACCENT_FG = themed("accent-foreground", "accent-foreground", "#fafafa");
 /** Dim foreground for secondary badge text (hash, author), on the accent badge. */
-const MUTED_FG =
-  "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))";
+const MUTED_FG = themed("muted-foreground", "muted-foreground", "#a1a1a1");
 /** Muted surface for sequence note boxes (a filled, low-contrast panel). */
-const MUTED =
-  "var(--color-muted, var(--muted, #1c1c1c))";
+const MUTED = themed("muted", "muted", "#1c1c1c");
 /** Subgraph container stroke — a light, on-brand gray outline. */
 const GROUP_STROKE = MUTED_FG;
 
@@ -259,7 +343,7 @@ function orderEdgesByPaint(edges: PositionedEdge[]): PositionedEdge[] {
  */
 const ARROW_MARKER_PREFIX = "trazo-arrow";
 
-/** Stable, DOM-id-safe marker id for an edge color token (e.g. "role-good"). */
+/** Stable, DOM-id-safe marker id for an edge color token (e.g. "role-success"). */
 function arrowMarkerId(colorToken: string): string {
   const safe = colorToken.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${ARROW_MARKER_PREFIX}-${safe}`;
@@ -621,7 +705,7 @@ function renderNodeLabel(
         y={node.y}
         textAnchor="middle"
         dominantBaseline="central"
-        fill={FG}
+        fill={nodeForeground(node.color)}
         fontFamily={LABEL_FONT}
         fontSize={LABEL_SIZE}
         style={UPPERCASE}

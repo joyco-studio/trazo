@@ -20,8 +20,8 @@ describe("parseSequence — participants", () => {
   });
 
   it("parses a quoted label and role", () => {
-    const g = ok('participant A ["Alice"]:good');
-    expect(g.participants[0]).toMatchObject({ id: "A", label: "Alice", role: "good" });
+    const g = ok('participant A ["Alice"]:success');
+    expect(g.participants[0]).toMatchObject({ id: "A", label: "Alice", role: "success" });
   });
 
   it("auto-registers participants from messages in first-seen order", () => {

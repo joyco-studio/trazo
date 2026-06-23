@@ -5,7 +5,7 @@
  * Grammar (one statement per line, `#` starts a comment, blank lines ignored):
  *
  *   sequence                     optional header keyword (ignored).
- *   participant A ["Alice"]:good declare a participant (label/role optional).
+ *   participant A ["Alice"]:success declare a participant (label/role optional).
  *   A ->> B : message            a synchronous message.
  *   A -->> B : message           an asynchronous message (dashed).
  *   A ->> A : note               a self-message (from === to).
@@ -34,9 +34,9 @@ export interface SequenceParseResult {
 
 const ROLES: ReadonlySet<string> = new Set([
   "primary",
-  "good",
-  "bad",
-  "pending",
+  "success",
+  "error",
+  "warning",
   "streamed",
   "neutral",
 ]);

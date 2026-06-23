@@ -21,7 +21,7 @@
  * inside a label becomes a line break.
  *
  * Node ref syntax: `id["label"]`, `id(["label"])`, `id{"label"}`, `id[("label")]`
- * with an optional `:role` suffix (primary|good|bad|pending|streamed|neutral).
+ * with an optional `:role` suffix (primary|success|error|warning|streamed|neutral).
  *
  * Labels may contain any characters including `#`, `]`, `-->`, `==>`, and `|`.
  * Use `\"` to embed a double-quote inside a label (backslash-escape).
@@ -48,9 +48,9 @@ export interface FlowParseResult {
 
 const ROLES: ReadonlySet<string> = new Set([
   "primary",
-  "good",
-  "bad",
-  "pending",
+  "success",
+  "error",
+  "warning",
   "streamed",
   "neutral",
 ]);

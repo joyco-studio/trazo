@@ -43,9 +43,9 @@ Append `:role` to color the node:
 
 ```
 A["Request"]:primary
-B["Cache hit"]:good
-C["Error"]:bad
-D["Queued"]:pending
+B["Cache hit"]:success
+C["Error"]:error
+D["Queued"]:warning
 E["Streamed"]:streamed
 ```
 
@@ -109,9 +109,9 @@ Subgraphs are **single-level** (no nesting). A node belongs to at most one group
 flow TD
 A(["Request arrives"]):primary ==> B["getCart()"]
 B --> C{Cache?}
-C -->|hit| D["Cache hit"]:good
-C -->|miss| E["DB query"]:pending
-D ==> F(["Response"]):good
+C -->|hit| D["Cache hit"]:success
+C -->|miss| E["DB query"]:warning
+D ==> F(["Response"]):success
 E ==> F
 ```
 
@@ -220,4 +220,4 @@ Main["Content"]
 | `A["label"]` | a span-1 cell (shapes + `:role` work as in flow) |
 | `A["label"] :2` | a cell spanning 2 columns |
 
-A trailing bare number (`:2`) is the column span; a known role name (`:good`) is the color. Both may be combined.
+A trailing bare number (`:2`) is the column span; a known role name (`:success`) is the color. Both may be combined.
