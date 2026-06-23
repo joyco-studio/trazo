@@ -37,9 +37,9 @@ app's brand out of the box.
 `pending` → `warning` (`primary`, `streamed`, `neutral` unchanged). This changes
 the `SemanticRole` type, the DSL `:role` suffix (`:good` → `:success`, etc.
 across the `flow` / `seq` / `block` parsers), the emitted color-token keys
-(`role-good` → `role-success`), and the corresponding `--trazo-*` /
-`--color-role-*` override slots. No back-compat aliases — old names no longer
-parse. Update any diagram sources and theme overrides accordingly.
+(`role-good` → `role-success`), and the corresponding `--trazo-<role>` override
+slots (`--trazo-good` → `--trazo-success`). No back-compat aliases — old names no
+longer parse. Update any diagram sources and theme overrides accordingly.
 
 The `node.color` token-key *shape* (`lane-N`, `role-X`, `accent`) is otherwise
 unchanged.
