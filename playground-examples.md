@@ -17,8 +17,8 @@ flow LR
 A["Request"] --> B["Handler"]
 C["Cache"] --- D["Store"]
 E["Client"]:primary <--> F["Server"]
-G["Sync A"]:good <==> H["Sync B"]
-A ==> I["Colored"]:good
+G["Sync A"]:success <==> H["Sync B"]
+A ==> I["Colored"]:success
 ```
 
 - `-->` flecha dirigida (neutra) · `==>` dirigida con color del nodo origen
@@ -30,7 +30,7 @@ A ==> I["Colored"]:good
 ```
 flow TD
 A["Build step\nruns at deploy"]:primary --> B["Bundle<br>and minify"]
-B --> C["Ship"]:good
+B --> C["Ship"]:success
 ```
 
 La caja crece en alto y se dimensiona según la línea más ancha. Sirve `\n` y `<br>`.
@@ -70,8 +70,8 @@ En LR el título también va arriba (mismo lugar que en TD).
 ```
 flow TD
 A(["Start"]):primary --> B{"Cache hit?"}
-B -->|"yes"| C["Serve"]:good
-B -->|"no"| D["Fetch"]:pending
+B -->|"yes"| C["Serve"]:success
+B -->|"no"| D["Fetch"]:warning
 D --> B
 ```
 
@@ -123,4 +123,4 @@ Footer["Footer"] :3
 - `columns N` define el ancho de la grilla
 - `:N` después de una celda es el span de columnas (sin `:` = span 1)
 - Las celdas fluyen de izquierda a derecha y bajan de fila cuando no entran
-- Roles (`:good`, `:primary`, …) también funcionan en las celdas
+- Roles (`:success`, `:primary`, …) también funcionan en las celdas
