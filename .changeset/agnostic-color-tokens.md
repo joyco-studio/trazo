@@ -32,7 +32,13 @@ app's brand out of the box.
 - **`neutral` foreground fallback** corrected from `#ededed` to `#0a0a0a` (~7:1
   contrast on the `#a1a1a1` neutral fill, up from ~2:1).
 
-No type or API changes; the `types.ts` token-key contract (`lane-N`, `role-X`,
-`accent`) is unchanged. The visible difference is which CSS variables resolve the
-colors, that box labels are now contrast-correct, and that `--trazo-*` overrides
-are honored.
+**Breaking — semantic roles renamed.** `good` → `success`, `bad` → `error`,
+`pending` → `warning` (`primary`, `streamed`, `neutral` unchanged). This changes
+the `SemanticRole` type, the DSL `:role` suffix (`:good` → `:success`, etc.
+across the `flow` / `seq` / `block` parsers), the emitted color-token keys
+(`role-good` → `role-success`), and the corresponding `--trazo-*` /
+`--color-role-*` override slots. No back-compat aliases — old names no longer
+parse. Update any diagram sources and theme overrides accordingly.
+
+The `node.color` token-key *shape* (`lane-N`, `role-X`, `accent`) is otherwise
+unchanged.

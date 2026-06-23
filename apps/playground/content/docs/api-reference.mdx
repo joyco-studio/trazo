@@ -96,7 +96,7 @@ interface CommitGraph {
 
 ```ts
 type NodeShape    = "dot" | "box" | "stadium" | "diamond" | "cylinder";
-type SemanticRole = "primary" | "good" | "bad" | "pending" | "streamed" | "neutral";
+type SemanticRole = "primary" | "success" | "error" | "warning" | "streamed" | "neutral";
 type FlowDirection = "TD" | "LR";
 
 interface FlowNode {
@@ -284,9 +284,9 @@ Colors are CSS variables with hardcoded fallbacks, so the SVG works out of the b
 
 /* Flow node roles */
 --color-role-primary:  #002cea;  /* joyco blue  */
---color-role-good:     #16a34a;  /* green       */
---color-role-bad:      #dc2626;  /* red         */
---color-role-pending:  #d97706;  /* amber       */
+--color-role-success:  #16a34a;  /* green       */
+--color-role-error:    #dc2626;  /* red         */
+--color-role-warning:  #d97706;  /* amber       */
 --color-role-streamed: #7c3aed;  /* purple      */
 --color-role-neutral:  #6b7280;  /* gray        */
 
@@ -323,9 +323,9 @@ Colors are CSS variables with hardcoded fallbacks, so the SVG works out of the b
     background: "#0f0f14",
     "--trazo-bg":            "#0f0f14",
     "--color-role-primary":  "#3b82f6",
-    "--color-role-good":     "#22c55e",
-    "--color-role-bad":      "#ef4444",
-    "--color-role-pending":  "#f59e0b",
+    "--color-role-success":  "#22c55e",
+    "--color-role-error":    "#ef4444",
+    "--color-role-warning":  "#f59e0b",
     "--color-role-streamed": "#a855f7",
     "--color-lane-0":        "#3b82f6",
     "--color-lane-1":        "#22c55e",

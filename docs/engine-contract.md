@@ -40,7 +40,7 @@ interface CommitGraph {
 
 ```ts
 type NodeShape    = "dot" | "box" | "stadium" | "diamond" | "cylinder";
-type SemanticRole = "primary" | "good" | "bad" | "pending" | "streamed" | "neutral";
+type SemanticRole = "primary" | "success" | "error" | "warning" | "streamed" | "neutral";
 type FlowDirection = "TD" | "LR";
 
 interface FlowNode { id: NodeId; label?: string; shape?: NodeShape; role?: SemanticRole; }

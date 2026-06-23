@@ -83,8 +83,8 @@ describe("parseFlow — nodes", () => {
   });
 
   it("parses role on a shaped node", () => {
-    const g = ok('A["label"]:good');
-    expect(node(g, "A").role).toBe("good");
+    const g = ok('A["label"]:success');
+    expect(node(g, "A").role).toBe("success");
     expect(node(g, "A").label).toBe("label");
   });
 

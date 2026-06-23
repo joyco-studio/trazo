@@ -55,7 +55,7 @@ appears (later refs can be just the id), plus an optional `:role`:
 ```
 id["label"]       box (default)        id(["label"])   stadium / terminal
 id{"label"}       diamond / decision   id[("label")]   cylinder / store
-B["slow"]:bad     role tag → semantic color (primary|good|bad|pending|streamed|neutral)
+B["slow"]:error     role tag → semantic color (primary|success|error|warning|streamed|neutral)
 ```
 
 Shape delimiters are matched longest-first so `[(` (cylinder) wins over `[`
@@ -67,10 +67,10 @@ edges):
 
 ```
 flow TD
-A(["Request arrives"]):primary ==> B["getCart() started"]:pending
-A ==> C["getFlags() started"]:pending
+A(["Request arrives"]):primary ==> B["getCart() started"]:warning
+A ==> C["getFlags() started"]:warning
 A --> D["Render shell immediately"]:streamed
-B ==> E["Stream data as promises settle"]:good
+B ==> E["Stream data as promises settle"]:success
 C --> E
 D --> E
 ```

@@ -170,7 +170,7 @@ export function git(strings: TemplateStringsArray, ...values: unknown[]): Commit
  * const positioned = layoutFlow(flow`
  *   flow LR
  *   A(["Start"]):primary ==> B["Process"]
- *   B --> C(["End"]):good
+ *   B --> C(["End"]):success
  * `);
  * ```
  */

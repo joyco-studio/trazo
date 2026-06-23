@@ -120,9 +120,9 @@ function laneIndex(tokenKey: string): number {
  */
 const ROLE_VARS: Record<SemanticRole, string> = {
   primary: themed("primary", "primary", "#002cea"),
-  good: themed("good", "chart-2", "#36b37e"),
-  bad: themed("bad", "destructive", "#e5484d"),
-  pending: themed("pending", "chart-4", "#e6a700"),
+  success: themed("success", "chart-2", "#36b37e"),
+  error: themed("error", "destructive", "#e5484d"),
+  warning: themed("warning", "chart-4", "#e6a700"),
   streamed: themed("streamed", "chart-3", "#2dd4bf"),
   neutral: themed("neutral", "muted-foreground", "#a1a1a1"),
 };
@@ -135,9 +135,9 @@ const ROLE_VARS: Record<SemanticRole, string> = {
  */
 const ROLE_FG_VARS: Record<SemanticRole, string> = {
   primary: themed("primary-foreground", "primary-foreground", "#ffffff"),
-  good: themed("good-foreground", "chart-2-foreground", "#0a0a0a"),
-  bad: themed("bad-foreground", "destructive-foreground", "#ffffff"),
-  pending: themed("pending-foreground", "chart-4-foreground", "#0a0a0a"),
+  success: themed("success-foreground", "chart-2-foreground", "#0a0a0a"),
+  error: themed("error-foreground", "destructive-foreground", "#ffffff"),
+  warning: themed("warning-foreground", "chart-4-foreground", "#0a0a0a"),
   streamed: themed("streamed-foreground", "chart-3-foreground", "#0a0a0a"),
   neutral: themed("neutral-foreground", "foreground", "#0a0a0a"),
 };
@@ -343,7 +343,7 @@ function orderEdgesByPaint(edges: PositionedEdge[]): PositionedEdge[] {
  */
 const ARROW_MARKER_PREFIX = "trazo-arrow";
 
-/** Stable, DOM-id-safe marker id for an edge color token (e.g. "role-good"). */
+/** Stable, DOM-id-safe marker id for an edge color token (e.g. "role-success"). */
 function arrowMarkerId(colorToken: string): string {
   const safe = colorToken.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${ARROW_MARKER_PREFIX}-${safe}`;

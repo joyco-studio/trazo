@@ -22,7 +22,7 @@ const graph = layoutFlow({
   nodes: [
     { id: "a", label: "Request", shape: "stadium", role: "primary" },
     { id: "b", label: "Process" },
-    { id: "c", label: "Done", shape: "stadium", role: "good" },
+    { id: "c", label: "Done", shape: "stadium", role: "success" },
   ],
   edges: [
     { from: "a", to: "b" },
@@ -62,7 +62,7 @@ Each node line becomes a `FlowNode`, each arrow becomes a `FlowEdge`:
 ```
 flow TD
 A(["Request"]):primary ==> B["Process"]
-B --> C["Done"]:good
+B --> C["Done"]:success
 ```
 
 ```ts
@@ -71,7 +71,7 @@ layoutFlow({
   nodes: [
     { id: "A", label: "Request", shape: "stadium", role: "primary" },
     { id: "B", label: "Process" },
-    { id: "C", label: "Done",    role: "good" },
+    { id: "C", label: "Done",    role: "success" },
   ],
   edges: [
     { from: "A", to: "B" },

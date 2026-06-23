@@ -14,10 +14,10 @@ const fixture: FlowGraph = {
   kind: "flow",
   nodes: [
     { id: "start", label: "Start", shape: "stadium", role: "primary" },
-    { id: "a", label: "Step A", shape: "box", role: "good" },
-    { id: "b", label: "Step B", shape: "box", role: "pending" },
+    { id: "a", label: "Step A", shape: "box", role: "success" },
+    { id: "b", label: "Step B", shape: "box", role: "warning" },
     { id: "join", label: "Join?", shape: "diamond", role: "neutral" },
-    { id: "end", label: "Done", shape: "cylinder", role: "good" },
+    { id: "end", label: "Done", shape: "cylinder", role: "success" },
   ],
   edges: [
     { from: "start", to: "a", label: "go" },

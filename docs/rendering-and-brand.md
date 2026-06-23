@@ -54,12 +54,12 @@ var(--trazo-primary, var(--color-primary, var(--primary, #002cea)))
 
 **Layer 1 — `--trazo-<slot>` (the theming entry point).** Unset by default, so
 it falls through. An app re-themes the graph by setting these — in CSS, on the
-root via `className="[--trazo-good:red]"`, or anywhere above the graph — with
-**no inline style and no knowledge of which shadcn token a slot maps to**. The
-slots are trazo's own stable vocabulary: `--trazo-lane-1…6`, `--trazo-primary`,
-`--trazo-good`, `--trazo-bad`, `--trazo-pending`, `--trazo-streamed`,
-`--trazo-neutral`, plus a `-foreground` variant of each for label text, and
-`--trazo-bg` / `--trazo-accent` / `--trazo-muted` for surfaces.
+root via `className="[--trazo-success:green]"`, or anywhere above the graph —
+with **no inline style and no knowledge of which shadcn token a slot maps to**.
+The slots are trazo's own stable vocabulary: `--trazo-lane-1…6`,
+`--trazo-primary`, `--trazo-success`, `--trazo-error`, `--trazo-warning`,
+`--trazo-streamed`, `--trazo-neutral`, plus a `-foreground` variant of each for
+label text, and `--trazo-bg` / `--trazo-accent` / `--trazo-muted` for surfaces.
 
 **Layer 2 — the stock shadcn token (the default brand match).** The renderer
 defaults each slot to a stock shadcn token (`primary`, `chart-1…5`,
@@ -79,8 +79,8 @@ Palettes (in `graph.tsx`):
 
 - **Lanes** (git) — `LANE_VARS`, **6 distinct slots** `lane-1…6` (defaulting to
   `primary` then `chart-1…5`); `laneIndex` cycles mod 6 for a clean loop.
-- **Roles** (flow) — `ROLE_VARS`: `primary→primary`, `good→chart-2`,
-  `bad→destructive`, `pending→chart-4`, `streamed→chart-3`,
+- **Roles** (flow) — `ROLE_VARS`: `primary→primary`, `success→chart-2`,
+  `error→destructive`, `warning→chart-4`, `streamed→chart-3`,
   `neutral→muted-foreground`.
 - **Accent** — `"accent"` key → a neutral light gray (`--trazo-neutral` →
   `muted-foreground`); the default flow edge color.
@@ -96,7 +96,7 @@ else → lane palette. `nodeForeground(key)` mirrors it for label text.
 
 ```tsx
 // Recolor specific slots — no inline style, no shadcn token names:
-<Graph graph={g} className="[--trazo-good:#16a34a] [--trazo-bad:#dc2626]" />
+<Graph graph={g} className="[--trazo-success:#16a34a] [--trazo-error:#dc2626]" />
 
 // Or a reusable named theme in app CSS:
 .trazo-ocean { --trazo-primary: #0369a1; --trazo-lane-2: #0891b2; }
