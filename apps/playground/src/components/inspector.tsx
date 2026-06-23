@@ -34,6 +34,7 @@ import { Graph } from '@joycostudio/trazo/react'
 import { Check, Copy, Download } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
+import { useColorEditor } from '@/components/color-editor'
 import { GraphViewport } from '@/components/graph-viewport'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -105,6 +106,7 @@ export interface InspectorProps {
 }
 
 export function Inspector({ initialMode, initialSource, initialGraph }: InspectorProps) {
+  const { style: colorOverrides } = useColorEditor()
   const [mode, setMode] = useState<Mode>(initialMode)
   // One source per mode so switching tabs preserves each editor's content. The
   // server-rendered mode keeps its exact seed; the other gets its default.
@@ -400,9 +402,12 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
 
           {/* The preview surface is `bg-card`, not the page background — so point
             the <Graph> node-border token (`--trazo-bg`) at the card color too,
-            or the bg-colored chip seam shows as a ring against this panel. */}
+            or the bg-colored chip seam shows as a ring against this panel. The
+            color editor's overrides spread AFTER as inline style, so a user
+            `bg` override wins over this default. */}
           <div
             ref={graphRef}
+            style={colorOverrides}
             className="bg-card relative min-h-[55vh] flex-1 [--trazo-bg:var(--color-card)] lg:min-h-0"
           >
             <GraphViewport.Canvas>

@@ -10,10 +10,11 @@
  * SAME seed, so the server HTML and the first client render are identical.
  */
 
+import { layoutFlow } from "@joycostudio/trazo";
 import Image from "next/image";
 import Link from "next/link";
-import { layoutFlow } from "@joycostudio/trazo";
 
+import { ColorEditorProvider, ColorEditorSheet } from "@/components/color-editor";
 import { Inspector } from "@/components/inspector";
 import { SyntaxContent } from "@/components/syntax-content";
 import { SyntaxDrawer } from "@/components/syntax-drawer";
@@ -33,7 +34,10 @@ export default function Home() {
 
   return (
     // The page is the bento backdrop: a muted field whose gap-px seams show
-    // through between the solid (bg-*) children of each Cluster.
+    // through between the solid (bg-*) children of each Cluster. The color editor
+    // provider wraps the whole tree so its header trigger and the Inspector's
+    // preview wrapper share the same override state.
+    <ColorEditorProvider>
     <div className="bg-muted flex min-h-dvh flex-col gap-px">
       <a
         href="#inspector"
@@ -81,6 +85,10 @@ export default function Home() {
           <SyntaxDrawer>
             <SyntaxContent />
           </SyntaxDrawer>
+        </Cluster>
+
+        <Cluster align="center" className="bg-card px-4">
+          <ColorEditorSheet />
         </Cluster>
 
         <Cluster align="center" className="bg-card px-4">
@@ -133,5 +141,6 @@ export default function Home() {
         </Cluster>
       </Cluster>
     </div>
+    </ColorEditorProvider>
   );
 }
