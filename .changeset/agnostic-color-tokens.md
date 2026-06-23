@@ -10,10 +10,11 @@ app's brand out of the box.
   three-layer chain `var(--trazo-<slot>, var(--<shadcn-token>, <hex>))` built by
   a `themed()` helper. `--trazo-*` is unset by default (falls through to the
   shadcn token), so an app re-themes the graph by setting these vars — in CSS,
-  on the root via `className="[--trazo-good:red]"`, or anywhere above the graph
-  — with no inline style and no knowledge of which shadcn token a slot maps to.
-  Slots: `--trazo-lane-1…6`, `--trazo-primary` / `good` / `bad` / `pending` /
-  `streamed` / `neutral`, a `-foreground` variant of each for label text, and
+  on the root via `className="[--trazo-success:#16a34a]"`, or anywhere above the
+  graph — with no inline style and no knowledge of which shadcn token a slot maps
+  to. Slots: `--trazo-lane-1…6`, `--trazo-primary` / `success` / `error` /
+  `warning` / `streamed` / `neutral`, a `-foreground` variant of each for label
+  text, and
   `--trazo-bg` / `--trazo-accent` / `--trazo-muted` for surfaces.
 - **Stock shadcn defaults.** Each slot defaults to a stock shadcn token
   (`primary` + `chart-1…5`, `destructive`, `muted-foreground`) instead of
