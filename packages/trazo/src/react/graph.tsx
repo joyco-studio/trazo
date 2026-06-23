@@ -28,8 +28,10 @@ import type { PositionedGroup } from "../types.js";
 import type { JSX } from "react";
 
 /**
- * Lane color palette: joyco-blue leads as the primary, followed by vivid brand
- * + chart tokens for contrast, cycled so adjacent lanes stay distinct. Pure
+ * Lane color palette: stock shadcn tokens only — `primary` leads, then
+ * `chart-1…5`, cycled so adjacent lanes stay distinct (6 distinct app-defined
+ * colors before reuse). Referencing the app's own tokens means trazo adopts its
+ * brand out of the box (in the JOYCO kit `--primary` is the brand blue). Pure
  * string lookup → identical on server/client.
  *
  * Each entry is a LAYERED fallback: `var(--color-x, var(--x, #hex))`. In
@@ -40,45 +42,93 @@ import type { JSX } from "react";
  * never colorless in ANY consuming app (playground, the hub, anywhere).
  */
 const LANE_VARS = [
-  "var(--color-joyco-blue, var(--joyco-blue, #002cea))",
-  "var(--color-mint-green, var(--mint-green, #36b37e))",
-  "var(--color-mustard-yellow, var(--mustard-yellow, #e6a700))",
+  "var(--color-primary, var(--primary, #002cea))",
+  "var(--color-chart-1, var(--chart-1, #36b37e))",
+  "var(--color-chart-2, var(--chart-2, #e6a700))",
   "var(--color-chart-3, var(--chart-3, #2dd4bf))",
   "var(--color-chart-4, var(--chart-4, #a78bfa))",
   "var(--color-chart-5, var(--chart-5, #f472b6))",
-  "var(--color-chart-1, var(--chart-1, #1447e6))",
-  "var(--color-chart-2, var(--chart-2, #00bba7))",
+  "var(--color-primary, var(--primary, #1447e6))",
+  "var(--color-chart-1, var(--chart-1, #00bba7))",
+] as const;
+
+/**
+ * Readable text color paired to each LANE_VARS fill, index-aligned. Same
+ * LAYERED fallback discipline as the fills: the consuming app's theme-scoped
+ * `*-foreground` token decides the actual color per theme (so a fill whose
+ * lightness flips between light/dark gets the right text in each), and the hex
+ * fallback is the WCAG pick against this entry's own fallback fill — keeping
+ * labels legible even in an app that defines no foreground tokens at all.
+ */
+const LANE_FG_VARS = [
+  "var(--color-primary-foreground, var(--primary-foreground, #ffffff))",
+  "var(--color-chart-1-foreground, var(--chart-1-foreground, #0a0a0a))",
+  "var(--color-chart-2-foreground, var(--chart-2-foreground, #0a0a0a))",
+  "var(--color-chart-3-foreground, var(--chart-3-foreground, #0a0a0a))",
+  "var(--color-chart-4-foreground, var(--chart-4-foreground, #0a0a0a))",
+  "var(--color-chart-5-foreground, var(--chart-5-foreground, #0a0a0a))",
+  "var(--color-primary-foreground, var(--primary-foreground, #ffffff))",
+  "var(--color-chart-1-foreground, var(--chart-1-foreground, #0a0a0a))",
 ] as const;
 
 function laneColor(tokenKey: string): string {
+  return LANE_VARS[laneIndex(tokenKey)] as string;
+}
+
+function laneForeground(tokenKey: string): string {
+  return LANE_FG_VARS[laneIndex(tokenKey)] as string;
+}
+
+function laneIndex(tokenKey: string): number {
   // tokenKey is "lane-<n>"; parse the index and cycle through the palette.
   const dash = tokenKey.lastIndexOf("-");
   const n = dash >= 0 ? Number.parseInt(tokenKey.slice(dash + 1), 10) : 0;
   const safe = Number.isFinite(n) ? n : 0;
-  const idx = ((safe % LANE_VARS.length) + LANE_VARS.length) % LANE_VARS.length;
-  return LANE_VARS[idx] as string;
+  return ((safe % LANE_VARS.length) + LANE_VARS.length) % LANE_VARS.length;
 }
 
 /**
  * Semantic role palette for flow nodes/edges. Same LAYERED fallback discipline
- * as `LANE_VARS`: `var(--color-x, var(--x, #hex))`. Two roles intentionally
- * point at shadcn-style tokens (destructive, muted-foreground) since those are
- * the conventional homes for "bad" and "neutral" in JOYCO consuming apps.
+ * as `LANE_VARS`: `var(--color-x, var(--x, #hex))`. Every entry points at a
+ * stock shadcn token (primary, chart-*, destructive, muted-foreground) so the
+ * renderer adopts a consuming app's brand out of the box; the hex is only the
+ * last-resort fallback for an app with no shadcn tokens at all.
  */
 const ROLE_VARS: Record<SemanticRole, string> = {
-  primary: "var(--color-joyco-blue, var(--joyco-blue, #002cea))",
-  good: "var(--color-mint-green, var(--mint-green, #36b37e))",
+  primary: "var(--color-primary, var(--primary, #002cea))",
+  good: "var(--color-chart-2, var(--chart-2, #36b37e))",
   bad: "var(--color-destructive, var(--destructive, #e5484d))",
-  pending: "var(--color-mustard-yellow, var(--mustard-yellow, #e6a700))",
+  pending: "var(--color-chart-4, var(--chart-4, #e6a700))",
   streamed: "var(--color-chart-3, var(--chart-3, #2dd4bf))",
   neutral: "var(--color-muted-foreground, var(--muted-foreground, #a1a1a1))",
 };
 
+/**
+ * Readable text color paired to each ROLE_VARS fill. Same layered-fallback
+ * discipline as the role fills. `neutral` sits on a muted-gray box, so its text
+ * is the page foreground rather than a forced black/white.
+ */
+const ROLE_FG_VARS: Record<SemanticRole, string> = {
+  primary: "var(--color-primary-foreground, var(--primary-foreground, #ffffff))",
+  good: "var(--color-chart-2-foreground, var(--chart-2-foreground, #0a0a0a))",
+  bad: "var(--color-destructive-foreground, var(--destructive-foreground, #ffffff))",
+  pending: "var(--color-chart-4-foreground, var(--chart-4-foreground, #0a0a0a))",
+  streamed: "var(--color-chart-3-foreground, var(--chart-3-foreground, #0a0a0a))",
+  neutral: "var(--color-foreground, var(--foreground, #ededed))",
+};
+
 function roleColor(tokenKey: string): string {
-  // tokenKey is "role-<role>"; parse the role and look it up.
+  return ROLE_VARS[parseRole(tokenKey)] ?? ROLE_VARS.neutral;
+}
+
+function roleForeground(tokenKey: string): string {
+  return ROLE_FG_VARS[parseRole(tokenKey)] ?? ROLE_FG_VARS.neutral;
+}
+
+function parseRole(tokenKey: string): SemanticRole {
+  // tokenKey is "role-<role>"; parse the role.
   const dash = tokenKey.indexOf("-");
-  const role = (dash >= 0 ? tokenKey.slice(dash + 1) : "neutral") as SemanticRole;
-  return ROLE_VARS[role] ?? ROLE_VARS.neutral;
+  return (dash >= 0 ? tokenKey.slice(dash + 1) : "neutral") as SemanticRole;
 }
 
 /** Neutral edge color (the default for flow edges) — a light, on-brand gray. */
@@ -93,6 +143,16 @@ const EDGE_ACCENT =
 function nodeColor(tokenKey: string): string {
   if (tokenKey === "accent") return EDGE_ACCENT;
   return tokenKey.startsWith("role-") ? roleColor(tokenKey) : laneColor(tokenKey);
+}
+
+/**
+ * Readable label color for a node filled with `tokenKey`'s color. Mirrors
+ * `nodeColor`: the paired `*-foreground` for lanes/roles, the page foreground
+ * for the neutral accent fill.
+ */
+function nodeForeground(tokenKey: string): string {
+  if (tokenKey === "accent") return FG;
+  return tokenKey.startsWith("role-") ? roleForeground(tokenKey) : laneForeground(tokenKey);
 }
 
 /** Foreground (strokes, labels), with the same layered fallback as the palette. */
@@ -621,7 +681,7 @@ function renderNodeLabel(
         y={node.y}
         textAnchor="middle"
         dominantBaseline="central"
-        fill={FG}
+        fill={nodeForeground(node.color)}
         fontFamily={LABEL_FONT}
         fontSize={LABEL_SIZE}
         style={UPPERCASE}

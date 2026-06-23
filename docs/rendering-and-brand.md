@@ -47,7 +47,7 @@ The engine emits **token keys** (`"lane-N"`, `"role-X"`, `"accent"`); the
 renderer maps them to CSS variables. Each mapping is a **layered fallback**:
 
 ```
-var(--color-joyco-blue, var(--joyco-blue, #002cea))
+var(--color-primary, var(--primary, #002cea))
 ```
 
 **Why the fallbacks exist:** in Tailwind v4 the `--color-*` aliases live inside
@@ -58,18 +58,30 @@ token (`--chart-1`, which survives) and finally a hard-coded hex — so
 illustrations are never colorless in *any* consuming app (the playground, the
 hub, a standalone script). **Keep this pattern for any new color.**
 
+**Why these specific tokens:** the renderer references only **stock shadcn
+tokens** — `primary`, `chart-1…5`, `destructive`, `muted-foreground` — so trazo
+adopts a consuming app's brand out of the box. In the JOYCO UI kit `--primary`
+*is* the brand blue, so a JOYCO app renders on-brand with zero config; a vanilla
+shadcn app renders in its own palette. The hex is the last-resort fallback for
+an app with no shadcn tokens at all.
+
 Palettes (in `graph.tsx`):
 
-- **Lanes** (git) — `LANE_VARS`, led by **joyco-blue** as primary, then vivid
-  contrast colors (mint, mustard, charts), cycled.
-- **Roles** (flow) — `ROLE_VARS`: `primary→joyco-blue`, `good→mint-green`,
-  `bad→destructive`, `pending→mustard-yellow`, `streamed→chart-3`,
+- **Lanes** (git) — `LANE_VARS`, led by **`primary`**, then `chart-1…5`, cycled
+  (6 distinct app-defined colors before reuse).
+- **Roles** (flow) — `ROLE_VARS`: `primary→primary`, `good→chart-2`,
+  `bad→destructive`, `pending→chart-4`, `streamed→chart-3`,
   `neutral→muted-foreground`.
 - **Accent** — `"accent"` key → a neutral light gray (`muted-foreground`); the
   default flow edge color.
+- **Label color** — `LANE_FG_VARS` / `ROLE_FG_VARS` pair each fill with a
+  readable text color: the fill's `*-foreground` token when the app defines one
+  (shadcn ships `primary-foreground` / `destructive-foreground`), else a
+  WCAG-picked black/white hex matching that slot's fallback fill. This keeps
+  labels legible on the box regardless of the page foreground.
 
 `nodeColor(key)` resolves any key: `"accent"` → gray, `role-*` → role palette,
-else → lane palette.
+else → lane palette. `nodeForeground(key)` mirrors it for label text.
 
 ## Label width & the letter-spacing tracking fix
 

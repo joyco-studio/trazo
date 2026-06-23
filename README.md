@@ -40,7 +40,8 @@ A pnpm + turbo monorepo with two pieces:
   hooks or effects, so it renders as a React Server Component (zero client JS, for
   static illustrations) **and** hydrated (for Trazo Playground's live preview), producing
   identical markup either way.
-- **On-brand by default.** joyco-blue primary with semantic role colors, square
+- **On-brand by default.** Adopts your app's shadcn `--primary` and chart tokens
+  for lane/role colors, square
   commit nodes, hard 45° edge elbows, uppercase labels, the bento console
   aesthetic from the `@joyco/ui` kit. Colors ship with layered CSS-var fallbacks
   so illustrations are never colorless in any consuming app.
