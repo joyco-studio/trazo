@@ -44,44 +44,63 @@ below is a styling decision encoded there.
 ## Color tokens — the fallback strategy (important)
 
 The engine emits **token keys** (`"lane-N"`, `"role-X"`, `"accent"`); the
-renderer maps them to CSS variables. Each mapping is a **layered fallback**:
+renderer maps them to CSS variables via the `themed(slot, token, hex)` helper,
+which builds a **three-layer chain**:
 
 ```
-var(--color-primary, var(--primary, #002cea))
+var(--trazo-primary, var(--color-primary, var(--primary, #002cea)))
+└─ override knob ──┘  └─ shadcn default (── adopts app brand ──)┘  └ hex ┘
 ```
 
-**Why the fallbacks exist:** in Tailwind v4 the `--color-*` aliases live inside
-`@theme inline` and are **tree-shaken** unless a utility class references them.
-A renderer that used `var(--color-chart-1)` alone rendered **colorless** in apps
-that didn't happen to reference that utility. The chain resolves to the raw
-token (`--chart-1`, which survives) and finally a hard-coded hex — so
-illustrations are never colorless in *any* consuming app (the playground, the
-hub, a standalone script). **Keep this pattern for any new color.**
+**Layer 1 — `--trazo-<slot>` (the theming entry point).** Unset by default, so
+it falls through. An app re-themes the graph by setting these — in CSS, on the
+root via `className="[--trazo-good:red]"`, or anywhere above the graph — with
+**no inline style and no knowledge of which shadcn token a slot maps to**. The
+slots are trazo's own stable vocabulary: `--trazo-lane-1…6`, `--trazo-primary`,
+`--trazo-good`, `--trazo-bad`, `--trazo-pending`, `--trazo-streamed`,
+`--trazo-neutral`, plus a `-foreground` variant of each for label text, and
+`--trazo-bg` / `--trazo-accent` / `--trazo-muted` for surfaces.
 
-**Why these specific tokens:** the renderer references only **stock shadcn
-tokens** — `primary`, `chart-1…5`, `destructive`, `muted-foreground` — so trazo
-adopts a consuming app's brand out of the box. In the JOYCO UI kit `--primary`
-*is* the brand blue, so a JOYCO app renders on-brand with zero config; a vanilla
-shadcn app renders in its own palette. The hex is the last-resort fallback for
-an app with no shadcn tokens at all.
+**Layer 2 — the stock shadcn token (the default brand match).** The renderer
+defaults each slot to a stock shadcn token (`primary`, `chart-1…5`,
+`destructive`, `muted-foreground`) so an *unthemed* graph adopts the consuming
+app's brand out of the box. In the JOYCO UI kit `--primary` *is* the brand blue,
+so a JOYCO app renders on-brand with zero config. The `--color-*` alias is tried
+before the raw `--<token>` because Tailwind v4 keeps `--color-*` inside
+`@theme inline` and **tree-shakes** it unless a utility references it — a
+renderer that used `var(--color-chart-1)` alone went **colorless** in apps that
+never referenced that utility; the raw token always survives.
+
+**Layer 3 — the hex.** Last-resort literal so illustrations are never colorless
+in an app with no shadcn tokens at all. **Keep all three layers for any new
+color** — build it with `themed()`.
 
 Palettes (in `graph.tsx`):
 
-- **Lanes** (git) — `LANE_VARS`, led by **`primary`**, then `chart-1…5`, cycled
-  (6 distinct app-defined colors before reuse).
+- **Lanes** (git) — `LANE_VARS`, **6 distinct slots** `lane-1…6` (defaulting to
+  `primary` then `chart-1…5`); `laneIndex` cycles mod 6 for a clean loop.
 - **Roles** (flow) — `ROLE_VARS`: `primary→primary`, `good→chart-2`,
   `bad→destructive`, `pending→chart-4`, `streamed→chart-3`,
   `neutral→muted-foreground`.
-- **Accent** — `"accent"` key → a neutral light gray (`muted-foreground`); the
-  default flow edge color.
+- **Accent** — `"accent"` key → a neutral light gray (`--trazo-neutral` →
+  `muted-foreground`); the default flow edge color.
 - **Label color** — `LANE_FG_VARS` / `ROLE_FG_VARS` pair each fill with a
-  readable text color: the fill's `*-foreground` token when the app defines one
-  (shadcn ships `primary-foreground` / `destructive-foreground`), else a
-  WCAG-picked black/white hex matching that slot's fallback fill. This keeps
-  labels legible on the box regardless of the page foreground.
+  readable text color (its own `-foreground` slot → shadcn `*-foreground` token
+  → WCAG-picked black/white hex matching that slot's fallback fill). Keeps labels
+  legible on the box regardless of the page foreground.
 
 `nodeColor(key)` resolves any key: `"accent"` → gray, `role-*` → role palette,
 else → lane palette. `nodeForeground(key)` mirrors it for label text.
+
+### Theming example
+
+```tsx
+// Recolor specific slots — no inline style, no shadcn token names:
+<Graph graph={g} className="[--trazo-good:#16a34a] [--trazo-bad:#dc2626]" />
+
+// Or a reusable named theme in app CSS:
+.trazo-ocean { --trazo-primary: #0369a1; --trazo-lane-2: #0891b2; }
+```
 
 ## Label width & the letter-spacing tracking fix
 
