@@ -174,6 +174,41 @@ describe("parseGit — errors", () => {
     expect(e.message).toMatch(/duplicate/i);
   });
 
+  it("auto merge ids skip user-taken ids instead of colliding", () => {
+    // The user's explicit "m2" would have collided with the SECOND merge's
+    // auto id, silently fusing two commits (9 parsed → 8 laid out).
+    const src = [
+      "commit a1",
+      "branch one",
+      "commit f1",
+      "checkout main",
+      "commit m2 : main work",
+      "branch two",
+      "commit t1",
+      "checkout main",
+      "merge one",
+      "checkout two",
+      "commit t2",
+      "checkout main",
+      "merge two",
+    ].join("\n");
+    const { graph, error } = parseGit(src);
+    expect(error).toBeNull();
+    const ids = graph.commits.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // 5 explicit commits + 2 merges — every one must survive the layout.
+    expect(graph.commits).toHaveLength(7);
+  });
+
+  it("auto commit ids skip user-taken ids instead of erroring", () => {
+    // "c1" is taken by the user; the following anonymous commit must not
+    // claim it (that used to surface as a bogus "duplicate id" error).
+    const { graph, error } = parseGit("commit c1\ncommit");
+    expect(error).toBeNull();
+    expect(graph.commits).toHaveLength(2);
+    expect(new Set(graph.commits.map((c) => c.id)).size).toBe(2);
+  });
+
   it("errors on branch with no name", () => {
     const e = err("branch");
     expect(e.message).toMatch(/branch needs a name/i);

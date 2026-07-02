@@ -73,6 +73,52 @@ export function labelLines(label: string | undefined): string[] {
 }
 
 /**
+ * Greedy word-wrap of a label so no line's rendered width (uppercase, with
+ * tracking) exceeds `maxTextWidth` px. Hard `\n` breaks are preserved as
+ * paragraph boundaries; a single word wider than the budget stays whole (no
+ * hyphenation). Pure and deterministic — glyph-table measuring only.
+ */
+export function wrapLabel(label: string, maxTextWidth: number): string {
+  const out: string[] = [];
+  for (const hardLine of label.split("\n")) {
+    const words = hardLine.split(/\s+/).filter((w) => w.length > 0);
+    if (words.length === 0) {
+      out.push(hardLine);
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line === "" ? word : `${line} ${word}`;
+      if (line !== "" && measureLabel(candidate.toUpperCase()) > maxTextWidth) {
+        out.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    if (line !== "") out.push(line);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Truncate a label with a trailing "…" so its rendered width (uppercase, with
+ * tracking) fits `maxTextWidth` px — what real git UIs do to long commit
+ * subjects. Returns the text unchanged when it already fits. Pure and
+ * deterministic.
+ */
+export function truncateLabel(text: string, maxTextWidth: number): string {
+  if (measureLabel(text.toUpperCase()) <= maxTextWidth) return text;
+  const chars = [...text];
+  while (chars.length > 0) {
+    chars.pop();
+    const candidate = `${chars.join("").trimEnd()}…`;
+    if (measureLabel(candidate.toUpperCase()) <= maxTextWidth) return candidate;
+  }
+  return "…";
+}
+
+/**
  * Measured size of a (possibly multi-line) label, rendered uppercase with
  * tracking: width = the widest line's `measureLabel`, height = `lineCount` rows
  * at `labelLineHeight`. Pure. Single source of truth for node/group/note sizing.

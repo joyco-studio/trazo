@@ -56,6 +56,13 @@ There are **5 node shapes**. `dot` is the git marker (rendered as a square — s
 There is **no "sliced-corner" node shape** — sliced corners are only the git
 *label badge* treatment.
 
+**Self-loops (`A --> A`) are first-class**: they skip the rank/order pipeline
+and route as a wrap-around corridor beside the node (forward face → cross-end
+corridor → cross-end face). The packing reserves `nodeGap` of cross-axis space
+per loop (`Vertex.loopPad`) so corridors never collide with rank siblings;
+multiple loops on one node nest at `nodeGap` intervals. Their labels sit on the
+corridor and are excluded from sibling label leveling.
+
 ## Output — `PositionedGraph` (both layouts produce this)
 
 ```ts
@@ -89,6 +96,7 @@ type EdgeStyle = "elbow45" | "orthogonal";   // default "elbow45"
 
 interface LayoutOptions {        // git
   laneWidth?; rowHeight?; nodeRadius?; padding?;
+  maxLabelWidth?: number;        // ellipsis-truncate the message so the badge caps here
   edgeStyle?: EdgeStyle;
   orientation?: "vertical" | "horizontal";   // default "vertical"
   labelSide?: "left" | "right";              // default "right"
@@ -96,6 +104,7 @@ interface LayoutOptions {        // git
 interface FlowLayoutOptions {    // flow
   direction?: FlowDirection;     // default "TD"
   layerGap?; nodeGap?; padding?; minNodeWidth?; nodeHeight?; labelPadX?;
+  maxNodeWidth?: number;         // word-wrap labels so boxes cap near this px
   edgeStyle?: EdgeStyle;
 }
 ```

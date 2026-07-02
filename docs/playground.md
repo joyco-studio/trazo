@@ -50,6 +50,19 @@ leaf child owns its `bg-*`, `gap-px` seams over a muted field, no borders, radiu
   `"orthogonal"`, threaded into both `layoutGit` and `layoutFlow`. Re-layouts
   immediately.
 
+## Documents (multi-graph + localStorage)
+
+`src/hooks/use-graph-docs.ts` — each mode holds a LIST of documents, so you can
+start a fresh diagram from the seed (`+`) without losing the one you were
+editing, switch between them (numbered pills next to the mode tabs), and delete
+the current one (`×`; the last doc resets to the seed instead of disappearing).
+
+Everything persists to localStorage (`trazo-playground-docs-v1`, debounced).
+Hydration-safe by construction: the initial render is exactly the SSR seeds;
+the persisted state is swapped in post-mount, and the hook bumps `restoredAt`
+so the inspector re-layouts the restored source once. If the stored payload is
+malformed (schema drift), it's ignored and the next edit overwrites it.
+
 ## Running
 
 ```bash

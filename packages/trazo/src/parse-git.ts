@@ -68,6 +68,16 @@ export function parseGit(source: string): GitParseResult {
   let currentBranch = DEFAULT_BRANCH;
   let autoCounter = 0;
 
+  // Auto-generated ids must never collide with a user-written id: a user
+  // commit literally named "m2" would otherwise silently fuse with the second
+  // merge's auto id, corrupting the graph. Deterministic: the counter only
+  // ever moves forward, skipping taken names.
+  const freshId = (prefix: string): string => {
+    let id = `${prefix}${++autoCounter}`;
+    while (commits.some((c) => c.id === id)) id = `${prefix}${++autoCounter}`;
+    return id;
+  };
+
   branchTips.set(DEFAULT_BRANCH, "");
 
   const fail = (line: number, message: string): GitParseResult => ({
@@ -139,7 +149,7 @@ export function parseGit(source: string): GitParseResult {
           );
         }
 
-        const id = idToken ?? `c${++autoCounter}`;
+        const id = idToken ?? freshId("c");
         if (commits.some((c) => c.id === id)) {
           return fail(lineNumber, `duplicate commit id "${id}"`);
         }
@@ -189,7 +199,7 @@ export function parseGit(source: string): GitParseResult {
         if (!mainlineTip || !mergedTip) {
           return fail(lineNumber, `nothing to merge — both branches need a commit`);
         }
-        const id = `m${++autoCounter}`;
+        const id = freshId("m");
         const mergeCommit: Commit = {
           id,
           parents: [mainlineTip, mergedTip],

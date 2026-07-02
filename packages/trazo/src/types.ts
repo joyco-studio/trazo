@@ -420,6 +420,13 @@ export interface LayoutOptions {
   nodeRadius?: number;
   /** Outer padding around the whole graph (px). */
   padding?: number;
+  /**
+   * Truncate the commit MESSAGE with a trailing "…" so the whole badge text
+   * (hash + message + author) never measures wider than this (px) — what real
+   * git UIs do to long subjects. Hash and author are never cut. Default: no
+   * truncation.
+   */
+  maxLabelWidth?: number;
   /** Edge connector style. Default "elbow45". */
   edgeStyle?: EdgeStyle;
   /**
@@ -477,6 +484,14 @@ export interface FlowLayoutOptions {
   nodeHeight?: number;
   /** Horizontal padding (px) added around a node's measured label. */
   labelPadX?: number;
+  /**
+   * Word-wrap node labels so a box never grows past ~this width (px) — the
+   * mermaid-style guard against one long label producing an extremely wide
+   * node. Hard `\n` breaks are preserved; a single word longer than the budget
+   * stays whole, so the box can still exceed this in that edge case.
+   * Default: no wrapping.
+   */
+  maxNodeWidth?: number;
   /** Edge connector style. Default "elbow45". */
   edgeStyle?: EdgeStyle;
 }

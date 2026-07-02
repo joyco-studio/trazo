@@ -38,6 +38,7 @@ import type {
 import {
   curveBetween,
   measureLabel,
+  truncateLabel,
   badgeWidth,
   NODE_HALF,
   LABEL_GAP,
@@ -281,14 +282,27 @@ export function layoutGit(
   // adjacent badges don't overlap. We trim each part: an all-whitespace field is
   // treated as absent so it never produces a badge.
   const precomputedLabelWidths = new Map<CommitId, number>();
+  // Message text as drawn — the ellipsis-truncated subject when maxLabelWidth
+  // is set. Truncation happens ONCE here; widths and the emitted node.message
+  // both use it, so what's measured is exactly what's rendered.
+  const displayMessages = new Map<CommitId, string>();
+  const maxLabelWidth = options?.maxLabelWidth;
   for (const commit of ordered) {
     const hash = commit.hash?.trim();
     const message = commit.message?.trim();
     const author = commit.author?.trim();
     if (hash || message || author) {
       const hashPart = hash ? `${hash} ` : "";
-      const msgPart = message ?? "";
       const authorPart = author ? `  ${author}` : "";
+      let msgPart = message ?? "";
+      if (maxLabelWidth !== undefined && msgPart !== "") {
+        // Glyph-table measuring is strictly additive (advances + per-char
+        // tracking), so the message budget is exact: total minus the fixed
+        // hash/author parts. Hash and author are never cut.
+        const fixed = measureLabel(`${hashPart}${authorPart}`.toUpperCase());
+        msgPart = truncateLabel(msgPart, Math.max(24, maxLabelWidth - fixed));
+      }
+      if (message !== undefined) displayMessages.set(commit.id, msgPart);
       precomputedLabelWidths.set(
         commit.id,
         measureLabel(`${hashPart}${msgPart}${authorPart}`.toUpperCase()),
@@ -347,7 +361,9 @@ export function layoutGit(
     // Only attach trimmed, non-empty label parts; empty/whitespace strings
     // would produce blank tspans in the renderer.
     const hash = commit.hash?.trim();
-    const message = commit.message?.trim();
+    // Emit the message AS MEASURED — the ellipsis-truncated subject when
+    // maxLabelWidth applied (displayMessages), the raw trim otherwise.
+    const message = displayMessages.get(commit.id) ?? commit.message?.trim();
     const author = commit.author?.trim();
     if (hash) node.hash = hash;
     if (author) node.author = author;
