@@ -160,6 +160,21 @@ export function useGraphDocs<M extends string>(seeds: Record<M, string>) {
     return (remaining.find((d) => d.id === nextActive) as GraphDoc).source
   }, [])
 
+  /**
+   * Wipe every persisted doc and restore the pristine seed examples for all
+   * modes. Destructive — the caller gates this behind a confirmation. Bumps
+   * `restoredAt` so the inspector re-lays-out the freshly-seeded active doc.
+   */
+  const resetAll = useCallback((): void => {
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      // Private mode / quota — nothing to clear, the reseed below still applies.
+    }
+    setState(seedState(seedsRef.current))
+    setRestoredAt((n) => n + 1)
+  }, [])
+
   return {
     docs: state.docs,
     active: state.active,
@@ -168,5 +183,6 @@ export function useGraphDocs<M extends string>(seeds: Record<M, string>) {
     addDoc,
     selectDoc,
     deleteDoc,
+    resetAll,
   }
 }

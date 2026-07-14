@@ -33,12 +33,22 @@ import {
   type TrazoTheme,
 } from '@joycostudio/trazo'
 import { Graph } from '@joycostudio/trazo/react'
-import { Check, Copy, Download, Plus, X } from 'lucide-react'
+import { Check, Copy, Download, Plus, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { CodeEditor } from '@/components/code-editor'
 import { GraphViewport } from '@/components/graph-viewport'
 import { ThemePanel } from '@/components/theme-panel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Cluster, Filler } from '@/components/ui/cluster'
@@ -129,6 +139,7 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
     addDoc,
     selectDoc,
     deleteDoc,
+    resetAll,
   } = useGraphDocs<Mode>({
     git: initialMode === 'git' ? initialSource : SEED_PROGRAM,
     flow: initialMode === 'flow' ? initialSource : SEED_FLOW,
@@ -232,6 +243,18 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
     },
     [recompute, mode, source, git]
   )
+
+  // Destructive reset: wipe persisted docs + theme back to the shipped examples.
+  // Gated behind a confirmation dialog in the toolbar. Lands on the flowchart
+  // example (the canonical "hello") with the default theme.
+  const handleReset = useCallback(() => {
+    resetAll()
+    setTheme(DEFAULT_THEME)
+    setPresetName(DEFAULT_THEME.name ?? 'custom')
+    setMode('flow')
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    recompute('flow', SEED_FLOW, DEFAULT_THEME, git)
+  }, [resetAll, recompute, git])
 
   // Shareable themes: ?theme=<base64url> round-trips the full theme object.
   useThemeUrl(theme, presetName, DEFAULT_THEME, handleTheme)
@@ -368,6 +391,29 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
           </TooltipButton>
         </Cluster>
         <Filler />
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <TooltipButton
+              variant="muted"
+              size="icon-sm"
+              tooltip="Reset to examples"
+              aria-label="Reset all diagrams and theme to the examples"
+            >
+              <RotateCcw />
+            </TooltipButton>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogTitle className="text-sm tracking-wide uppercase">Reset to examples?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground text-sm">
+              This clears every saved diagram (all modes) and your theme edits from this browser and restores the
+              shipped examples. This can&rsquo;t be undone.
+            </AlertDialogDescription>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleReset}>Reset everything</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <TooltipButton
           variant="muted"
           size="icon-sm"
