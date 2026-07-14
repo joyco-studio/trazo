@@ -107,14 +107,38 @@ export type NodeShape = "dot" | "box" | "stadium" | "diamond" | "cylinder";
 /**
  * Semantic role of a flow node — maps to a theme color token in the renderer,
  * so the engine never emits a literal color (same discipline as git lanes).
+ *
+ * `streamed` is a deprecated alias of `info`: it stays in the union so existing
+ * inputs keep parsing, but the renderer resolves it to the `--trazo-info` slot.
  */
 export type SemanticRole =
   | "primary"
+  | "secondary"
+  | "ghost"
+  | "muted"
+  | "neutral"
   | "success"
-  | "error"
   | "warning"
-  | "streamed"
-  | "neutral";
+  | "error"
+  | "info"
+  | "streamed";
+
+/**
+ * Every accepted role keyword, in one place so the flow/block/sequence DSL
+ * parsers and any editor autocomplete never drift from the type union.
+ */
+export const SEMANTIC_ROLES: readonly SemanticRole[] = [
+  "primary",
+  "secondary",
+  "ghost",
+  "muted",
+  "neutral",
+  "success",
+  "warning",
+  "error",
+  "info",
+  "streamed",
+];
 
 /** Layout flow direction: top-down or left-right. */
 export type FlowDirection = "TD" | "LR";
@@ -539,12 +563,15 @@ export type GitLabelSide = "left" | "right";
 
 /**
  * How edges turn between nodes:
- *  - "elbow45": straight, then a sharp 45° diagonal, then straight (default).
+ *  - "elbow45": straight, then a sharp 45° diagonal, then straight (default —
+ *    the theme vocabulary calls this lanes mode "angular").
  *  - "orthogonal": straight, then a 90° right-angle elbow, then straight.
- * In both styles an edge always LEAVES and ENTERS a node perpendicular to the
+ *  - "rounded": orthogonal geometry with every corner arced (quadratic curve).
+ *  - "bezier": one smooth cubic curve through the waypoints (Catmull-Rom).
+ * In every style an edge always LEAVES and ENTERS a node perpendicular to the
  * node's face (a short straight stub) before any turn.
  */
-export type EdgeStyle = "elbow45" | "orthogonal";
+export type EdgeStyle = "elbow45" | "orthogonal" | "rounded" | "bezier";
 
 /** Alias for {@link LayoutOptions} — the git-specific layout options. */
 export type GitLayoutOptions = LayoutOptions;
@@ -576,6 +603,12 @@ export interface FlowLayoutOptions {
    * Default: no wrapping.
    */
   maxNodeWidth?: number;
+  /**
+   * Air gap (px) between an edge's endpoints (line end / arrow tip) and the
+   * node face it connects to. 0 (default) = flush against the border; the
+   * theme's "lane gap" knob maps here for flow diagrams.
+   */
+  edgeGap?: number;
   /** Edge connector style. Default "elbow45". */
   edgeStyle?: EdgeStyle;
 }

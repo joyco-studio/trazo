@@ -40,20 +40,14 @@ import type {
   ParseError,
   SemanticRole,
 } from "./types.js";
+import { SEMANTIC_ROLES } from "./types.js";
 
 export interface FlowParseResult {
   graph: FlowGraph;
   error: ParseError | null;
 }
 
-const ROLES: ReadonlySet<string> = new Set([
-  "primary",
-  "success",
-  "error",
-  "warning",
-  "streamed",
-  "neutral",
-]);
+const ROLES: ReadonlySet<string> = new Set(SEMANTIC_ROLES);
 
 interface NodeRef {
   id: string;

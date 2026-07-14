@@ -75,6 +75,30 @@ export type {
   FontSpec,
 } from "./types.js";
 
+export { SEMANTIC_ROLES } from "./types.js";
+export {
+  themed,
+  themeFlowOptions,
+  themeGitOptions,
+  themeEdgeStyle,
+  resolveThemePaint,
+  contrastForeground,
+  perceptualLightness,
+  joycoTheme,
+} from "./theme.js";
+export type {
+  TrazoTheme,
+  TrazoTokenSlot,
+  TrazoColorSlot,
+  TrazoSurfaceSlot,
+  ThemePadding,
+  ThemeRoundness,
+  ThemeLanesMode,
+  ThemeLaneStyle,
+  ThemeBorder,
+  ThemeBackground,
+  ResolvedThemePaint,
+} from "./theme.js";
 export { layoutGit } from "./layout-git.js";
 export { layoutFlow } from "./layout-flow.js";
 export { layoutSequence } from "./layout-sequence.js";
