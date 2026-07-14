@@ -382,16 +382,21 @@ export function layoutFlow(
     return prev.size > 0 || cur.size > 0;
   };
 
-  // Label-aware inter-rank gaps. An edge label renders as a badge centered in
-  // the gap between its endpoints' ranks. In a horizontal (LR) flow the badge's
-  // WIDTH lies on the main axis and routinely exceeds the fixed `layerGap`, so
-  // without reserving room the badge is drawn UNDER the neighbouring node boxes.
-  // Vertical (TD) flows are safe: only the small BADGE_H sits on the main axis
-  // and already fits `layerGap`. Reserve, per rank boundary, enough main-axis
-  // room for the widest label crossing it (plus `LABEL_GAP` breathing space on
-  // each side). Only adjacent FORWARD edges contribute — their label sits
-  // squarely in that one gap; a spanning edge routes its label through an empty
-  // dummy column (cross-axis clear of every node), so it never occludes a box.
+  // Label-aware inter-rank gaps. An ADJACENT edge's label renders as a badge
+  // centered in the gap between its two ranks. In a horizontal (LR) flow the
+  // badge's WIDTH lies on the main axis and routinely exceeds the fixed
+  // `layerGap`, so without reserving room the badge is drawn UNDER the
+  // neighbouring node boxes. Vertical (TD) flows stay tight: only the small
+  // BADGE_H sits on the main axis and already fits `layerGap`. Reserve, per rank
+  // boundary, enough main-axis room for the widest adjacent label crossing it
+  // (plus `LABEL_GAP` breathing space on each side).
+  //
+  // Only adjacent forward edges widen a gap. A rank-SPANNING edge's label isn't
+  // gap-centered — it rides the polyline midpoint, which for a straightened span
+  // lands in the dummy's own cross lane (clear of the nodes it flies over), so
+  // no inter-rank widening is needed. KNOWN LIMITATION: a spanning label wider
+  // than the rank spacing can still graze an endpoint's box; that case is
+  // inherent (no on-line placement clears a badge wider than the node spacing).
   const labelGapAfter: number[] = new Array(layers.length).fill(0);
   for (const e of edges) {
     if (e.label === undefined) continue;

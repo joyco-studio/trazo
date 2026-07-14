@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { layout, layoutFlow } from "../src/index.js";
+import { badgeWidth, BADGE_H } from "../src/geometry.js";
 import type { FlowGraph, NodeShape } from "../src/index.js";
 
 /**
@@ -495,5 +496,75 @@ describe("layoutFlow() — subgraphs", () => {
       // And the box never escapes the top of the viewBox.
       expect(box.y).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("keeps horizontal (LR) edge labels clear of the adjacent node boxes", () => {
+    // Regression: a fixed layerGap left the label badge — whose WIDTH lies on
+    // the main axis in LR — drawn under both neighbouring nodes. The gap must
+    // grow to fit the badge so the label stays fully readable.
+    const chain: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "main", label: "main", role: "primary" },
+        { id: "elvira", label: "elvira/checkout", role: "success" },
+        { id: "homero", label: "homero/receipts", role: "info" },
+      ],
+      edges: [
+        { from: "main", to: "elvira", label: "base of" },
+        { from: "elvira", to: "homero", label: "base of" },
+      ],
+    };
+    const g = layoutFlow(chain, { direction: "LR" });
+    for (const e of g.edges) {
+      if (e.labelPoint === undefined) continue;
+      const half = badgeWidth(e.labelWidth ?? 0) / 2;
+      const lo = e.labelPoint.x - half;
+      const hi = e.labelPoint.x + half;
+      for (const n of g.nodes) {
+        const nLo = n.x - n.w! / 2;
+        const nHi = n.x + n.w! / 2;
+        const overlap = Math.min(hi, nHi) - Math.max(lo, nLo);
+        expect(overlap).toBeLessThanOrEqual(0.5);
+      }
+    }
+  });
+
+  it("does NOT add main-axis spacing for vertical (TD) labels — BADGE_H already fits", () => {
+    // The badge's main-axis extent in TD is its small height, which fits the
+    // default layerGap. A labeled TD flow must be no taller than its unlabeled
+    // twin (the fix is horizontal-only).
+    const nodes = [
+      { id: "a", label: "a" },
+      { id: "b", label: "b" },
+    ];
+    const labeled = layoutFlow(
+      { kind: "flow", nodes, edges: [{ from: "a", to: "b", label: "wide label here" }] },
+      { direction: "TD" },
+    );
+    const unlabeled = layoutFlow(
+      { kind: "flow", nodes, edges: [{ from: "a", to: "b" }] },
+      { direction: "TD" },
+    );
+    expect(labeled.height).toBe(unlabeled.height);
+    // Sanity: the badge height is what fits, not its (larger) width.
+    expect(BADGE_H).toBeLessThan(56);
+  });
+
+  it("keeps tight layerGap spacing for UNLABELED horizontal flows", () => {
+    const g = layoutFlow(
+      {
+        kind: "flow",
+        nodes: [
+          { id: "a", label: "a" },
+          { id: "b", label: "b" },
+        ],
+        edges: [{ from: "a", to: "b" }],
+      },
+      { direction: "LR" },
+    );
+    const a = g.nodes.find((n) => n.id === "a")!;
+    const b = g.nodes.find((n) => n.id === "b")!;
+    const faceGap = b.x - b.w! / 2 - (a.x + a.w! / 2);
+    expect(faceGap).toBeCloseTo(56, 0); // default layerGap, un-widened
   });
 });
