@@ -25,7 +25,11 @@ import {
   GROUP_TITLE_H,
 } from "../geometry.js";
 import type { PositionedGroup } from "../types.js";
-import type { JSX } from "react";
+// `themed` is the shared color-chain primitive — one definition for the
+// renderer and for resolveThemePaint's auto `--trazo-bg` wiring.
+import { resolveThemePaint, themed } from "../theme.js";
+import type { ResolvedThemePaint } from "../theme.js";
+import type { CSSProperties, JSX } from "react";
 
 /**
  * Lane color palette: stock shadcn tokens only — `primary` leads, then
@@ -59,9 +63,6 @@ import type { JSX } from "react";
  *
  * Pure string construction → identical markup on server and client.
  */
-function themed(slot: string, token: string, hex: string): string {
-  return `var(--trazo-${slot}, var(--color-${token}, var(--${token}, ${hex})))`;
-}
 
 /**
  * Lane color palette (git): trazo's `--trazo-lane-1…6` semantic slots, each
@@ -120,11 +121,17 @@ function laneIndex(tokenKey: string): number {
  */
 const ROLE_VARS: Record<SemanticRole, string> = {
   primary: themed("primary", "primary", "#002cea"),
-  success: themed("success", "chart-2", "#36b37e"),
-  error: themed("error", "destructive", "#e5484d"),
-  warning: themed("warning", "chart-4", "#e6a700"),
-  streamed: themed("streamed", "chart-3", "#2dd4bf"),
+  secondary: themed("secondary", "secondary", "#2a2a2a"),
+  ghost: themed("ghost", "accent", "#1c1c1c"),
+  muted: themed("muted", "muted", "#1c1c1c"),
   neutral: themed("neutral", "muted-foreground", "#a1a1a1"),
+  success: themed("success", "chart-2", "#36b37e"),
+  warning: themed("warning", "chart-4", "#e6a700"),
+  error: themed("error", "destructive", "#e5484d"),
+  info: themed("info", "chart-3", "#2dd4bf"),
+  // Deprecated alias — resolves to the SAME slot as `info`, so theming
+  // `--trazo-info` recolors legacy `:streamed` nodes too.
+  streamed: themed("info", "chart-3", "#2dd4bf"),
 };
 
 /**
@@ -135,11 +142,15 @@ const ROLE_VARS: Record<SemanticRole, string> = {
  */
 const ROLE_FG_VARS: Record<SemanticRole, string> = {
   primary: themed("primary-foreground", "primary-foreground", "#ffffff"),
-  success: themed("success-foreground", "chart-2-foreground", "#0a0a0a"),
-  error: themed("error-foreground", "destructive-foreground", "#ffffff"),
-  warning: themed("warning-foreground", "chart-4-foreground", "#0a0a0a"),
-  streamed: themed("streamed-foreground", "chart-3-foreground", "#0a0a0a"),
+  secondary: themed("secondary-foreground", "secondary-foreground", "#fafafa"),
+  ghost: themed("ghost-foreground", "accent-foreground", "#fafafa"),
+  muted: themed("muted-foreground", "muted-foreground", "#a1a1a1"),
   neutral: themed("neutral-foreground", "foreground", "#0a0a0a"),
+  success: themed("success-foreground", "chart-2-foreground", "#0a0a0a"),
+  warning: themed("warning-foreground", "chart-4-foreground", "#0a0a0a"),
+  error: themed("error-foreground", "destructive-foreground", "#ffffff"),
+  info: themed("info-foreground", "chart-3-foreground", "#0a0a0a"),
+  streamed: themed("info-foreground", "chart-3-foreground", "#0a0a0a"),
 };
 
 function roleColor(tokenKey: string): string {
@@ -156,8 +167,13 @@ function parseRole(tokenKey: string): SemanticRole {
   return (dash >= 0 ? tokenKey.slice(dash + 1) : "neutral") as SemanticRole;
 }
 
-/** Neutral edge color (the default for flow edges) — a light, on-brand gray. */
-const EDGE_ACCENT = themed("neutral", "muted-foreground", "#a1a1a1");
+/**
+ * Neutral edge color (the default for flow edges) — a light, on-brand gray.
+ * Its OWN `--trazo-edge` slot, deliberately NOT the `neutral` role slot: a
+ * theme that paints neutral node boxes (e.g. JOYCO black) must not drag every
+ * default edge along with them.
+ */
+const EDGE_ACCENT = themed("edge", "muted-foreground", "#a1a1a1");
 
 /**
  * Resolve any token color key. `"accent"` → the neutral edge gray; `role-*` →
@@ -193,8 +209,8 @@ const LABEL_FONT =
 const LABEL_SIZE = 13;
 /** Stroke width (px) for edges — JOYCO graphs use a slightly heavier line. */
 const EDGE_WIDTH = 2.5;
-/** Stroke width (px) for flowchart box-like shapes (box/stadium/diamond/cylinder). */
-const BOX_STROKE = 2;
+// Box-like shapes take their stroke width from the theme's `border` knob
+// (ResolvedThemePaint.borderWidth; default 2).
 /** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
 const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
 /**
@@ -216,6 +232,30 @@ const MUTED_FG = themed("muted-foreground", "muted-foreground", "#a1a1a1");
 const MUTED = themed("muted", "muted", "#1c1c1c");
 /** Subgraph container stroke — a light, on-brand gray outline. */
 const GROUP_STROKE = MUTED_FG;
+/** Canvas backdrop fill for themes with `background: "solid" | "texture"`. */
+const CANVAS = themed("canvas", "background", "#0a0a0a");
+/** Hatch line color for the `"texture"` background — a subtle border-ish line. */
+const CANVAS_HATCH = themed("canvas-hatch", "border", "#1f1f1f");
+/** Distance (px) between the 45° texture hatch lines. */
+const HATCH_SPACING = 7;
+
+/**
+ * One `d` string of parallel 45° lines (top-left → bottom-right) covering a
+ * `w × h` canvas. Pure function of the dimensions — deterministic and
+ * id-free, unlike an SVG `<pattern>`.
+ */
+function hatchPath(w: number, h: number): string {
+  const parts: string[] = [];
+  // Sweep the line family x + y = c, clipping each line to the canvas rect.
+  for (let c = HATCH_SPACING; c < w + h; c += HATCH_SPACING) {
+    const x0 = Math.max(0, c - h);
+    const y0 = Math.min(c, h);
+    const x1 = Math.min(c, w);
+    const y1 = Math.max(0, c - w);
+    parts.push(`M ${x0} ${y0} L ${x1} ${y1}`);
+  }
+  return parts.join(" ");
+}
 
 /** Sliced-corner badge metrics (matches the hub Badge: TL + BR chamfer). */
 const BADGE_CHAMFER = 6;
@@ -249,6 +289,35 @@ function badgePath(x: number, y: number, w: number, h: number): string {
     `L ${x} ${y + c}`,
     "Z",
   ].join(" ");
+}
+
+/**
+ * Closed SVG path for a polygon with every vertex rounded by a quadratic
+ * curve: each corner becomes line-up-to-`r`-short → `Q vertex exit-point`.
+ * The radius is clamped to half of each adjacent edge so short edges never
+ * overshoot. Used for theme-rounded diamonds. Pure string construction.
+ */
+function roundedPolygonPath(vertices: Array<{ x: number; y: number }>, r: number): string {
+  const n = vertices.length;
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = vertices[(i + n - 1) % n] as { x: number; y: number };
+    const cur = vertices[i] as { x: number; y: number };
+    const next = vertices[(i + 1) % n] as { x: number; y: number };
+    const inLen = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    const outLen = Math.hypot(next.x - cur.x, next.y - cur.y);
+    const ri = Math.min(r, inLen / 2, outLen / 2);
+    const inX = (cur.x - prev.x) / inLen;
+    const inY = (cur.y - prev.y) / inLen;
+    const outX = (next.x - cur.x) / outLen;
+    const outY = (next.y - cur.y) / outLen;
+    const sx = cur.x - inX * ri;
+    const sy = cur.y - inY * ri;
+    parts.push(`${i === 0 ? "M" : "L"} ${sx} ${sy}`);
+    parts.push(`Q ${cur.x} ${cur.y} ${cur.x + outX * ri} ${cur.y + outY * ri}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
 }
 
 /**
@@ -350,6 +419,14 @@ function arrowMarkerId(colorToken: string): string {
 }
 
 /** Distinct color tokens among edges that carry an arrowhead, in first-seen order. */
+/** Final on-curve point of an engine-emitted path, or null when unparseable. */
+function pathEndpoint(d: string): [number, number] | null {
+  const cmds = parsePathCommands(d);
+  if (cmds === null) return null;
+  const nums = (cmds[cmds.length - 1] as PathCmd).nums;
+  return [nums[nums.length - 2] as number, nums[nums.length - 1] as number];
+}
+
 function arrowColorTokens(edges: PositionedEdge[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -362,24 +439,48 @@ function arrowColorTokens(edges: PositionedEdge[]): string[] {
   return out;
 }
 
-/** Parse an `M x y L x y …` polyline `d` string into points. Returns [] on miss. */
-function parsePolyline(d: string): Array<{ x: number; y: number }> {
-  const nums = d.match(/-?\d+(?:\.\d+)?/g);
-  if (!nums || nums.length < 2) return [];
-  const pts: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i + 1 < nums.length; i += 2) {
-    pts.push({ x: Number(nums[i]), y: Number(nums[i + 1]) });
+/** One parsed SVG path command from the engine's vocabulary (M/L/Q/C). */
+interface PathCmd {
+  op: "M" | "L" | "Q" | "C";
+  nums: number[];
+}
+
+/** Expected number count per command — used to reject malformed paths. */
+const CMD_ARITY: Record<PathCmd["op"], number> = { M: 2, L: 2, Q: 4, C: 6 };
+
+/**
+ * Parse an engine-emitted `d` string (absolute `M`/`L`/`Q`/`C` only — what
+ * `pathThrough` produces in every edge style). Returns null on any other
+ * command or a wrong number count, so callers can fall back untrimmed.
+ */
+function parsePathCommands(d: string): PathCmd[] | null {
+  const re = /([A-Za-z])([^A-Za-z]*)/g;
+  const out: PathCmd[] = [];
+  for (const match of d.matchAll(re)) {
+    const op = match[1] as string;
+    if (op !== "M" && op !== "L" && op !== "Q" && op !== "C") return null;
+    const nums = (match[2] as string)
+      .trim()
+      .split(/[\s,]+/)
+      .filter((s) => s.length > 0)
+      .map(Number);
+    if (nums.length !== CMD_ARITY[op] || nums.some((n) => !Number.isFinite(n))) {
+      return null;
+    }
+    out.push({ op, nums });
   }
-  return pts;
+  return out.length >= 2 ? out : null;
 }
 
 /**
- * Pull an arrow-bearing END of a polyline back by `inset` px along its last
- * segment so the stroke STOPS where the arrowhead's base sits — the line never
- * runs under the head's narrowing tip (which would poke out past its sides).
- * `which` selects the end to trim ("end" trims the last point, "start" the
- * first, "both" trims both). Returns the rebuilt `d`; falls back to the original
- * when the path is too short to trim. Pure.
+ * Pull an arrow-bearing END of an edge path back by `inset` px so the stroke
+ * STOPS where the arrowhead's base sits — the line never runs under the head's
+ * narrowing tip (which would poke out past its sides). Works on straight AND
+ * curved styles: a trimmed `L` end pulls toward the previous vertex, a `Q`/`C`
+ * end pulls toward its trailing control point (the tangent direction at the
+ * endpoint). `which` selects the end ("end", "both"); `insetStart` trims the
+ * start. Falls back to the original `d` when the path is too short or not
+ * engine-shaped. Pure.
  */
 function insetPathEnds(
   d: string,
@@ -388,28 +489,58 @@ function insetPathEnds(
   inset: number,
 ): string {
   if (which === "none" && !insetStart) return d;
-  const pts = parsePolyline(d);
-  if (pts.length < 2) return d;
+  const cmds = parsePathCommands(d);
+  if (cmds === null) return d;
 
-  const pullToward = (p: { x: number; y: number }, toward: { x: number; y: number }) => {
-    const dx = toward.x - p.x;
-    const dy = toward.y - p.y;
+  const pullToward = (
+    px: number,
+    py: number,
+    towardX: number,
+    towardY: number,
+  ): [number, number] => {
+    const dx = towardX - px;
+    const dy = towardY - py;
     const len = Math.hypot(dx, dy);
-    if (len <= inset) return { ...p }; // segment too short — leave it
+    if (len <= inset) return [px, py]; // segment too short — leave it
     const t = inset / len;
-    return { x: p.x + dx * t, y: p.y + dy * t };
+    return [px + dx * t, py + dy * t];
   };
 
-  const trimEnd = which === "end" || which === "both";
-  const trimStart = insetStart;
-  if (trimEnd) {
-    const last = pts.length - 1;
-    pts[last] = pullToward(pts[last]!, pts[last - 1]!);
+  if (which === "end" || which === "both") {
+    const last = cmds[cmds.length - 1] as PathCmd;
+    const n = last.nums;
+    const ex = n[n.length - 2] as number;
+    const ey = n[n.length - 1] as number;
+    // Direction reference: trailing control point for curves, previous
+    // command's endpoint for lines.
+    let refX: number;
+    let refY: number;
+    if (last.op === "L") {
+      const prev = (cmds[cmds.length - 2] as PathCmd).nums;
+      refX = prev[prev.length - 2] as number;
+      refY = prev[prev.length - 1] as number;
+    } else {
+      refX = n[n.length - 4] as number;
+      refY = n[n.length - 3] as number;
+    }
+    [n[n.length - 2], n[n.length - 1]] = pullToward(ex, ey, refX, refY);
   }
-  if (trimStart) {
-    pts[0] = pullToward(pts[0]!, pts[1]!);
+
+  if (insetStart) {
+    const first = cmds[0] as PathCmd; // always M
+    const next = cmds[1] as PathCmd;
+    // Leading control point for curves, endpoint for lines.
+    const refX = next.nums[0] as number;
+    const refY = next.nums[1] as number;
+    [first.nums[0], first.nums[1]] = pullToward(
+      first.nums[0] as number,
+      first.nums[1] as number,
+      refX,
+      refY,
+    );
   }
-  return pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+
+  return cmds.map((c) => `${c.op} ${c.nums.join(" ")}`).join(" ");
 }
 
 /**
@@ -417,7 +548,7 @@ function insetPathEnds(
  * markup, on server or client.
  */
 export function Graph(props: GraphProps): JSX.Element {
-  const { graph, className, classNames, title } = props;
+  const { graph, className, classNames, title, theme } = props;
   const label = title ?? "Commit graph";
   // When an arrowless connector ends exactly where an ARROWED edge ends (a
   // shared entry anchor), its plain stroke would run through the other edge's
@@ -426,27 +557,30 @@ export function Graph(props: GraphProps): JSX.Element {
   const arrowedEnds = new Set<string>();
   for (const e of graph.edges) {
     if (e.arrowHead === "end" || e.arrowHead === "both") {
-      const pts = parsePolyline(e.path);
-      const p = pts[pts.length - 1];
-      if (p !== undefined) arrowedEnds.add(`${p.x},${p.y}`);
+      const p = pathEndpoint(e.path);
+      if (p !== null) arrowedEnds.add(`${p[0]},${p[1]}`);
     }
   }
   const edges = graph.edges.map((e) => {
     if (e.kind !== "flow" || (e.arrowHead !== undefined && e.arrowHead !== "none")) {
       return e;
     }
-    const pts = parsePolyline(e.path);
-    const p = pts[pts.length - 1];
-    if (p === undefined || !arrowedEnds.has(`${p.x},${p.y}`)) return e;
+    const p = pathEndpoint(e.path);
+    if (p === null || !arrowedEnds.has(`${p[0]},${p[1]}`)) return e;
     return { ...e, arrowHead: "end" as const };
   });
   // Distinct edge colors needing an arrowhead marker — computed once.
   const markerTokens = arrowColorTokens(edges);
+  // Single resolution point for the theme's paint half (pure — SSR-safe).
+  const paint = resolveThemePaint(theme);
+  const rootStyle =
+    Object.keys(paint.vars).length > 0 ? (paint.vars as CSSProperties) : undefined;
 
   return (
     <svg
       data-slot="trazo-graph"
       className={className}
+      style={rootStyle}
       xmlns="http://www.w3.org/2000/svg"
       viewBox={`0 0 ${graph.width} ${graph.height}`}
       width={graph.width}
@@ -455,6 +589,22 @@ export function Graph(props: GraphProps): JSX.Element {
       aria-label={label}
     >
       <title>{label}</title>
+
+      {paint.background !== "none" ? (
+        <g data-slot="canvas" aria-hidden="true">
+          <rect x={0} y={0} width={graph.width} height={graph.height} fill={CANVAS} />
+          {paint.background === "texture" ? (
+            // Deterministic 45° hatch drawn as ONE path — no <pattern>, so no
+            // DOM id to collide when several graphs share a page.
+            <path
+              d={hatchPath(graph.width, graph.height)}
+              fill="none"
+              stroke={CANVAS_HATCH}
+              strokeWidth={1}
+            />
+          ) : null}
+        </g>
+      ) : null}
 
       {markerTokens.length > 0 ? (
         <defs>
@@ -609,7 +759,7 @@ export function Graph(props: GraphProps): JSX.Element {
           const insetStart = head === "both";
           const d =
             head && head !== "none"
-              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN + BOX_STROKE / 2)
+              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN + paint.borderWidth / 2)
               : edge.path;
           return (
             <path
@@ -623,9 +773,9 @@ export function Graph(props: GraphProps): JSX.Element {
               fill="none"
               stroke={nodeColor(edge.color)}
               strokeWidth={EDGE_WIDTH}
-              strokeLinecap="butt"
+              strokeLinecap={paint.linecap ?? "butt"}
               strokeLinejoin="miter"
-              strokeDasharray={edge.dashed ? EDGE_DASH : undefined}
+              strokeDasharray={edge.dashed ? EDGE_DASH : paint.dashArray}
               markerEnd={head === "end" || head === "both" ? markerRef : undefined}
               markerStart={head === "both" ? markerRef : undefined}
             />
@@ -680,7 +830,7 @@ export function Graph(props: GraphProps): JSX.Element {
       <g data-slot="nodes">
         {graph.nodes.map((node) => (
           <g key={node.id} data-slot="node-group">
-            {renderNodeShape(node, classNames?.node, classNames?.nodeBox)}
+            {renderNodeShape(node, classNames?.node, classNames?.nodeBox, paint)}
             {renderNodeLabel(node, classNames?.label)}
           </g>
         ))}
@@ -698,6 +848,7 @@ function renderNodeShape(
   node: PositionedNode,
   nodeClass: string | undefined,
   boxClass: string | undefined,
+  paint: ResolvedThemePaint,
 ): JSX.Element {
   const shape = node.shape;
   if (shape === undefined || shape === "dot") {
@@ -736,11 +887,11 @@ function renderNodeShape(
         y={y}
         width={w}
         height={h}
-        rx={shape === "stadium" ? h / 2 : 0}
-        ry={shape === "stadium" ? h / 2 : 0}
+        rx={shape === "stadium" ? h / 2 : paint.cornerRadius}
+        ry={shape === "stadium" ? h / 2 : paint.cornerRadius}
         fill={fill}
         stroke={BG}
-        strokeWidth={BOX_STROKE}
+        strokeWidth={paint.borderWidth}
       />
     );
   }
@@ -748,21 +899,37 @@ function renderNodeShape(
   if (shape === "diamond") {
     const cx = node.x;
     const cy = node.y;
-    const points = [
-      `${cx},${cy - h / 2}`,
-      `${cx + w / 2},${cy}`,
-      `${cx},${cy + h / 2}`,
-      `${cx - w / 2},${cy}`,
-    ].join(" ");
+    const vertices = [
+      { x: cx, y: cy - h / 2 },
+      { x: cx + w / 2, y: cy },
+      { x: cx, y: cy + h / 2 },
+      { x: cx - w / 2, y: cy },
+    ];
+    // The theme's roundness applies here too. A diamond vertex is far sharper
+    // than a box's 90° corner, so the same radius reads weaker — scale it up
+    // so it visually matches the boxes (the soft mock's squircle-ish diamond).
+    if (paint.cornerRadius > 0) {
+      return (
+        <path
+          data-slot="node"
+          data-shape="diamond"
+          className={boxClass}
+          d={roundedPolygonPath(vertices, paint.cornerRadius * 2)}
+          fill={fill}
+          stroke={BG}
+          strokeWidth={paint.borderWidth}
+        />
+      );
+    }
     return (
       <polygon
         data-slot="node"
         data-shape="diamond"
         className={boxClass}
-        points={points}
+        points={vertices.map((p) => `${p.x},${p.y}`).join(" ")}
         fill={fill}
         stroke={BG}
-        strokeWidth={BOX_STROKE}
+        strokeWidth={paint.borderWidth}
       />
     );
   }
@@ -788,7 +955,7 @@ function renderNodeShape(
       d={d}
       fill={fill}
       stroke={BG}
-      strokeWidth={BOX_STROKE}
+      strokeWidth={paint.borderWidth}
     />
   );
 }

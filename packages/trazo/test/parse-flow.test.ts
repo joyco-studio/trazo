@@ -92,6 +92,23 @@ describe("parseFlow — nodes", () => {
     // ":unknown" stays in `rest`, which the caller treats as trailing garbage.
     expect(err("A:unknown").line).toBe(1);
   });
+
+  it("parses every semantic role, including the new theme tokens", () => {
+    for (const role of [
+      "primary",
+      "secondary",
+      "ghost",
+      "muted",
+      "neutral",
+      "success",
+      "warning",
+      "error",
+      "info",
+      "streamed",
+    ]) {
+      expect(node(ok(`A:${role}`), "A").role).toBe(role);
+    }
+  });
 });
 
 // ── edges ─────────────────────────────────────────────────────────────────────

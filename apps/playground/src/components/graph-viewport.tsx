@@ -34,7 +34,7 @@ import { Maximize, ZoomIn, ZoomOut } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 
-import { Button } from '@/components/ui/button'
+import { TooltipButton } from '@/components/ui/tooltip-button'
 import { cn } from '@/lib/utils'
 
 const ZOOM_MIN = 0.02
@@ -55,6 +55,12 @@ interface Pan {
 
 interface GraphViewportContextValue {
   zoom: number
+  /**
+   * The zoom that makes the content fill the pane — what the fit button lands on.
+   * The controls display `zoom / fitZoom` as the percentage, so a fitted diagram
+   * always reads 100% (whether it was scaled up or down to get there).
+   */
+  fitZoom: number
   isDragging: boolean
   containerRef: React.RefObject<HTMLDivElement | null>
   contentRef: React.RefObject<HTMLDivElement | null>
@@ -99,6 +105,9 @@ export function GraphViewport({ children, contentWidth, contentHeight }: GraphVi
   // in a ref and is written imperatively, so panning/zoom-anchoring never
   // re-renders (atlas-cropper pattern).
   const [zoom, setZoom] = useState(1)
+  // The fill zoom, updated by fit(). Starts at 1 so the pre-measure percentage
+  // reads 100%. The controls divide `zoom` by this so "fitted" always shows 100%.
+  const [fitZoom, setFitZoom] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
 
   const zoomRef = useRef(zoom)
@@ -126,16 +135,16 @@ export function GraphViewport({ children, contentWidth, contentHeight }: GraphVi
     if (vpW === 0 || vpH === 0 || contentWidth === 0 || contentHeight === 0) {
       return
     }
-    // Don't upscale past 100% just to fill the pane.
-    const fitZoom = Math.min(
-      1,
-      Math.max(ZOOM_MIN, Math.min((vpW - FIT_MARGIN) / contentWidth, (vpH - FIT_MARGIN) / contentHeight))
-    )
-    flushSync(() => setZoom(fitZoom))
-    zoomRef.current = fitZoom
+    // Fill the pane: the largest uniform scale that fits width AND height (minus
+    // the margin). This becomes the "100%" reference — small diagrams scale up,
+    // large ones scale down, both landing on a full-frame fit.
+    const nextFit = clampZoom(Math.min((vpW - FIT_MARGIN) / contentWidth, (vpH - FIT_MARGIN) / contentHeight))
+    setFitZoom(nextFit)
+    setZoom(nextFit)
+    zoomRef.current = nextFit
     panRef.current = {
-      x: (vpW - contentWidth * fitZoom) / 2,
-      y: (vpH - contentHeight * fitZoom) / 2,
+      x: (vpW - contentWidth * nextFit) / 2,
+      y: (vpH - contentHeight * nextFit) / 2,
     }
     applyPan()
   }, [contentWidth, contentHeight, applyPan])
@@ -238,6 +247,7 @@ export function GraphViewport({ children, contentWidth, contentHeight }: GraphVi
     <GraphViewportContext.Provider
       value={{
         zoom,
+        fitZoom,
         isDragging,
         containerRef,
         contentRef,
@@ -319,28 +329,44 @@ export interface GraphViewportControlsProps {
 
 /** Zoom out / % / zoom in / fit. Render anywhere inside the provider. */
 function GraphViewportControls({ className }: GraphViewportControlsProps) {
-  const { zoom, zoomByStep, fit } = useGraphViewport()
+  const { zoom, fitZoom, zoomByStep, fit } = useGraphViewport()
+  // Percentage is relative to the fitted size, so a full-frame diagram reads 100%.
+  const displayPct = Math.round((zoom / fitZoom) * 100)
 
   return (
     <div data-slot="graph-viewport-controls" className={cn('flex items-center', className)}>
-      <Button
+      <TooltipButton
         type="button"
         variant="ghost"
         size="icon-sm"
         aria-label="Zoom out"
         onClick={() => zoomByStep(1 / ZOOM_STEP)}
+        className="h-full"
       >
         <ZoomOut aria-hidden="true" />
-      </Button>
-      <span className="text-muted-foreground w-12 text-center font-mono text-xs tabular-nums">
-        {Math.round(zoom * 100)}%
-      </span>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="Zoom in" onClick={() => zoomByStep(ZOOM_STEP)}>
+      </TooltipButton>
+      <span className="text-muted-foreground w-12 text-center font-mono text-xs tabular-nums">{displayPct}%</span>
+      <TooltipButton
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Zoom in"
+        onClick={() => zoomByStep(ZOOM_STEP)}
+        className="h-full"
+      >
         <ZoomIn aria-hidden="true" />
-      </Button>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="Fit to view" onClick={fit}>
+      </TooltipButton>
+      <TooltipButton
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        tooltip="Fit to view"
+        aria-label="Fit to view"
+        onClick={fit}
+        className="h-full"
+      >
         <Maximize aria-hidden="true" />
-      </Button>
+      </TooltipButton>
     </div>
   )
 }

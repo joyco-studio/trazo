@@ -9,6 +9,7 @@
  */
 
 import type { PositionedGraph } from "../types.js";
+import type { TrazoTheme } from "../theme.js";
 
 /** Optional per-slot class overrides. Prefer styling via `data-slot` from CSS. */
 export interface GraphClassNames {
@@ -48,4 +49,11 @@ export interface GraphProps {
    * Defaults to a generic description when omitted.
    */
   title?: string;
+  /**
+   * Paint half of a {@link TrazoTheme}: color tokens become `--trazo-*` vars on
+   * the root, plus lane style / roundness / border / background draw knobs.
+   * Pair it with `themeFlowOptions`/`themeGitOptions` at layout time so both
+   * halves of the theme apply. Omitted → current defaults (non-breaking).
+   */
+  theme?: TrazoTheme;
 }

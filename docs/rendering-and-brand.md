@@ -82,8 +82,10 @@ Palettes (in `graph.tsx`):
 - **Roles** (flow) — `ROLE_VARS`: `primary→primary`, `success→chart-2`,
   `error→destructive`, `warning→chart-4`, `streamed→chart-3`,
   `neutral→muted-foreground`.
-- **Accent** — `"accent"` key → a neutral light gray (`--trazo-neutral` →
-  `muted-foreground`); the default flow edge color.
+- **Accent** — `"accent"` key → a neutral light gray, the default flow edge
+  color. Its own `--trazo-edge` slot (→ `muted-foreground`), deliberately NOT
+  the `neutral` role slot: a theme that paints neutral node boxes (JOYCO uses
+  black) must not drag every default edge along with them.
 - **Label color** — `LANE_FG_VARS` / `ROLE_FG_VARS` pair each fill with a
   readable text color (its own `-foreground` slot → shadcn `*-foreground` token
   → WCAG-picked black/white hex matching that slot's fallback fill). Keeps labels
@@ -101,6 +103,41 @@ else → lane palette. `nodeForeground(key)` mirrors it for label text.
 // Or a reusable named theme in app CSS:
 .trazo-ocean { --trazo-primary: #0369a1; --trazo-lane-2: #0891b2; }
 ```
+
+## The `TrazoTheme` object (`src/theme.ts`)
+
+CSS-var theming covers colors; the **theme object** adds the geometry/style
+knobs and packages everything as one authorable unit (what the playground's
+theme editor edits). A theme has two halves, resolved at a single point each:
+
+- **Layout half** → `themeFlowOptions(theme, base?)` / `themeGitOptions(theme,
+  base?)` produce layout options: `padding` density preset (sm/default/lg
+  scales padding + gaps together), `lanesMode`
+  (angular = elbow45 | orthogonal | rounded | bezier → `edgeStyle`), and git
+  `laneGap` 0–10 (extra `laneWidth`). Explicit `base` options win over the
+  theme.
+- **Paint half** → `<Graph theme={theme}>` calls `resolveThemePaint(theme)`
+  (pure, SSR-safe): `tokens` become `--trazo-*` vars on the root `style`,
+  `laneStyle` (solid/dashed/dotted) maps to stroke dasharray (+ round linecap
+  for dots), `roundness` (none/sm/default/lg) is the box `rx`, `border`
+  (none/default/large) is the chip-lift stroke width, and `background`
+  (none/solid/texture) draws a `canvas` rect (+ a 45° hatch drawn as ONE path —
+  deliberately not an SVG `<pattern>`, so there is no DOM id to collide when
+  several graphs share a page).
+- New surface slots: `--trazo-canvas` (backdrop fill; defaults to `background`)
+  and `--trazo-canvas-hatch` (texture lines; defaults to `border`).
+- `theme.frame` ({ label, number }) is **reserved**: the playground renders the
+  framed chips as HTML around the diagram today; declaring it on the theme
+  keeps in-SVG embedding a non-breaking future step.
+- `joycoTheme` (exported) is the house preset: padding sm, roundness none,
+  angular lanes, solid, textured canvas, lane gap 0, border large. Its colors
+  are intentionally unset — a JOYCO app's own shadcn tokens already carry the
+  brand.
+- Semantic roles now include `secondary`, `ghost`, `muted`, `info` (each with a
+  `-foreground` slot). `streamed` is a deprecated alias resolving to the `info`
+  slot, so theming `--trazo-info` recolors legacy `:streamed` nodes too. The
+  keyword list is exported as `SEMANTIC_ROLES` (single source for the DSL
+  parsers).
 
 ## Label width & the letter-spacing tracking fix
 

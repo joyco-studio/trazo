@@ -42,13 +42,29 @@ leaf child owns its `bg-*`, `gap-px` seams over a muted field, no borders, radiu
 - **SSR-safe:** initial transform is identity (zoom 1, pan 0) so the server HTML
   matches the first client render; fit is applied post-mount.
 
-## Mode + edge-style toggles
+## Mode toggle + theme editor
 
-- **Mode** (git / flowchart) lives in the inspector. Each mode keeps its own
-  source so switching tabs never loses work. Server seeds **flow** by default.
-- **Edge style** (45° on/off) flips `edgeStyle` between `"elbow45"` and
-  `"orthogonal"`, threaded into both `layoutGit` and `layoutFlow`. Re-layouts
-  immediately.
+- **Mode** (git / flowchart / sequence / block) lives in the inspector. Each
+  mode keeps its own source so switching tabs never loses work. Server seeds
+  **flow** by default.
+- **Theme editor** (`theme-panel.tsx`, a right-hand sheet) replaced the old 45°
+  switch: it edits ONE `TrazoTheme` — presets (`joyco` default / `soft`, in
+  `lib/themes.ts`), the knobs (padding, roundness, lanes mode, lane style,
+  lane gap, background, border), the framed label/number chips, and every color
+  token (role pairs, surfaces, git lanes). Any edit forks the preset into
+  "custom" (copy-on-write). Export copies JSON (for `<Graph theme>`) or a
+  `--trazo-*` CSS block.
+- The layout half applies via `themeFlowOptions`/`themeGitOptions` inside
+  `build()`; the paint half via `<Graph theme>`. **The server page lays out the
+  seed with the SAME `DEFAULT_THEME`** (`lib/themes.ts`), or hydration would
+  mismatch — keep both sides in sync when changing the default.
+- The lib's `joycoTheme` is colorless; the playground's `JOYCO_PRESET` pins the
+  explicit mock palette (canvas #171717 + hatch, primary #0011ff, neutral black,
+  warning yellow, error orange-red, success green) so the default is the exact
+  "cara visible" and exports carry real color codes.
+- The `frame` chips render as HTML over the preview pane (not in the SVG);
+  the theme schema reserves `frame` so in-SVG rendering stays a non-breaking
+  future step.
 
 ## Documents (multi-graph + localStorage)
 

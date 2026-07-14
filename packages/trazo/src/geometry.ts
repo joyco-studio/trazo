@@ -388,6 +388,9 @@ function turnKnees(
   const dy = to.y - from.y;
   if (dx === 0 || dy === 0) return [];
 
+  // Bezier curves flow directly through the waypoints — no knees.
+  if (style === "bezier") return [];
+
   const sx = Math.sign(dx);
   const sy = Math.sign(dy);
   const adm = Math.abs(mainAxis === "y" ? dy : dx); // main-axis delta
@@ -397,7 +400,8 @@ function turnKnees(
   // main-axis level, then run the main axis cleanly into the target (the
   // mermaid/mock look). Turning near the target reads as a last-second jog.
 
-  if (style === "orthogonal") {
+  // "rounded" is orthogonal geometry with the corners arced at draw time.
+  if (style === "orthogonal" || style === "rounded") {
     return [mainAxis === "y" ? { x: to.x, y: from.y } : { x: from.x, y: to.y }];
   }
 
@@ -457,10 +461,102 @@ export function pathThrough(
   const first = expanded[0] as Point;
   if (expanded.length === 1) return `M ${first.x} ${first.y}`;
 
+  if (style === "bezier") return bezierPath(expanded);
+  if (style === "rounded") return roundedPath(expanded);
+
   let d = `M ${first.x} ${first.y}`;
   for (let i = 1; i < expanded.length; i++) {
     const p = expanded[i] as Point;
     d += ` L ${p.x} ${p.y}`;
+  }
+  return d;
+}
+
+/** Corner radius (px) for the "rounded" edge style, clamped per corner. */
+const ROUNDED_R = 8;
+
+/**
+ * Draw an orthogonal polyline with every interior corner arced by a quadratic
+ * curve: line up to `r` short of the corner, `Q corner exit-point`, continue.
+ * The radius is clamped to half of each adjacent segment so short runs never
+ * overshoot; (near-)collinear corners fall back to a plain `L`. Pure.
+ */
+function roundedPath(vertices: Point[]): string {
+  const first = vertices[0] as Point;
+  let d = `M ${first.x} ${first.y}`;
+  for (let i = 1; i < vertices.length - 1; i++) {
+    const prev = vertices[i - 1] as Point;
+    const p = vertices[i] as Point;
+    const next = vertices[i + 1] as Point;
+    const inLen = Math.hypot(p.x - prev.x, p.y - prev.y);
+    const outLen = Math.hypot(next.x - p.x, next.y - p.y);
+    const r = Math.min(ROUNDED_R, inLen / 2, outLen / 2);
+    if (r < 0.01) {
+      d += ` L ${p.x} ${p.y}`;
+      continue;
+    }
+    const inX = (p.x - prev.x) / inLen;
+    const inY = (p.y - prev.y) / inLen;
+    const outX = (next.x - p.x) / outLen;
+    const outY = (next.y - p.y) / outLen;
+    // Collinear → no corner to round.
+    if (Math.abs(inX * outY - inY * outX) < 0.001) {
+      d += ` L ${p.x} ${p.y}`;
+      continue;
+    }
+    d += ` L ${p.x - inX * r} ${p.y - inY * r}`;
+    d += ` Q ${p.x} ${p.y} ${p.x + outX * r} ${p.y + outY * r}`;
+  }
+  const last = vertices[vertices.length - 1] as Point;
+  d += ` L ${last.x} ${last.y}`;
+  return d;
+}
+
+/**
+ * Smooth spline for the "bezier" lanes mode — a uniform cubic **B-spline**
+ * (d3's `curveBasis`), NOT a Catmull-Rom. The distinction matters: Catmull-Rom
+ * passes THROUGH every waypoint, so the tight stub/corridor points produced
+ * tight, ugly hairpins that could overlap node boxes. A basis spline merely
+ * APPROXIMATES the interior waypoints — they act as a loose guide — giving the
+ * ordinary relaxed arrow-spline look, and the curve is contained in the convex
+ * hull of its control points, so it can never overshoot the canvas.
+ *
+ * Endpoints are clamped by tripling the first/last points, so the curve still
+ * starts exactly at the node-face anchor and ends exactly at the arrow tip.
+ * Consecutive duplicate points are skipped. Two distinct points degrade to a
+ * straight line. Pure.
+ */
+function bezierPath(vertices: Point[]): string {
+  const pts: Point[] = [];
+  for (const p of vertices) {
+    const last = pts[pts.length - 1];
+    if (last === undefined || Math.hypot(p.x - last.x, p.y - last.y) > 0.01) {
+      pts.push(p);
+    }
+  }
+  const first = pts[0] as Point;
+  if (pts.length === 1) return `M ${first.x} ${first.y}`;
+  if (pts.length === 2) {
+    const p = pts[1] as Point;
+    return `M ${first.x} ${first.y} L ${p.x} ${p.y}`;
+  }
+
+  // Clamp the ends: tripled endpoints pin the spline to them.
+  const ctrl: Point[] = [first, first, ...pts, pts[pts.length - 1] as Point, pts[pts.length - 1] as Point];
+  let d = `M ${first.x} ${first.y}`;
+  // Each window of 4 control points emits one cubic segment via the standard
+  // uniform B-spline → Bézier conversion.
+  for (let i = 0; i + 3 < ctrl.length; i++) {
+    const p1 = ctrl[i + 1] as Point;
+    const p2 = ctrl[i + 2] as Point;
+    const p3 = ctrl[i + 3] as Point;
+    const c1x = (2 * p1.x + p2.x) / 3;
+    const c1y = (2 * p1.y + p2.y) / 3;
+    const c2x = (p1.x + 2 * p2.x) / 3;
+    const c2y = (p1.y + 2 * p2.y) / 3;
+    const ex = (p1.x + 4 * p2.x + p3.x) / 6;
+    const ey = (p1.y + 4 * p2.y + p3.y) / 6;
+    d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${ex} ${ey}`;
   }
   return d;
 }

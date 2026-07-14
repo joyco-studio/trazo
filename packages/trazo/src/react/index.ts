@@ -17,5 +17,6 @@
  */
 
 export type { GraphProps, GraphClassNames } from "./types.js";
+export type { TrazoTheme } from "../theme.js";
 
 export { Graph } from "./graph.js";

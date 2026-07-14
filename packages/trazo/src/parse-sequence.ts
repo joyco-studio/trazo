@@ -26,20 +26,14 @@ import type {
   SequenceNote,
   SequenceParticipant,
 } from "./types.js";
+import { SEMANTIC_ROLES } from "./types.js";
 
 export interface SequenceParseResult {
   graph: SequenceGraph;
   error: ParseError | null;
 }
 
-const ROLES: ReadonlySet<string> = new Set([
-  "primary",
-  "success",
-  "error",
-  "warning",
-  "streamed",
-  "neutral",
-]);
+const ROLES: ReadonlySet<string> = new Set(SEMANTIC_ROLES);
 
 /** Index of `needle` in `s` outside any double-quoted span, or -1. */
 function indexOutsideQuotes(s: string, needle: string): number {

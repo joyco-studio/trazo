@@ -1,6 +1,6 @@
-import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'
+import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -26,14 +26,14 @@ const clusterVariants = cva('gap-gap bg-transparent', {
       false: '',
     },
     bg: {
-      muted: '[--cluster-bg:var(--color-muted)]',
-      accent: '[--cluster-bg:var(--color-accent)]',
+      muted: '[--cluster-bg:var(--color-muted)] [--cluster-foreground:var(--color-muted-foreground)]',
+      accent: '[--cluster-bg:var(--color-accent)] [--cluster-foreground:var(--color-accent-foreground)]',
     },
   },
   defaultVariants: {
     display: 'flex',
     direction: 'row',
-    align: 'center',
+    align: 'stretch',
     bg: 'muted',
     wrap: false,
   },
@@ -43,25 +43,13 @@ type ClusterProps = React.ComponentProps<'div'> & {
   asChild?: boolean
 } & VariantProps<typeof clusterVariants>
 
-function Cluster({
-  className,
-  display,
-  direction,
-  align,
-  wrap,
-  bg,
-  asChild = false,
-  ...props
-}: ClusterProps) {
+function Cluster({ className, display, direction, align, wrap, bg, asChild = false, ...props }: ClusterProps) {
   const Comp = asChild ? Slot : 'div'
 
   return (
     <Comp
       data-slot="cluster"
-      className={cn(
-        clusterVariants({ display, direction, align, wrap, bg }),
-        className
-      )}
+      className={cn(clusterVariants({ display, direction, align, wrap, bg }), className)}
       {...props}
     />
   )
@@ -81,5 +69,5 @@ function Filler({ className, ...props }: FillerProps) {
   )
 }
 
-export { Cluster, Filler, clusterVariants }
+export { Cluster, clusterVariants, Filler }
 export type { ClusterProps, FillerProps }

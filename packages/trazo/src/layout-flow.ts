@@ -142,6 +142,9 @@ export function layoutFlow(
   const edgeStyle = options?.edgeStyle ?? "elbow45";
   // Short perpendicular stub off each node face before any turn (px).
   const stub = 12;
+  // Air gap between an edge endpoint (line end / arrow tip) and the node face
+  // it connects to. 0 = flush (the default); the theme's "lane gap" maps here.
+  const edgeGap = Math.max(0, options?.edgeGap ?? 0);
   const sizeOpts = {
     minNodeWidth: options?.minNodeWidth ?? DEFAULTS.minNodeWidth,
     nodeHeight: options?.nodeHeight ?? DEFAULTS.nodeHeight,
@@ -212,7 +215,12 @@ export function layoutFlow(
       label,
       w,
       h,
-      loopPad: (loopCount.get(n.id) ?? 0) * nodeGap,
+      // Self-loop corridors sit past the cross-end face by edgeGap + nodeGap
+      // per nested loop — reserve exactly that so rank siblings stay clear.
+      loopPad:
+        (loopCount.get(n.id) ?? 0) > 0
+          ? (loopCount.get(n.id) as number) * nodeGap + edgeGap
+          : 0,
       group: n.group,
       center: { x: 0, y: 0 },
     });
@@ -642,8 +650,12 @@ export function layoutFlow(
       entryFace = leftToRight ? "cross-start" : "cross-end";
     }
 
-    const exit = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
-    const entry = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+    // With an edgeGap the path starts/ends a few px OFF the face, so the line
+    // (and the arrow tip, which sits at the path end) never touches the box.
+    const exitAnchor = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
+    const entryAnchor = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+    const exit = edgeGap > 0 ? stubPoint(exitAnchor, exitFace, direction, edgeGap) : exitAnchor;
+    const entry = edgeGap > 0 ? stubPoint(entryAnchor, entryFace, direction, edgeGap) : entryAnchor;
 
     // Dummy chain is built low-rank → high-rank; orient it from→to. Each dummy
     // contributes TWO waypoints spanning its whole rank (entering just above,
@@ -763,8 +775,10 @@ export function layoutFlow(
     const nth = loopSeen.get(e.from) ?? 0;
     loopSeen.set(e.from, nth + 1);
     const corridorGap = nodeGap * (nth + 1);
-    const exit = faceAnchor(v.center, v.w, v.h, v.shape, direction, "forward");
-    const entry = faceAnchor(v.center, v.w, v.h, v.shape, direction, "cross-end");
+    const exitAnchor = faceAnchor(v.center, v.w, v.h, v.shape, direction, "forward");
+    const entryAnchor = faceAnchor(v.center, v.w, v.h, v.shape, direction, "cross-end");
+    const exit = edgeGap > 0 ? stubPoint(exitAnchor, "forward", direction, edgeGap) : exitAnchor;
+    const entry = edgeGap > 0 ? stubPoint(entryAnchor, "cross-end", direction, edgeGap) : entryAnchor;
     const exitStub = stubPoint(exit, "forward", direction, stub);
     // The entry stub doubles as the corridor turn: `corridorGap` px past the
     // cross-end face, perpendicular to it.
