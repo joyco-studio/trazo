@@ -59,4 +59,18 @@ describe("<Graph> inline code", () => {
     };
     expect(render(plain)).not.toContain('data-slot="label-code-chip"');
   });
+
+  it("renders edge labels verbatim — backticks stay literal, no code chip", () => {
+    const g: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A", shape: "box", role: "neutral" },
+        { id: "b", label: "B", shape: "box", role: "neutral" },
+      ],
+      edges: [{ from: "a", to: "b", label: "call `fn`" }],
+    };
+    const html = render(g);
+    expect(html).toContain("`fn`");
+    expect(html).not.toContain('data-slot="label-code"');
+  });
 });

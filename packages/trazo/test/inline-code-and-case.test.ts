@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { layoutFlow, resolveThemePaint, themeFlowOptions, themeGitOptions } from "../src/index.js";
 import type { FlowGraph } from "../src/index.js";
-import { parseInlineRuns, measureRun, measureRuns } from "../src/geometry.js";
+import {
+  parseInlineRuns,
+  measureRun,
+  measureRuns,
+  measureMultiline,
+  measurePlainMultiline,
+} from "../src/geometry.js";
 
 describe("parseInlineRuns()", () => {
   it("returns a single prose run for plain text", () => {
@@ -94,6 +100,24 @@ describe("layoutFlow() label casing + inline code sizing", () => {
       edges: [],
     };
     expect(layoutFlow(g).nodes[0]?.label).toBe("call `fn`");
+  });
+
+  it("sizes edge-label badges from the VERBATIM string (backticks literal, not code chips)", () => {
+    // Edge labels render as plain `<text>` (no inline-code parsing), so their
+    // reserved width must match the plain measure, not the run-aware one.
+    const withCode = "call `fn`";
+    expect(measurePlainMultiline(withCode).width).not.toBe(measureMultiline(withCode).width);
+
+    const g: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A", shape: "box", role: "neutral" },
+        { id: "b", label: "B", shape: "box", role: "neutral" },
+      ],
+      edges: [{ from: "a", to: "b", label: withCode }],
+    };
+    const edge = layoutFlow(g, { direction: "LR" }).edges.find((e) => e.label === withCode);
+    expect(edge?.labelWidth).toBe(measurePlainMultiline(withCode).width);
   });
 
   it("reserves box width for an inline-code chip beyond the raw backtick text", () => {

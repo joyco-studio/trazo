@@ -81,7 +81,7 @@ const MONO_ADVANCE_EM = 0.6;
 export const CODE_CHIP_PAD_X = 4;
 
 /** Measured width (px) of a single run: mono chip for code, `measureLabel` for prose. */
-export function measureRun(run: InlineRun, textCase: LabelCase, size = LABEL_FONT.size): number {
+export function measureRun(run: InlineRun, textCase: LabelCase, size: number = LABEL_FONT.size): number {
   if (run.code) {
     // Code is exempt from casing (case-sensitive) and from the sans tracking.
     const chars = [...run.text].length;
@@ -91,7 +91,7 @@ export function measureRun(run: InlineRun, textCase: LabelCase, size = LABEL_FON
 }
 
 /** Total rendered width (px) of one line, summed across its inline runs. */
-export function measureRuns(line: string, textCase: LabelCase, size = LABEL_FONT.size): number {
+export function measureRuns(line: string, textCase: LabelCase, size: number = LABEL_FONT.size): number {
   let width = 0;
   for (const run of parseInlineRuns(line)) width += measureRun(run, textCase, size);
   return width;
@@ -135,7 +135,7 @@ const LABEL_TRACKING_EM = 0.02;
  * the final characters overflowed its right edge. Width = advances + N*tracking.
  * Pure + deterministic.
  */
-export function measureLabel(text: string, size = LABEL_FONT.size): number {
+export function measureLabel(text: string, size: number = LABEL_FONT.size): number {
   const base = measure(text, { family: LABEL_FONT.family, size });
   const chars = [...text].length;
   const tracking = chars > 0 ? chars * LABEL_TRACKING_EM * size : 0;
@@ -148,7 +148,7 @@ export function measureLabel(text: string, size = LABEL_FONT.size): number {
  * the engine reserves exactly the height the renderer draws.
  */
 export const LABEL_LINE_HEIGHT_EM = 1.3;
-export function labelLineHeight(size = LABEL_FONT.size): number {
+export function labelLineHeight(size: number = LABEL_FONT.size): number {
   return size * LABEL_LINE_HEIGHT_EM;
 }
 
@@ -221,19 +221,42 @@ export function truncateLabel(
  * tracking: width = the widest line's `measureLabel`, height = `lineCount` rows
  * at `labelLineHeight`. Pure. Single source of truth for node/group/note sizing.
  */
-export function measureMultiline(
+function measureMultilineWith(
   label: string | undefined,
-  size = LABEL_FONT.size,
-  textCase: LabelCase = "uppercase",
+  size: number,
+  lineWidth: (line: string) => number,
 ): { width: number; height: number; lines: number } {
   const lines = labelLines(label);
   if (lines.length === 0) return { width: 0, height: 0, lines: 0 };
   let width = 0;
   for (const line of lines) {
-    const w = measureRuns(line, textCase, size);
+    const w = lineWidth(line);
     if (w > width) width = w;
   }
   return { width, height: lines.length * labelLineHeight(size), lines: lines.length };
+}
+
+export function measureMultiline(
+  label: string | undefined,
+  size = LABEL_FONT.size,
+  textCase: LabelCase = "uppercase",
+): { width: number; height: number; lines: number } {
+  return measureMultilineWith(label, size, (line) => measureRuns(line, textCase, size));
+}
+
+/**
+ * Multiline width for text the renderer draws VERBATIM — edge labels, and any
+ * label without inline-code chips. Same casing-aware, tracking-inclusive per-line
+ * measure as {@link measureMultiline}, but backticks count as ordinary glyphs
+ * (the renderer draws them literally, in the label font — no mono chip). Use
+ * this wherever the drawn string is `label` itself, not `parseInlineRuns(label)`.
+ */
+export function measurePlainMultiline(
+  label: string | undefined,
+  size = LABEL_FONT.size,
+  textCase: LabelCase = "uppercase",
+): { width: number; height: number; lines: number } {
+  return measureMultilineWith(label, size, (line) => measureLabel(applyCase(line, textCase), size));
 }
 
 /**

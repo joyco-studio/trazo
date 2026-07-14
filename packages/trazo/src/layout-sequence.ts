@@ -40,6 +40,7 @@ import {
   curveBetween,
   GROUP_PAD,
   measureMultiline,
+  measurePlainMultiline,
   pathThrough,
   roleColorKey,
   sizeShape,
@@ -185,7 +186,9 @@ export function layoutSequence(
       if (cols.length === 0) continue;
       const lo = Math.min(...cols);
       const hi = Math.max(...cols);
-      const size = measureMultiline(note.text);
+      // Notes render verbatim (renderGroup), so measure plain — backticks are
+      // literal glyphs, not inline-code chips.
+      const size = measurePlainMultiline(note.text);
       // Span the covered lifelines (+pad), but never narrower than the text. A
       // single-participant note centers its box on that lifeline.
       const spanLeft = colX[lo] as number;
@@ -275,7 +278,9 @@ function straightMessage(
   if (m.label !== undefined) {
     edge.label = m.label;
     // Widest line, so a multi-line message label sizes its badge correctly.
-    const labelWidth = measureMultiline(m.label).width;
+    // Messages render verbatim as edge labels, so measure plain (backticks
+    // literal, not inline-code chips).
+    const labelWidth = measurePlainMultiline(m.label).width;
     edge.labelWidth = labelWidth;
     // Sit the label ABOVE the arrow (not on top of it, which would hide a long
     // horizontal message line). Centered on the message span.
@@ -316,7 +321,9 @@ function selfMessage(
   if (m.kind === "async") edge.dashed = true;
   if (m.label !== undefined) {
     edge.label = m.label;
-    const labelWidth = measureMultiline(m.label).width;
+    // Messages render verbatim as edge labels, so measure plain (backticks
+    // literal, not inline-code chips).
+    const labelWidth = measurePlainMultiline(m.label).width;
     edge.labelWidth = labelWidth;
     // Label ABOVE the loop (between the lifeline and the loop's top), so it never
     // sits on the loop arrow. Anchored just right of the lifeline so it clears it.

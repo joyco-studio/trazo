@@ -54,6 +54,7 @@ import {
   LABEL_GAP,
   measureLabel,
   measureMultiline,
+  measurePlainMultiline,
   pathThrough,
   roleColorKey,
   sizeShape,
@@ -400,7 +401,9 @@ export function layoutFlow(
     const labelMainExtent =
       direction === "TD"
         ? BADGE_H
-        : badgeWidth(measureMultiline(e.label, undefined, textCase).width);
+        : // Edge labels render verbatim (no inline-code chips), so measure them
+          // plain — backticks are ordinary glyphs, not consumed delimiters.
+          badgeWidth(measurePlainMultiline(e.label, undefined, textCase).width);
     const need = labelMainExtent + LABEL_GAP * 2;
     if (need > (labelGapAfter[fromV.rank] as number)) labelGapAfter[fromV.rank] = need;
   }
@@ -786,7 +789,9 @@ export function layoutFlow(
       edge.label = e.label;
       edge.labelPoint = edgeLabelPoint(points, edgeStyle, direction);
       // Widest line, so a multi-line edge label reserves the right badge width.
-      edge.labelWidth = measureMultiline(e.label, undefined, textCase).width;
+      // Plain measure: the renderer draws `edge.label` verbatim (no inline-code
+      // parsing), so backticks are literal glyphs here, not mono chips.
+      edge.labelWidth = measurePlainMultiline(e.label, undefined, textCase).width;
     }
     return edge;
   });
