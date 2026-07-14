@@ -549,7 +549,20 @@ export interface LayoutOptions {
    * In short: "right" trails the cross-axis, "left" leads it.
    */
   labelSide?: GitLabelSide;
+  /**
+   * Casing applied to every label as measured and drawn. Default "uppercase"
+   * (the JOYCO look). Maps from a theme's `textCase` knob via `themeGitOptions`.
+   */
+  textCase?: LabelCase;
 }
+
+/**
+ * How label text is cased when measured and drawn. "uppercase" is the JOYCO
+ * default (the engine measures the uppercased string so boxes reserve the right
+ * width); "none" leaves text exactly as authored. Inline `code` runs are always
+ * exempt — code is case-sensitive.
+ */
+export type LabelCase = "uppercase" | "none";
 
 /** Git chart orientation: commits flow top→bottom or left→right. */
 export type GitOrientation = "vertical" | "horizontal";
@@ -611,6 +624,11 @@ export interface FlowLayoutOptions {
   edgeGap?: number;
   /** Edge connector style. Default "elbow45". */
   edgeStyle?: EdgeStyle;
+  /**
+   * Casing applied to every label as measured and drawn. Default "uppercase"
+   * (the JOYCO look). Maps from a theme's `textCase` knob via `themeFlowOptions`.
+   */
+  textCase?: LabelCase;
 }
 
 /**

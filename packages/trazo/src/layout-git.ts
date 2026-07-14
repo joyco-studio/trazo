@@ -39,6 +39,7 @@ import type {
   Point,
 } from "./types.js";
 import {
+  applyCase,
   curveBetween,
   measureLabel,
   truncateLabel,
@@ -339,6 +340,7 @@ export function layoutGit(
   // both use it, so what's measured is exactly what's rendered.
   const displayMessages = new Map<CommitId, string>();
   const maxLabelWidth = options?.maxLabelWidth;
+  const textCase = options?.textCase ?? "uppercase";
   for (const commit of ordered) {
     const hash = commit.hash?.trim();
     const message = commit.message?.trim();
@@ -351,13 +353,13 @@ export function layoutGit(
         // Glyph-table measuring is strictly additive (advances + per-char
         // tracking), so the message budget is exact: total minus the fixed
         // hash/author parts. Hash and author are never cut.
-        const fixed = measureLabel(`${hashPart}${authorPart}`.toUpperCase());
-        msgPart = truncateLabel(msgPart, Math.max(24, maxLabelWidth - fixed));
+        const fixed = measureLabel(applyCase(`${hashPart}${authorPart}`, textCase));
+        msgPart = truncateLabel(msgPart, Math.max(24, maxLabelWidth - fixed), textCase);
       }
       if (message !== undefined) displayMessages.set(commit.id, msgPart);
       precomputedLabelWidths.set(
         commit.id,
-        measureLabel(`${hashPart}${msgPart}${authorPart}`.toUpperCase()),
+        measureLabel(applyCase(`${hashPart}${msgPart}${authorPart}`, textCase)),
       );
     }
   }
@@ -495,7 +497,7 @@ export function layoutGit(
     // Left gutter as wide as the widest branch name (+ the trailing colon).
     let band = 0;
     for (const name of branchOfLane) {
-      band = Math.max(band, measureLabel(`${name}:`.toUpperCase()));
+      band = Math.max(band, measureLabel(applyCase(`${name}:`, textCase)));
     }
     band += LANE_LABEL_GAP;
     for (const node of nodes) {
@@ -597,7 +599,7 @@ export function layoutGit(
       if (horizontal) {
         const x1 = Math.min(...pts.map((n) => n.x));
         const x2 = Math.max(...pts.map((n) => n.x));
-        const labelW = measureLabel(group.label.toUpperCase());
+        const labelW = measureLabel(applyCase(group.label, textCase));
         const centerX = (x1 + x2) / 2;
         const leftEdge = centerX - labelW / 2;
         // First row whose last label ends before this one starts; else a new row.
@@ -634,7 +636,7 @@ export function layoutGit(
           labelY: (y1 + y2) / 2,
           tick: BRACKET_TICK,
         });
-        labelExtent = Math.max(labelExtent, labelX + measureLabel(group.label.toUpperCase()));
+        labelExtent = Math.max(labelExtent, labelX + measureLabel(applyCase(group.label, textCase)));
       }
     }
     if (horizontal) maxY = Math.max(maxY, labelExtent);
@@ -650,7 +652,7 @@ export function layoutGit(
     let y = (Number.isFinite(maxY) ? maxY : padding) + BRACKET_GAP + NOTE_ROW / 2;
     for (const note of input.notes) {
       gitNotes.push({ text: note.text, x: padding, y });
-      maxX = Math.max(maxX, padding + measureLabel(note.text.toUpperCase()));
+      maxX = Math.max(maxX, padding + measureLabel(applyCase(note.text, textCase)));
       maxY = Math.max(maxY, y + NOTE_ROW / 2);
       y += NOTE_ROW;
     }

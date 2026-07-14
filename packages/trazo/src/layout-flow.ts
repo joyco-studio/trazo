@@ -51,8 +51,10 @@ import {
   groupBounds,
   GROUP_PAD,
   GROUP_TITLE_H,
+  LABEL_GAP,
   measureLabel,
   measureMultiline,
+  measurePlainMultiline,
   pathThrough,
   roleColorKey,
   sizeShape,
@@ -145,10 +147,12 @@ export function layoutFlow(
   // Air gap between an edge endpoint (line end / arrow tip) and the node face
   // it connects to. 0 = flush (the default); the theme's "lane gap" maps here.
   const edgeGap = Math.max(0, options?.edgeGap ?? 0);
+  const textCase = options?.textCase ?? "uppercase";
   const sizeOpts = {
     minNodeWidth: options?.minNodeWidth ?? DEFAULTS.minNodeWidth,
     nodeHeight: options?.nodeHeight ?? DEFAULTS.nodeHeight,
     labelPadX: options?.labelPadX ?? DEFAULTS.labelPadX,
+    textCase,
   };
   // Word-wrap budget for the label TEXT (box width minus its side padding).
   const maxLabelWidth =
@@ -157,7 +161,7 @@ export function layoutFlow(
       : undefined;
   const wrapNodeLabel = (label: string | undefined): string | undefined =>
     label !== undefined && maxLabelWidth !== undefined
-      ? wrapLabel(label, maxLabelWidth)
+      ? wrapLabel(label, maxLabelWidth, textCase)
       : label;
 
   // ── 0. Normalize + index ──────────────────────────────────────────────
@@ -378,7 +382,35 @@ export function layoutFlow(
     return prev.size > 0 || cur.size > 0;
   };
 
-  // Main-axis origin per rank: padding + Σ(prev thickness + layerGap) + half.
+  // Label-aware inter-rank gaps. An edge label renders as a badge centered in
+  // the gap between its endpoints' ranks. In a horizontal (LR) flow the badge's
+  // WIDTH lies on the main axis and routinely exceeds the fixed `layerGap`, so
+  // without reserving room the badge is drawn UNDER the neighbouring node boxes.
+  // Vertical (TD) flows are safe: only the small BADGE_H sits on the main axis
+  // and already fits `layerGap`. Reserve, per rank boundary, enough main-axis
+  // room for the widest label crossing it (plus `LABEL_GAP` breathing space on
+  // each side). Only adjacent FORWARD edges contribute — their label sits
+  // squarely in that one gap; a spanning edge routes its label through an empty
+  // dummy column (cross-axis clear of every node), so it never occludes a box.
+  const labelGapAfter: number[] = new Array(layers.length).fill(0);
+  for (const e of edges) {
+    if (e.label === undefined) continue;
+    const fromV = vById.get(e.from) as Vertex;
+    const toV = vById.get(e.to) as Vertex;
+    if (toV.rank !== fromV.rank + 1) continue;
+    const labelMainExtent =
+      direction === "TD"
+        ? BADGE_H
+        : // Edge labels render verbatim (no inline-code chips), so measure them
+          // plain — backticks are ordinary glyphs, not consumed delimiters.
+          badgeWidth(measurePlainMultiline(e.label, undefined, textCase).width);
+    const need = labelMainExtent + LABEL_GAP * 2;
+    if (need > (labelGapAfter[fromV.rank] as number)) labelGapAfter[fromV.rank] = need;
+  }
+
+  // Main-axis origin per rank: padding + Σ(prev thickness + per-boundary gap) +
+  // half. The gap after rank r is the larger of the fixed `layerGap` and the
+  // room its crossing labels need, so unlabeled ranks keep tight spacing.
   const rankMainStart: number[] = [];
   {
     let acc = padding + mainLead;
@@ -387,7 +419,7 @@ export function layoutFlow(
       // lower box's title strip.
       if (hasGroups && crossesGroupBoundary(r)) acc += GROUP_PAD * 2 + GROUP_TITLE_H;
       rankMainStart[r] = acc;
-      acc += (rankThickness[r] as number) + layerGap;
+      acc += (rankThickness[r] as number) + Math.max(layerGap, labelGapAfter[r] as number);
     }
   }
 
@@ -600,7 +632,7 @@ export function layoutFlow(
       // exactly what was measured. Uppercase + tracking; a multi-line label
       // reserves its WIDEST line's width.
       node.label = v.label;
-      node.labelWidth = measureMultiline(v.label).width;
+      node.labelWidth = measureMultiline(v.label, undefined, textCase).width;
     }
     return node;
   });
@@ -757,7 +789,9 @@ export function layoutFlow(
       edge.label = e.label;
       edge.labelPoint = edgeLabelPoint(points, edgeStyle, direction);
       // Widest line, so a multi-line edge label reserves the right badge width.
-      edge.labelWidth = measureMultiline(e.label).width;
+      // Plain measure: the renderer draws `edge.label` verbatim (no inline-code
+      // parsing), so backticks are literal glyphs here, not mono chips.
+      edge.labelWidth = measurePlainMultiline(e.label, undefined, textCase).width;
     }
     return edge;
   });
@@ -808,7 +842,7 @@ export function layoutFlow(
         direction === "TD"
           ? { x: entryStub.x, y: (exitStub.y + entryStub.y) / 2 }
           : { x: (exitStub.x + entryStub.x) / 2, y: entryStub.y };
-      edge.labelWidth = measureMultiline(e.label).width;
+      edge.labelWidth = measureMultiline(e.label, undefined, textCase).width;
     }
     positionedEdges.push(edge);
   }

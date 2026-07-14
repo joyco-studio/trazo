@@ -23,7 +23,11 @@ import {
   labelLineHeight,
   GROUP_PAD,
   GROUP_TITLE_H,
+  parseInlineRuns,
+  measureRun,
+  CODE_CHIP_PAD_X,
 } from "../geometry.js";
+import type { LabelCase } from "../types.js";
 import type { PositionedGroup } from "../types.js";
 // `themed` is the shared color-chain primitive — one definition for the
 // renderer and for resolveThemePaint's auto `--trazo-bg` wiring.
@@ -205,14 +209,44 @@ const FG = themed("foreground", "foreground", "#ededed");
 const LABEL_FONT =
   "var(--font-sans, var(--font-public-sans, ui-sans-serif, system-ui, sans-serif))";
 
+/** Monospace stack for inline `code` runs, mirroring the sans LABEL_FONT chain. */
+const MONO_FONT =
+  "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)";
 /** Label font size (px) — matches the size `layout()` measured labels against. */
 const LABEL_SIZE = 13;
 /** Stroke width (px) for edges — JOYCO graphs use a slightly heavier line. */
 const EDGE_WIDTH = 2.5;
 // Box-like shapes take their stroke width from the theme's `border` knob
 // (ResolvedThemePaint.borderWidth; default 2).
-/** Labels render uppercase (JOYCO style). The layout measures uppercased text. */
-const UPPERCASE = { textTransform: "uppercase" as const, letterSpacing: "0.02em" };
+/**
+ * Label letter-spacing (the JOYCO tracking). Always applied — `measureLabel`
+ * reserves it in either casing — so the two style variants below differ ONLY in
+ * `text-transform`. `paint.uppercase` (from the theme's `textCase`) picks one.
+ */
+const LABEL_TRACKING = { letterSpacing: "0.02em" } as const;
+/** Uppercase JOYCO style: tracking + `text-transform: uppercase`. */
+const UPPERCASE = { textTransform: "uppercase" as const, ...LABEL_TRACKING };
+/** Resolve the label text style for a graph from its resolved paint. */
+function labelStyleFor(uppercase: boolean): CSSProperties {
+  return uppercase ? UPPERCASE : LABEL_TRACKING;
+}
+/**
+ * Inline-code chip metrics. The chip is a rounded rect behind a monospace run;
+ * `CODE_CHIP_H` is a touch taller than the glyphs so the fill reads as a chip,
+ * `CODE_CHIP_R` its corner radius. Horizontal padding is `CODE_CHIP_PAD_X`
+ * (shared with the engine's width reservation).
+ */
+const CODE_CHIP_H = 18;
+const CODE_CHIP_R = 3;
+/** Inline-code chip fill — its own `--trazo-code` slot, defaulting to `muted`. */
+const CODE_BG = themed("code", "muted", "#2a2a2a");
+/** Inline-code text — `--trazo-code-foreground`, defaulting to the page foreground. */
+const CODE_FG = themed("code-foreground", "foreground", "#ededed");
+/**
+ * Style for a code `<tspan>`: opt OUT of the label's uppercase + tracking so
+ * code stays case-sensitive and monospaced-tight regardless of the theme casing.
+ */
+const CODE_TSPAN_STYLE = { textTransform: "none", letterSpacing: "normal" } as const;
 /**
  * The surface the graph is drawn on, used as node borders so chips read as
  * lifted off the lines passing behind them. The chip-lift only works when this
@@ -351,6 +385,7 @@ function renderGroup(
   group: PositionedGroup,
   groupClass: string | undefined,
   labelClass: string | undefined,
+  uppercase: boolean,
 ): JSX.Element {
   const isNote = group.variant === "note";
   // Subgraph titles sit in the reserved top strip; note boxes have no strip, so
@@ -382,7 +417,7 @@ function renderGroup(
           fill={MUTED_FG}
           fontFamily={LABEL_FONT}
           fontSize={LABEL_SIZE}
-          style={UPPERCASE}
+          style={labelStyleFor(uppercase)}
         >
           {renderMultilineText(group.label, textX, titleY)}
         </text>
@@ -573,6 +608,8 @@ export function Graph(props: GraphProps): JSX.Element {
   const markerTokens = arrowColorTokens(edges);
   // Single resolution point for the theme's paint half (pure — SSR-safe).
   const paint = resolveThemePaint(theme);
+  // Shared label text style (tracking always; uppercase per the theme casing).
+  const labelStyle = labelStyleFor(paint.uppercase);
   const rootStyle =
     Object.keys(paint.vars).length > 0 ? (paint.vars as CSSProperties) : undefined;
 
@@ -639,7 +676,7 @@ export function Graph(props: GraphProps): JSX.Element {
       {graph.groups && graph.groups.length > 0 ? (
         <g data-slot="groups">
           {graph.groups.map((group) =>
-            renderGroup(group, classNames?.group, classNames?.groupLabel),
+            renderGroup(group, classNames?.group, classNames?.groupLabel, paint.uppercase),
           )}
         </g>
       ) : null}
@@ -680,7 +717,7 @@ export function Graph(props: GraphProps): JSX.Element {
               fill={nodeColor(ll.color)}
               fontFamily={LABEL_FONT}
               fontSize={LABEL_SIZE}
-              style={UPPERCASE}
+              style={labelStyle}
             >
               {ll.branch}:
             </text>
@@ -716,7 +753,7 @@ export function Graph(props: GraphProps): JSX.Element {
                   fill={MUTED_FG}
                   fontFamily={LABEL_FONT}
                   fontSize={LABEL_SIZE}
-                  style={UPPERCASE}
+                  style={labelStyle}
                 >
                   {b.label}
                 </text>
@@ -739,7 +776,7 @@ export function Graph(props: GraphProps): JSX.Element {
               fill={MUTED_FG}
               fontFamily={LABEL_FONT}
               fontSize={LABEL_SIZE}
-              style={UPPERCASE}
+              style={labelStyle}
             >
               {n.text}
             </text>
@@ -817,7 +854,7 @@ export function Graph(props: GraphProps): JSX.Element {
                   fill={ACCENT_FG}
                   fontFamily={LABEL_FONT}
                   fontSize={LABEL_SIZE}
-                  style={UPPERCASE}
+                  style={labelStyle}
                 >
                   {edge.label}
                 </text>
@@ -831,7 +868,7 @@ export function Graph(props: GraphProps): JSX.Element {
         {graph.nodes.map((node) => (
           <g key={node.id} data-slot="node-group">
             {renderNodeShape(node, classNames?.node, classNames?.nodeBox, paint)}
-            {renderNodeLabel(node, classNames?.label)}
+            {renderNodeLabel(node, classNames?.label, paint.uppercase)}
           </g>
         ))}
       </g>
@@ -961,32 +998,132 @@ function renderNodeShape(
 }
 
 /**
+ * Render a flow node's centered label with inline-code support. Each display
+ * line is split into prose and `` `code` `` runs; a line with NO code stays a
+ * single centered `<tspan>` (unchanged geometry). A line WITH code is laid out
+ * run-by-run from a computed start-x — prose in the label font, code in a
+ * monospace `<tspan>` over a rounded chip `<rect>` — using the SAME per-run
+ * widths the engine reserved, so text and chips line up. Pure.
+ */
+function renderFlowLabel(
+  node: PositionedNode,
+  labelClass: string | undefined,
+  uppercase: boolean,
+): JSX.Element {
+  const text = node.label as string;
+  const centerX = node.x;
+  const centerY = node.y;
+  const lines = labelLines(text);
+  const lh = labelLineHeight();
+  const firstDy = -((lines.length - 1) / 2) * lh;
+  const textCase: LabelCase = uppercase ? "uppercase" : "none";
+
+  const chips: JSX.Element[] = [];
+  const rows: JSX.Element[] = [];
+  let anyCode = false;
+
+  lines.forEach((line, li) => {
+    const runs = parseInlineRuns(line);
+    const lineDy = li === 0 ? firstDy : lh;
+    if (!runs.some((r) => r.code)) {
+      // No inline code: one centered tspan (textAnchor="middle" inherited).
+      rows.push(
+        <tspan key={li} x={centerX} dy={lineDy}>
+          {line}
+        </tspan>,
+      );
+      return;
+    }
+    anyCode = true;
+    const widths = runs.map((r) => measureRun(r, textCase));
+    const lineWidth = widths.reduce((a, b) => a + b, 0);
+    // Absolute Y of this row under dominantBaseline="central" (mirrors the
+    // browser's cumulative-dy position), so chips center on the text.
+    const lineY = centerY + firstDy + li * lh;
+    let x = centerX - lineWidth / 2;
+    runs.forEach((run, ri) => {
+      const w = widths[ri] as number;
+      // Only the first run of a line carries the vertical step; the rest share y.
+      const dy = ri === 0 ? lineDy : 0;
+      if (run.code) {
+        chips.push(
+          <rect
+            key={`chip:${li}:${ri}`}
+            data-slot="label-code-chip"
+            x={x}
+            y={lineY - CODE_CHIP_H / 2}
+            width={w}
+            height={CODE_CHIP_H}
+            rx={CODE_CHIP_R}
+            ry={CODE_CHIP_R}
+            fill={CODE_BG}
+          />,
+        );
+        rows.push(
+          <tspan
+            key={`${li}:${ri}`}
+            data-slot="label-code"
+            x={x + CODE_CHIP_PAD_X}
+            dy={dy}
+            textAnchor="start"
+            fontFamily={MONO_FONT}
+            fill={CODE_FG}
+            style={CODE_TSPAN_STYLE}
+          >
+            {run.text}
+          </tspan>,
+        );
+      } else {
+        rows.push(
+          <tspan key={`${li}:${ri}`} x={x} dy={dy} textAnchor="start">
+            {run.text}
+          </tspan>,
+        );
+      }
+      x += w;
+    });
+  });
+
+  const textEl = (
+    <text
+      data-slot="label"
+      className={labelClass}
+      x={centerX}
+      y={centerY}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fill={nodeForeground(node.color)}
+      fontFamily={LABEL_FONT}
+      fontSize={LABEL_SIZE}
+      style={labelStyleFor(uppercase)}
+    >
+      {rows}
+    </text>
+  );
+  // Chips paint first so the text sits on top of them.
+  return anyCode ? (
+    <>
+      {chips}
+      {textEl}
+    </>
+  ) : (
+    textEl
+  );
+}
+
+/**
  * Render a node's label. Git nodes keep their right-of-dot `message` label
  * (UNCHANGED). Flow nodes render their `label` centered inside the shape.
  */
 function renderNodeLabel(
   node: PositionedNode,
   labelClass: string | undefined,
+  uppercase: boolean,
 ): JSX.Element | null {
   const isFlow = node.shape !== undefined && node.shape !== "dot";
   if (isFlow) {
     if (node.label === undefined) return null;
-    return (
-      <text
-        data-slot="label"
-        className={labelClass}
-        x={node.x}
-        y={node.y}
-        textAnchor="middle"
-        dominantBaseline="central"
-        fill={nodeForeground(node.color)}
-        fontFamily={LABEL_FONT}
-        fontSize={LABEL_SIZE}
-        style={UPPERCASE}
-      >
-        {renderMultilineText(node.label, node.x, node.y)}
-      </text>
-    );
+    return renderFlowLabel(node, labelClass, uppercase);
   }
 
   const hash = node.hash;
@@ -1019,7 +1156,7 @@ function renderNodeLabel(
         dominantBaseline="central"
         fontFamily={LABEL_FONT}
         fontSize={LABEL_SIZE}
-        style={UPPERCASE}
+        style={labelStyleFor(uppercase)}
       >
         {hash !== undefined ? (
           <tspan data-slot="label-hash" fill={MUTED_FG}>

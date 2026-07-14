@@ -57,6 +57,7 @@ export type {
   Lifeline,
   EdgeKind,
   EdgeStyle,
+  LabelCase,
   PositionedGraph,
   LayoutOptions,
   GitLayoutOptions,
@@ -97,6 +98,7 @@ export type {
   ThemeLaneStyle,
   ThemeBorder,
   ThemeBackground,
+  ThemeTextCase,
   ResolvedThemePaint,
 } from "./theme.js";
 export { layoutGit } from "./layout-git.js";
