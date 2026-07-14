@@ -647,7 +647,7 @@ export function layoutGit(
   if (input.notes !== undefined && input.notes.length > 0) {
     gitNotes = [];
     const NOTE_ROW = BADGE_H;
-    let y = maxY + BRACKET_GAP + NOTE_ROW / 2;
+    let y = (Number.isFinite(maxY) ? maxY : padding) + BRACKET_GAP + NOTE_ROW / 2;
     for (const note of input.notes) {
       gitNotes.push({ text: note.text, x: padding, y });
       maxX = Math.max(maxX, padding + measureLabel(note.text.toUpperCase()));
