@@ -269,4 +269,47 @@ describe("git orientation + labelSide", () => {
     const opts = { orientation: "horizontal" as const, labelSide: "left" as const };
     expect(layout(fixture, opts)).toEqual(layout(fixture, opts));
   });
+
+  it("positions free-form notes below the graph", () => {
+    const withNote: CommitGraph = {
+      ...fixture,
+      notes: [{ text: "S = squash of feat" }],
+    };
+    const g = layout(withNote);
+    expect(g.gitNotes).toBeDefined();
+    expect(g.gitNotes).toHaveLength(1);
+    const note = g.gitNotes![0]!;
+    expect(note.text).toBe("S = squash of feat");
+    const lowestCommit = Math.max(...g.nodes.map((n) => n.y));
+    expect(note.y).toBeGreaterThan(lowestCommit);
+    expect(note.y).toBeLessThanOrEqual(g.height);
+  });
+
+  it("positions a commit-range bracket over its members", () => {
+    const withGroup: CommitGraph = {
+      ...fixture,
+      commitGroups: [{ label: "main work", from: "C", to: "B" }],
+    };
+    const g = layout(withGroup, { orientation: "horizontal" });
+    expect(g.commitBrackets).toBeDefined();
+    expect(g.commitBrackets).toHaveLength(1);
+    const br = g.commitBrackets![0]!;
+    expect(br.label).toBe("main work");
+    // Horizontal chart: bracket is a horizontal line (y1 === y2).
+    expect(br.y1).toBe(br.y2);
+    const cNode = g.nodes.find((n) => n.id === "C")!;
+    const bNode = g.nodes.find((n) => n.id === "B")!;
+    const lo = Math.min(cNode.x, bNode.x);
+    const hi = Math.max(cNode.x, bNode.x);
+    expect(br.x1).toBe(lo);
+    expect(br.x2).toBe(hi);
+    expect(br.labelX).toBe((lo + hi) / 2);
+    expect(br.labelY).toBeLessThanOrEqual(g.height);
+  });
+
+  it("omits notes and brackets when the input declares none", () => {
+    const g = layout(fixture);
+    expect(g.gitNotes).toBeUndefined();
+    expect(g.commitBrackets).toBeUndefined();
+  });
 });

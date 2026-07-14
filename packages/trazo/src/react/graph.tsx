@@ -538,6 +538,65 @@ export function Graph(props: GraphProps): JSX.Element {
         </g>
       ) : null}
 
+      {graph.commitBrackets && graph.commitBrackets.length > 0 ? (
+        <g data-slot="commit-brackets">
+          {graph.commitBrackets.map((b, i) => {
+            // A square bracket ⊐ hugging the commit run: the long side runs along
+            // the commit axis, short end-caps (tick) turn toward the commits.
+            const horizontal = b.y1 === b.y2;
+            const d = horizontal
+              ? `M ${b.x1} ${b.y1 - b.tick} L ${b.x1} ${b.y1} L ${b.x2} ${b.y2} L ${b.x2} ${b.y2 - b.tick}`
+              : `M ${b.x1 - b.tick} ${b.y1} L ${b.x1} ${b.y1} L ${b.x2} ${b.y2} L ${b.x2 - b.tick} ${b.y2}`;
+            return (
+              <g key={`bracket:${i}`} data-slot="commit-bracket">
+                <path
+                  data-slot="commit-bracket-line"
+                  className={classNames?.commitBracket}
+                  d={d}
+                  fill="none"
+                  stroke={GROUP_STROKE}
+                  strokeWidth={1.5}
+                />
+                <text
+                  data-slot="commit-bracket-label"
+                  x={b.labelX}
+                  y={b.labelY}
+                  textAnchor={horizontal ? "middle" : "start"}
+                  dominantBaseline="central"
+                  fill={MUTED_FG}
+                  fontFamily={LABEL_FONT}
+                  fontSize={LABEL_SIZE}
+                  style={UPPERCASE}
+                >
+                  {b.label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      ) : null}
+
+      {graph.gitNotes && graph.gitNotes.length > 0 ? (
+        <g data-slot="git-notes">
+          {graph.gitNotes.map((n, i) => (
+            <text
+              key={`note:${i}`}
+              data-slot="git-note"
+              className={classNames?.gitNote}
+              x={n.x}
+              y={n.y}
+              dominantBaseline="central"
+              fill={MUTED_FG}
+              fontFamily={LABEL_FONT}
+              fontSize={LABEL_SIZE}
+              style={UPPERCASE}
+            >
+              {n.text}
+            </text>
+          ))}
+        </g>
+      ) : null}
+
       <g data-slot="edges" aria-hidden="true">
         {orderEdgesByPaint(edges).map((edge, i) => {
           const head = edge.arrowHead;

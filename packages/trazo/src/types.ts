@@ -66,6 +66,32 @@ export interface CommitGraph {
   commits: Commit[];
   /** Optional ref tips: ref name → commit id (e.g. { main: "a1", HEAD: "a1" }). */
   refs?: Record<string, CommitId>;
+  /**
+   * Free-form legend lines drawn beside the graph (e.g. "S = squash of
+   * elvira/checkout"). Not tied to any commit — a caption for the whole chart.
+   */
+  notes?: GitNote[];
+  /**
+   * Labeled brackets over a contiguous run of commits (e.g. "Elvira's commits"
+   * spanning e1–e2). Purely annotational: groups don't affect lane assignment.
+   */
+  commitGroups?: CommitGroup[];
+}
+
+/** A free-form git legend line (chart caption, not attached to a commit). */
+export interface GitNote {
+  text: string;
+}
+
+/**
+ * A labeled bracket spanning a contiguous range of commits, by id. `from`/`to`
+ * are inclusive commit ids in source order; the layout draws a bracket along
+ * the commit axis covering that run and places `label` beside it.
+ */
+export interface CommitGroup {
+  label: string;
+  from: CommitId;
+  to: CommitId;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -392,6 +418,37 @@ export interface PositionedGraph {
    * lane's head). Only present when the layout assigned one lane per branch.
    */
   laneLabels?: LaneLabel[];
+  /** Git free-form legend lines, positioned below the graph. */
+  gitNotes?: PositionedNote[];
+  /** Git commit-range group brackets, positioned along the commit axis. */
+  commitBrackets?: CommitBracket[];
+}
+
+/**
+ * A positioned git legend line: `(x,y)` is the text anchor (left-aligned). Lines
+ * stack below the graph in source order.
+ */
+export interface PositionedNote {
+  text: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * A positioned commit-range bracket: `(x1,y1)`→`(x2,y2)` is the bracket's span
+ * along the commit axis (a horizontal run in horizontal charts, vertical in
+ * vertical). `(labelX,labelY)` anchors the group label; `tick` is the small
+ * perpendicular length of the bracket's end caps.
+ */
+export interface CommitBracket {
+  label: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  labelX: number;
+  labelY: number;
+  tick: number;
 }
 
 /**

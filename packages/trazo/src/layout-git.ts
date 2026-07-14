@@ -23,6 +23,7 @@
 
 import type {
   Commit,
+  CommitBracket,
   CommitGraph,
   CommitId,
   EdgeKind,
@@ -34,6 +35,7 @@ import type {
   PositionedEdge,
   PositionedGraph,
   PositionedNode,
+  PositionedNote,
   Point,
 } from "./types.js";
 import {
@@ -561,10 +563,128 @@ export function layoutGit(
   // vertically centered on their row — both already inside the node bounds, so
   // no extra reservation is needed. (Vertical charts emit no lane labels.)
 
+  // Commit-range group brackets ("Elvira's commits" spanning e1–e2). The bracket
+  // runs parallel to the COMMIT axis (horizontal chart → a horizontal line under
+  // the commits; vertical chart → a vertical line beside them), on the far side
+  // from the badges, with a centered label. Purely annotational — placed after
+  // the grid is final, and it extends the bounds so nothing is clipped.
+  const BRACKET_GAP = 14;
+  const BRACKET_TICK = 6;
+  const BRACKET_LABEL_GAP = 6;
+  let commitBrackets: CommitBracket[] | undefined;
+  if (input.commitGroups !== undefined && input.commitGroups.length > 0) {
+    commitBrackets = [];
+    // Shared baseline so multiple groups under the same commit row sit at ONE
+    // level (side by side, like the reference), rather than stacking. Frozen
+    // from the pre-bracket bound; bounds extend once, after all brackets.
+    const baseline = horizontal ? maxY + BRACKET_GAP : maxX + BRACKET_GAP;
+    const labelOffset = BRACKET_TICK + BRACKET_LABEL_GAP;
+    let labelExtent = baseline; // furthest the labels reach past the baseline
+    // Horizontal: labels are centered UNDER their span and can overlap when two
+    // groups sit close. Track each label row's right edge and push a colliding
+    // label onto the next row (stacked), so nothing overprints. Vertical labels
+    // sit on distinct commit rows already, so they never collide.
+    const LABEL_ROW = BADGE_H;
+    const LABEL_PAD = 8;
+    const rowRightEdge: number[] = [];
+    for (const group of input.commitGroups) {
+      const range = memberRange(ordered, group.from, group.to);
+      const pts = ordered
+        .filter((_c, idx) => range.has(idx))
+        .map((c) => nodeById.get(c.id))
+        .filter((n): n is PositionedNode => n !== undefined);
+      if (pts.length === 0) continue;
+      if (horizontal) {
+        const x1 = Math.min(...pts.map((n) => n.x));
+        const x2 = Math.max(...pts.map((n) => n.x));
+        const labelW = measureLabel(group.label.toUpperCase());
+        const centerX = (x1 + x2) / 2;
+        const leftEdge = centerX - labelW / 2;
+        // First row whose last label ends before this one starts; else a new row.
+        let row = rowRightEdge.findIndex((edge) => edge <= leftEdge);
+        if (row === -1) {
+          row = rowRightEdge.length;
+          rowRightEdge.push(0);
+        }
+        rowRightEdge[row] = centerX + labelW / 2 + LABEL_PAD;
+        const labelY = baseline + labelOffset + BADGE_H / 2 + row * LABEL_ROW;
+        commitBrackets.push({
+          label: group.label,
+          x1,
+          y1: baseline,
+          x2,
+          y2: baseline,
+          labelX: centerX,
+          labelY,
+          tick: BRACKET_TICK,
+        });
+        labelExtent = Math.max(labelExtent, labelY + BADGE_H / 2);
+        maxX = Math.max(maxX, centerX + labelW / 2);
+      } else {
+        const y1 = Math.min(...pts.map((n) => n.y));
+        const y2 = Math.max(...pts.map((n) => n.y));
+        const labelX = baseline + labelOffset;
+        commitBrackets.push({
+          label: group.label,
+          x1: baseline,
+          y1,
+          x2: baseline,
+          y2,
+          labelX,
+          labelY: (y1 + y2) / 2,
+          tick: BRACKET_TICK,
+        });
+        labelExtent = Math.max(labelExtent, labelX + measureLabel(group.label.toUpperCase()));
+      }
+    }
+    if (horizontal) maxY = Math.max(maxY, labelExtent);
+    else maxX = Math.max(maxX, labelExtent);
+  }
+
+  // Free-form legend notes ("S = squash of x") stack below the whole graph,
+  // left-aligned at `padding`, one row each. They extend the height.
+  let gitNotes: PositionedNote[] | undefined;
+  if (input.notes !== undefined && input.notes.length > 0) {
+    gitNotes = [];
+    const NOTE_ROW = BADGE_H;
+    let y = maxY + BRACKET_GAP + NOTE_ROW / 2;
+    for (const note of input.notes) {
+      gitNotes.push({ text: note.text, x: padding, y });
+      maxX = Math.max(maxX, padding + measureLabel(note.text.toUpperCase()));
+      maxY = Math.max(maxY, y + NOTE_ROW / 2);
+      y += NOTE_ROW;
+    }
+  }
+
   const width = Number.isFinite(maxX) ? maxX + padding : padding * 2;
   const height = Number.isFinite(maxY) ? maxY + padding : padding * 2;
 
   const result: PositionedGraph = { nodes, edges, width, height, laneCount };
   if (laneLabels !== undefined) result.laneLabels = laneLabels;
+  if (commitBrackets !== undefined && commitBrackets.length > 0) {
+    result.commitBrackets = commitBrackets;
+  }
+  if (gitNotes !== undefined) result.gitNotes = gitNotes;
   return result;
+}
+
+/**
+ * The set of `ordered` indices covered by a commit-id range [from, to]
+ * inclusive. Ranges are interpreted in the layout's top-to-bottom ordered array
+ * so the bracket covers a contiguous run regardless of source direction. If
+ * either endpoint is missing, returns an empty set (no bracket).
+ */
+function memberRange(
+  ordered: Commit[],
+  from: CommitId,
+  to: CommitId,
+): Set<number> {
+  const idxFrom = ordered.findIndex((c) => c.id === from);
+  const idxTo = ordered.findIndex((c) => c.id === to);
+  if (idxFrom === -1 || idxTo === -1) return new Set();
+  const lo = Math.min(idxFrom, idxTo);
+  const hi = Math.max(idxFrom, idxTo);
+  const out = new Set<number>();
+  for (let i = lo; i <= hi; i++) out.add(i);
+  return out;
 }

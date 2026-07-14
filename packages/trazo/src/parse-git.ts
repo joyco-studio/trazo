@@ -10,12 +10,24 @@
  *   checkout <name>
  *   merge <name> [: message]
  *   merge <name> ["message with : colons"]
+ *   note <text>            — a free-form legend line ("S = squash of x")
+ *   note "<text>"
+ *   group <label>          — open a bracket over the commits that follow…
+ *   group "<label>"
+ *   end                    — …until `end` closes it ("Elvira's commits")
  *
  * First branch is `main`. Errors carry a 1-based line number and a friendly
  * message; callers can keep the last good graph rendered on error.
  */
 
-import type { Commit, CommitGraph, ParseError } from "./types.js";
+import type {
+  Commit,
+  CommitGraph,
+  CommitGroup,
+  CommitId,
+  GitNote,
+  ParseError,
+} from "./types.js";
 
 export interface GitParseResult {
   graph: CommitGraph;
@@ -65,6 +77,11 @@ function refsFrom(
 export function parseGit(source: string): GitParseResult {
   const commits: Commit[] = [];
   const branchTips = new Map<string, string>();
+  const notes: GitNote[] = [];
+  const commitGroups: CommitGroup[] = [];
+  // Open `group "label" … end` block: its label plus the ids of commits made
+  // while it was open. Only one group is open at a time (no nesting).
+  let openGroup: { label: string; memberIds: CommitId[] } | null = null;
   let currentBranch = DEFAULT_BRANCH;
   let autoCounter = 0;
 
@@ -80,10 +97,12 @@ export function parseGit(source: string): GitParseResult {
 
   branchTips.set(DEFAULT_BRANCH, "");
 
-  const fail = (line: number, message: string): GitParseResult => ({
-    graph: { commits, refs: refsFrom(branchTips, currentBranch) },
-    error: { line, message },
-  });
+  const fail = (line: number, message: string): GitParseResult => {
+    const graph: CommitGraph = { commits, refs: refsFrom(branchTips, currentBranch) };
+    if (notes.length > 0) graph.notes = notes;
+    if (commitGroups.length > 0) graph.commitGroups = commitGroups;
+    return { graph, error: { line, message } };
+  };
 
   const lines = source.split("\n");
 
@@ -167,6 +186,7 @@ export function parseGit(source: string): GitParseResult {
         if (author !== undefined) commit.author = author;
         commits.push(commit);
         branchTips.set(currentBranch, id);
+        if (openGroup) openGroup.memberIds.push(id);
         break;
       }
 
@@ -208,19 +228,68 @@ export function parseGit(source: string): GitParseResult {
         };
         commits.push(mergeCommit);
         branchTips.set(currentBranch, id);
+        if (openGroup) openGroup.memberIds.push(id);
+        break;
+      }
+
+      case "note": {
+        // Free-form legend: everything after "note" is the text (quoted or raw).
+        // The quote/colon message split above may have consumed it into
+        // `message`; otherwise it's the tail of `head`.
+        const tail = head.slice(keyword.length).trim();
+        const text = message !== undefined ? `${tail} ${message}`.trim() : tail;
+        if (text === "") {
+          return fail(lineNumber, `note needs text, e.g. note "S = squash of x"`);
+        }
+        notes.push({ text });
+        break;
+      }
+
+      case "group": {
+        if (openGroup) {
+          return fail(lineNumber, `group "${openGroup.label}" is still open — close it with "end" first`);
+        }
+        // Label is the quoted message or the raw tail after "group".
+        const tail = head.slice(keyword.length).trim();
+        const label = message !== undefined ? message : tail;
+        if (label === "") {
+          return fail(lineNumber, `group needs a label, e.g. group "Elvira's commits"`);
+        }
+        openGroup = { label, memberIds: [] };
+        break;
+      }
+
+      case "end": {
+        if (!openGroup) {
+          return fail(lineNumber, `"end" with no open group`);
+        }
+        const { label, memberIds } = openGroup;
+        openGroup = null;
+        if (memberIds.length === 0) {
+          return fail(lineNumber, `group "${label}" has no commits`);
+        }
+        commitGroups.push({
+          label,
+          from: memberIds[0] as CommitId,
+          to: memberIds[memberIds.length - 1] as CommitId,
+        });
         break;
       }
 
       default:
         return fail(
           lineNumber,
-          `unknown command "${keyword}" — use commit, branch, checkout or merge`,
+          `unknown command "${keyword}" — use commit, branch, checkout, merge, note or group`,
         );
     }
   }
 
-  return {
-    graph: { commits, refs: refsFrom(branchTips, currentBranch) },
-    error: null,
-  };
+  if (openGroup) {
+    return fail(lines.length, `group "${openGroup.label}" was never closed — add "end"`);
+  }
+
+  const graph: CommitGraph = { commits, refs: refsFrom(branchTips, currentBranch) };
+  if (notes.length > 0) graph.notes = notes;
+  if (commitGroups.length > 0) graph.commitGroups = commitGroups;
+  return { graph, error: null };
 }
