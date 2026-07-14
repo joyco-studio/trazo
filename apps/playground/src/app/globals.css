@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -178,6 +178,7 @@ html.dark {
 @layer base {
   :where([data-slot='cluster'] > *) {
     background-color: var(--cluster-bg, transparent);
+    color: var(--cluster-foreground, inherit);
   }
   * {
     scrollbar-width: thin;

@@ -15,10 +15,22 @@ const SheetContent = React.forwardRef<
   React.ComponentRef<typeof SheetPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content> & {
     side?: 'left' | 'right'
+    /**
+     * When true the backdrop stays fully transparent and non-blurring, so the
+     * content behind the sheet (e.g. the live render preview) stays crisp and
+     * visible while the sheet is open. The overlay still captures outside clicks
+     * to dismiss. Default false = the standard dimmed + blurred scrim.
+     */
+    seeThrough?: boolean
   }
->(({ className, children, side = 'right', ...props }, ref) => (
+>(({ className, children, side = 'right', seeThrough = false, ...props }, ref) => (
   <SheetPrimitive.Portal>
-    <SheetPrimitive.Overlay className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+    <SheetPrimitive.Overlay
+      className={cn(
+        'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50',
+        seeThrough ? 'bg-transparent' : 'bg-black/50 backdrop-blur-sm'
+      )}
+    />
     <SheetPrimitive.Content
       ref={ref}
       className={cn(
