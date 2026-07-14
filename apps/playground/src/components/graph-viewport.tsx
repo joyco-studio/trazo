@@ -139,10 +139,8 @@ export function GraphViewport({ children, contentWidth, contentHeight }: GraphVi
     // the margin). This becomes the "100%" reference — small diagrams scale up,
     // large ones scale down, both landing on a full-frame fit.
     const nextFit = clampZoom(Math.min((vpW - FIT_MARGIN) / contentWidth, (vpH - FIT_MARGIN) / contentHeight))
-    flushSync(() => {
-      setFitZoom(nextFit)
-      setZoom(nextFit)
-    })
+    setFitZoom(nextFit)
+    setZoom(nextFit)
     zoomRef.current = nextFit
     panRef.current = {
       x: (vpW - contentWidth * nextFit) / 2,
