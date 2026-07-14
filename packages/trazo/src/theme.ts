@@ -16,7 +16,7 @@
  * SSR-safe, deterministic.
  */
 
-import type { EdgeStyle, FlowLayoutOptions, LayoutOptions } from "./types.js";
+import type { EdgeStyle, FlowLayoutOptions, LabelCase, LayoutOptions } from "./types.js";
 
 /**
  * Build a layered color chain: `var(--trazo-<slot>, var(--color-<token>,
@@ -56,7 +56,9 @@ export type TrazoSurfaceSlot =
   | "accent"
   | "accent-foreground"
   | "foreground"
-  | "muted-foreground";
+  | "muted-foreground"
+  | "code"
+  | "code-foreground";
 
 /** Every settable token: color slots, their foregrounds, and surfaces. */
 export type TrazoTokenSlot =
@@ -79,6 +81,11 @@ export type ThemeLaneStyle = "solid" | "dashed" | "dotted";
 export type ThemeBorder = "none" | "default" | "large";
 /** Canvas backdrop: nothing, a solid `canvas` fill, or fill + hatch texture. */
 export type ThemeBackground = "none" | "solid" | "texture";
+/**
+ * Label casing. "uppercase" is the JOYCO default; "none" renders every label
+ * exactly as authored. Inline `code` runs stay case-sensitive either way.
+ */
+export type ThemeTextCase = LabelCase;
 
 export interface TrazoTheme {
   /** Display name (playground preset picker). */
@@ -102,6 +109,13 @@ export interface TrazoTheme {
   laneGap?: number;
   background?: ThemeBackground;
   border?: ThemeBorder;
+  /**
+   * Label casing across the whole diagram. Default "uppercase" (the JOYCO look).
+   * Both halves of the theme read it: the engine measures boxes against the
+   * cased text ({@link themeFlowOptions}/{@link themeGitOptions}) and the
+   * renderer applies the matching `text-transform` ({@link resolveThemePaint}).
+   */
+  textCase?: ThemeTextCase;
   /**
    * Reserved: the framed label + number chips ("Papoi generative principles" /
    * "01"). Currently rendered by the playground as HTML around the diagram;
@@ -237,6 +251,7 @@ export function themeFlowOptions(
     layerGap: Math.round(FLOW_BASE.layerGap * scale),
     nodeGap: Math.round(FLOW_BASE.nodeGap * scale),
     edgeGap: Math.max(0, Math.min(10, theme.laneGap ?? 0)),
+    textCase: theme.textCase ?? "uppercase",
   };
   const edgeStyle = themeEdgeStyle(theme.lanesMode);
   if (edgeStyle !== undefined) out.edgeStyle = edgeStyle;
@@ -256,6 +271,7 @@ export function themeGitOptions(
     laneWidth:
       Math.round(GIT_BASE.laneWidth * scale) +
       Math.max(0, Math.min(10, theme.laneGap ?? 0)) * LANE_GAP_UNIT,
+    textCase: theme.textCase ?? "uppercase",
   };
   const edgeStyle = themeEdgeStyle(theme.lanesMode);
   if (edgeStyle !== undefined) out.edgeStyle = edgeStyle;
@@ -275,6 +291,8 @@ export interface ResolvedThemePaint {
   /** Chip-lift stroke width (px) for box-like nodes. */
   borderWidth: number;
   background: ThemeBackground;
+  /** Whether labels render uppercase (`text-transform`). Mirrors `textCase`. */
+  uppercase: boolean;
 }
 
 const ROUNDNESS_PX: Record<ThemeRoundness, number> = {
@@ -298,6 +316,7 @@ const PAINT_DEFAULTS: ResolvedThemePaint = {
   cornerRadius: 0,
   borderWidth: 2,
   background: "none",
+  uppercase: true,
 };
 
 /**
@@ -340,6 +359,7 @@ export function resolveThemePaint(theme: TrazoTheme | undefined): ResolvedThemeP
     cornerRadius: ROUNDNESS_PX[theme.roundness ?? "none"],
     borderWidth: BORDER_PX[theme.border ?? "default"],
     background: theme.background ?? "none",
+    uppercase: (theme.textCase ?? "uppercase") === "uppercase",
   };
 }
 

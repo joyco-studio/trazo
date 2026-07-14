@@ -19,6 +19,7 @@ import {
   type ThemeLaneStyle,
   type ThemePadding,
   type ThemeRoundness,
+  type ThemeTextCase,
   type TrazoTheme,
   type TrazoTokenSlot,
 } from '@joycostudio/trazo'
@@ -51,6 +52,8 @@ const SURFACE_SLOTS: readonly TrazoTokenSlot[] = [
   'accent',
   'accent-foreground',
   'foreground',
+  'code',
+  'code-foreground',
 ]
 
 const LANE_SLOTS: readonly TrazoTokenSlot[] = ['lane-1', 'lane-2', 'lane-3', 'lane-4', 'lane-5', 'lane-6']
@@ -250,6 +253,12 @@ export function ThemePanel({ theme, presetName, onThemeChange }: ThemePanelProps
             value={(theme.border ?? 'default') as ThemeBorder}
             options={['none', 'default', 'large'] as const}
             onChange={(v) => setKnob('border', v)}
+          />
+          <KnobRow
+            label="text case"
+            value={(theme.textCase ?? 'uppercase') as ThemeTextCase}
+            options={['uppercase', 'none'] as const}
+            onChange={(v) => setKnob('textCase', v)}
           />
 
           <div className="flex flex-col gap-1.5">

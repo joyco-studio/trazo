@@ -67,6 +67,9 @@ export const SOFT_PRESET: TrazoTheme = {
   laneGap: 4,
   background: 'solid',
   border: 'none',
+  // Soft renders labels as-authored (no uppercasing) — the gentler counterpart
+  // to JOYCO's all-caps.
+  textCase: 'none',
   // Soft's foregrounds are TINTED (dark green on mint, brick on salmon…), so
   // every pair is explicit — the black/white auto pick is the wrong look here.
   tokens: {

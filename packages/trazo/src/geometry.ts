@@ -12,8 +12,90 @@
  *    Bézier between layers) from an ordered point list.
  */
 
-import type { EdgeStyle, FlowDirection, NodeShape, Point, SemanticRole } from "./types.js";
+import type { EdgeStyle, FlowDirection, LabelCase, NodeShape, Point, SemanticRole } from "./types.js";
 import { measure } from "./measure.js";
+
+/**
+ * Apply a label's casing transform for MEASUREMENT — the pure-TS mirror of the
+ * renderer's CSS `text-transform`. "uppercase" matches the JOYCO look (and the
+ * width the browser will draw); "none" leaves text as authored. Kept here so the
+ * engine measures exactly the casing the renderer paints.
+ */
+export function applyCase(text: string, mode: LabelCase): string {
+  return mode === "uppercase" ? text.toUpperCase() : text;
+}
+
+// ── Inline code runs ────────────────────────────────────────────────────────
+// A label line may contain `backtick`-delimited inline code, rendered in a
+// monospace chip. Parsing + measuring lives here (pure) so the engine sizes the
+// box to exactly what the renderer draws; the renderer imports the SAME parser.
+
+/** One styled segment of a label line: plain prose or inline `code`. */
+export interface InlineRun {
+  text: string;
+  code: boolean;
+}
+
+/**
+ * Split a display line into plain-text and inline-code runs on backtick pairs.
+ * `` `x` `` becomes a code run holding `x` (backticks consumed). A trailing
+ * unclosed backtick is treated as literal text so a stray tick never eats the
+ * rest of the line. Empty runs are dropped. Pure and deterministic.
+ */
+export function parseInlineRuns(line: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  let i = 0;
+  while (i < line.length) {
+    const tick = line.indexOf("`", i);
+    if (tick === -1) {
+      if (i < line.length) runs.push({ text: line.slice(i), code: false });
+      break;
+    }
+    const close = line.indexOf("`", tick + 1);
+    if (close === -1) {
+      // Unclosed — the rest is literal prose (backtick included).
+      runs.push({ text: line.slice(i), code: false });
+      break;
+    }
+    if (tick > i) runs.push({ text: line.slice(i, tick), code: false });
+    const inner = line.slice(tick + 1, close);
+    if (inner.length > 0) runs.push({ text: inner, code: true });
+    i = close + 1;
+  }
+  return runs;
+}
+
+/**
+ * Advance width of a monospace glyph as a fraction of the font size. Inline code
+ * renders in `var(--font-mono, …)`; we don't bundle a glyph table for it, but a
+ * monospace font's whole point is a CONSTANT advance, so `chars × ratio × size`
+ * is an exact model. 0.6em fits the common UI mono stack (SF Mono, Menlo,
+ * JetBrains Mono, Consolas ≈ 0.55–0.6).
+ */
+const MONO_ADVANCE_EM = 0.6;
+/**
+ * Horizontal padding (px) reserved on EACH side of an inline-code chip, baked
+ * into the run's measured width so adjacent prose never overlaps the chip and
+ * the renderer's drawn `<rect>` lines up with the reserved space.
+ */
+export const CODE_CHIP_PAD_X = 4;
+
+/** Measured width (px) of a single run: mono chip for code, `measureLabel` for prose. */
+export function measureRun(run: InlineRun, textCase: LabelCase, size = LABEL_FONT.size): number {
+  if (run.code) {
+    // Code is exempt from casing (case-sensitive) and from the sans tracking.
+    const chars = [...run.text].length;
+    return chars * MONO_ADVANCE_EM * size + CODE_CHIP_PAD_X * 2;
+  }
+  return measureLabel(applyCase(run.text, textCase), size);
+}
+
+/** Total rendered width (px) of one line, summed across its inline runs. */
+export function measureRuns(line: string, textCase: LabelCase, size = LABEL_FONT.size): number {
+  let width = 0;
+  for (const run of parseInlineRuns(line)) width += measureRun(run, textCase, size);
+  return width;
+}
 
 /**
  * Token key for a node/edge color from its semantic role (`"role-<role>"`). The
@@ -86,7 +168,11 @@ export function labelLines(label: string | undefined): string[] {
  * paragraph boundaries; a single word wider than the budget stays whole (no
  * hyphenation). Pure and deterministic — glyph-table measuring only.
  */
-export function wrapLabel(label: string, maxTextWidth: number): string {
+export function wrapLabel(
+  label: string,
+  maxTextWidth: number,
+  textCase: LabelCase = "uppercase",
+): string {
   const out: string[] = [];
   for (const hardLine of label.split("\n")) {
     const words = hardLine.split(/\s+/).filter((w) => w.length > 0);
@@ -97,7 +183,7 @@ export function wrapLabel(label: string, maxTextWidth: number): string {
     let line = "";
     for (const word of words) {
       const candidate = line === "" ? word : `${line} ${word}`;
-      if (line !== "" && measureLabel(candidate.toUpperCase()) > maxTextWidth) {
+      if (line !== "" && measureRuns(candidate, textCase) > maxTextWidth) {
         out.push(line);
         line = word;
       } else {
@@ -115,13 +201,17 @@ export function wrapLabel(label: string, maxTextWidth: number): string {
  * subjects. Returns the text unchanged when it already fits. Pure and
  * deterministic.
  */
-export function truncateLabel(text: string, maxTextWidth: number): string {
-  if (measureLabel(text.toUpperCase()) <= maxTextWidth) return text;
+export function truncateLabel(
+  text: string,
+  maxTextWidth: number,
+  textCase: LabelCase = "uppercase",
+): string {
+  if (measureLabel(applyCase(text, textCase)) <= maxTextWidth) return text;
   const chars = [...text];
   while (chars.length > 0) {
     chars.pop();
     const candidate = `${chars.join("").trimEnd()}…`;
-    if (measureLabel(candidate.toUpperCase()) <= maxTextWidth) return candidate;
+    if (measureLabel(applyCase(candidate, textCase)) <= maxTextWidth) return candidate;
   }
   return "…";
 }
@@ -134,12 +224,13 @@ export function truncateLabel(text: string, maxTextWidth: number): string {
 export function measureMultiline(
   label: string | undefined,
   size = LABEL_FONT.size,
+  textCase: LabelCase = "uppercase",
 ): { width: number; height: number; lines: number } {
   const lines = labelLines(label);
   if (lines.length === 0) return { width: 0, height: 0, lines: 0 };
   let width = 0;
   for (const line of lines) {
-    const w = measureLabel(line.toUpperCase(), size);
+    const w = measureRuns(line, textCase, size);
     if (w > width) width = w;
   }
   return { width, height: lines.length * labelLineHeight(size), lines: lines.length };
@@ -226,6 +317,8 @@ export interface ShapeSizeOptions {
   nodeHeight?: number;
   /** Horizontal padding (px) added around the measured label. */
   labelPadX?: number;
+  /** Casing to measure the label under (matches the renderer). Default "uppercase". */
+  textCase?: LabelCase;
 }
 
 const SIZE_DEFAULTS = {
@@ -247,12 +340,13 @@ export function sizeShape(
   const minNodeWidth = options?.minNodeWidth ?? SIZE_DEFAULTS.minNodeWidth;
   const nodeHeight = options?.nodeHeight ?? SIZE_DEFAULTS.nodeHeight;
   const labelPadX = options?.labelPadX ?? SIZE_DEFAULTS.labelPadX;
+  const textCase = options?.textCase ?? "uppercase";
 
-  // Labels render UPPERCASE (JOYCO style) with letter-spacing — measure the
-  // uppercased text WITH tracking so the shape reserves the right width. A
-  // multi-line label (hard `\n` breaks) sizes to its WIDEST line and grows the
-  // box height by one line-height per extra line beyond the first.
-  const { width: labelWidth, lines } = measureMultiline(label);
+  // Labels render in the theme's casing with letter-spacing — measure the cased
+  // text WITH tracking (and inline-code chips as mono) so the shape reserves the
+  // right width. A multi-line label (hard `\n` breaks) sizes to its WIDEST line
+  // and grows the box height by one line-height per extra line beyond the first.
+  const { width: labelWidth, lines } = measureMultiline(label, undefined, textCase);
   const boxW = Math.max(minNodeWidth, labelWidth + labelPadX * 2);
   const extraLines = lines > 1 ? lines - 1 : 0;
   const h = nodeHeight + extraLines * labelLineHeight();

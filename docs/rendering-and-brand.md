@@ -113,19 +113,22 @@ theme editor edits). A theme has two halves, resolved at a single point each:
 - **Layout half** → `themeFlowOptions(theme, base?)` / `themeGitOptions(theme,
   base?)` produce layout options: `padding` density preset (sm/default/lg
   scales padding + gaps together), `lanesMode`
-  (angular = elbow45 | orthogonal | rounded | bezier → `edgeStyle`), and git
-  `laneGap` 0–10 (extra `laneWidth`). Explicit `base` options win over the
-  theme.
+  (angular = elbow45 | orthogonal | rounded | bezier → `edgeStyle`), git
+  `laneGap` 0–10 (extra `laneWidth`), and `textCase`
+  (uppercase | none — see below). Explicit `base` options win over the theme.
 - **Paint half** → `<Graph theme={theme}>` calls `resolveThemePaint(theme)`
   (pure, SSR-safe): `tokens` become `--trazo-*` vars on the root `style`,
   `laneStyle` (solid/dashed/dotted) maps to stroke dasharray (+ round linecap
   for dots), `roundness` (none/sm/default/lg) is the box `rx`, `border`
-  (none/default/large) is the chip-lift stroke width, and `background`
+  (none/default/large) is the chip-lift stroke width, `background`
   (none/solid/texture) draws a `canvas` rect (+ a 45° hatch drawn as ONE path —
   deliberately not an SVG `<pattern>`, so there is no DOM id to collide when
-  several graphs share a page).
-- New surface slots: `--trazo-canvas` (backdrop fill; defaults to `background`)
-  and `--trazo-canvas-hatch` (texture lines; defaults to `border`).
+  several graphs share a page), and `textCase` sets `uppercase` (the label
+  `text-transform`).
+- New surface slots: `--trazo-canvas` (backdrop fill; defaults to `background`),
+  `--trazo-canvas-hatch` (texture lines; defaults to `border`), and the inline-
+  code chip pair `--trazo-code` (chip fill; defaults to `muted`) /
+  `--trazo-code-foreground` (chip text; defaults to `foreground`).
 - `theme.frame` ({ label, number }) is **reserved**: the playground renders the
   framed chips as HTML around the diagram today; declaring it on the theme
   keeps in-SVG embedding a non-breaking future step.
@@ -138,6 +141,50 @@ theme editor edits). A theme has two halves, resolved at a single point each:
   slot, so theming `--trazo-info` recolors legacy `:streamed` nodes too. The
   keyword list is exported as `SEMANTIC_ROLES` (single source for the DSL
   parsers).
+
+## Label casing (`textCase`)
+
+Labels default to **uppercase** (the JOYCO look). A theme can opt out with
+`textCase: "none"` to render text exactly as authored. Casing lives in BOTH
+halves of the theme and they MUST agree or boxes crop:
+
+- **Renderer** applies it as CSS `text-transform` — `labelStyleFor(uppercase)`
+  in `graph.tsx` picks `UPPERCASE` (transform + tracking) or `LABEL_TRACKING`
+  (tracking only). The `letter-spacing: 0.02em` tracking is applied in EITHER
+  casing, so the two variants differ only in `text-transform`.
+- **Engine** measures the same casing — `applyCase(text, textCase)` in
+  `geometry.ts` replaces the old hard-coded `.toUpperCase()`. The casing flows in
+  through the layout options (`LayoutOptions.textCase` /
+  `FlowLayoutOptions.textCase`), set by `themeGitOptions` / `themeFlowOptions`.
+
+Because the renderer transforms visually while the engine measures the cased
+string, a lowercase-heavy label reserves LESS width under `"none"` than under
+`"uppercase"` (caps are wider) — the box sizes to what is drawn either way.
+
+## Inline `code` in flow-node labels
+
+A flow node label may contain `` `backtick` ``-delimited inline code, rendered
+in a monospace chip. The whole path is pure and SSR-safe:
+
+- **Parse** — `parseInlineRuns(line)` in `geometry.ts` splits a display line into
+  prose and `code` runs, consuming the backticks (an unclosed tick stays literal
+  prose; empty `` `` `` spans are dropped). The label stays a flat string
+  end-to-end (backticks survive parsing/layout); both the engine and the renderer
+  parse it, so there is no rich data model to thread.
+- **Measure** — code has no bundled glyph table, but a monospace font's advance
+  is CONSTANT, so `measureRun` models a code run as `chars × 0.6em + 2×pad`
+  (`CODE_CHIP_PAD_X`). `measureMultiline` sums runs per line, so boxes reserve
+  room for the chip. Code is exempt from casing AND from the sans tracking.
+- **Render** — `renderFlowLabel` in `graph.tsx` lays a coded line out run-by-run
+  from a computed start-x (SVG `<tspan>`s can't have backgrounds), drawing a
+  rounded `<rect>` (`data-slot="label-code-chip"`, fill `--trazo-code`) behind a
+  monospace `<tspan>` (`data-slot="label-code"`, `--font-mono`, fill
+  `--trazo-code-foreground`, `text-transform:none`). It uses the SAME per-run
+  widths the engine reserved, so text and chips line up. A line with no code
+  keeps the simple single centered `<tspan>` (unchanged geometry).
+
+> Scope: inline code is a flow-node-label feature. Git commit badges, group /
+> note titles, lane and edge labels do not parse backticks.
 
 ## Label width & the letter-spacing tracking fix
 
