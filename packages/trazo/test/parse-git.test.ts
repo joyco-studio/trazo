@@ -174,6 +174,41 @@ describe("parseGit — errors", () => {
     expect(e.message).toMatch(/duplicate/i);
   });
 
+  it("auto merge ids skip user-taken ids instead of colliding", () => {
+    // The user's explicit "m2" would have collided with the SECOND merge's
+    // auto id, silently fusing two commits (9 parsed → 8 laid out).
+    const src = [
+      "commit a1",
+      "branch one",
+      "commit f1",
+      "checkout main",
+      "commit m2 : main work",
+      "branch two",
+      "commit t1",
+      "checkout main",
+      "merge one",
+      "checkout two",
+      "commit t2",
+      "checkout main",
+      "merge two",
+    ].join("\n");
+    const { graph, error } = parseGit(src);
+    expect(error).toBeNull();
+    const ids = graph.commits.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // 5 explicit commits + 2 merges — every one must survive the layout.
+    expect(graph.commits).toHaveLength(7);
+  });
+
+  it("auto commit ids skip user-taken ids instead of erroring", () => {
+    // "c1" is taken by the user; the following anonymous commit must not
+    // claim it (that used to surface as a bogus "duplicate id" error).
+    const { graph, error } = parseGit("commit c1\ncommit");
+    expect(error).toBeNull();
+    expect(graph.commits).toHaveLength(2);
+    expect(new Set(graph.commits.map((c) => c.id)).size).toBe(2);
+  });
+
   it("errors on branch with no name", () => {
     const e = err("branch");
     expect(e.message).toMatch(/branch needs a name/i);
@@ -187,5 +222,95 @@ describe("parseGit — errors", () => {
   it("errors on merge with no name", () => {
     const e = err("commit\nmerge");
     expect(e.message).toMatch(/merge needs a branch name/i);
+  });
+});
+
+// ── notes ─────────────────────────────────────────────────────────────────────
+
+describe("parseGit — notes", () => {
+  it("parses a raw note line", () => {
+    const g = ok("commit\nnote S = squash of elvira/checkout");
+    expect(g.notes).toEqual([{ text: "S = squash of elvira/checkout" }]);
+  });
+
+  it("parses a quoted note (keeps colons)", () => {
+    const g = ok('note "S: squash of x"');
+    expect(g.notes).toEqual([{ text: "S: squash of x" }]);
+  });
+
+  it("collects multiple notes in order", () => {
+    const g = ok("note first\nnote second");
+    expect(g.notes?.map((n) => n.text)).toEqual(["first", "second"]);
+  });
+
+  it("errors on an empty note", () => {
+    const e = err("note");
+    expect(e.message).toMatch(/note needs text/i);
+  });
+
+  it("omits notes when none present", () => {
+    const g = ok("commit");
+    expect(g.notes).toBeUndefined();
+  });
+});
+
+// ── commit groups ─────────────────────────────────────────────────────────────
+
+describe("parseGit — commit groups", () => {
+  it("brackets a range of commits by first/last member id", () => {
+    const g = ok(
+      `group "Elvira's commits"
+       commit e1
+       commit e2
+       end`,
+    );
+    expect(g.commitGroups).toEqual([
+      { label: "Elvira's commits", from: "e1", to: "e2" },
+    ]);
+  });
+
+  it("supports an unquoted label", () => {
+    const g = ok("group Elviras\ncommit e1\nend");
+    expect(g.commitGroups?.[0]?.label).toBe("Elviras");
+  });
+
+  it("handles multiple sequential groups", () => {
+    const g = ok(
+      `group A
+       commit e1
+       end
+       group B
+       commit h1
+       end`,
+    );
+    expect(g.commitGroups).toEqual([
+      { label: "A", from: "e1", to: "e1" },
+      { label: "B", from: "h1", to: "h1" },
+    ]);
+  });
+
+  it("errors on nested groups", () => {
+    const e = err("group A\ncommit e1\ngroup B");
+    expect(e.message).toMatch(/still open/i);
+  });
+
+  it("errors on end with no open group", () => {
+    const e = err("commit\nend");
+    expect(e.message).toMatch(/no open group/i);
+  });
+
+  it("errors on an unclosed group", () => {
+    const e = err("group A\ncommit e1");
+    expect(e.message).toMatch(/never closed/i);
+  });
+
+  it("errors on an empty group", () => {
+    const e = err("group A\nend");
+    expect(e.message).toMatch(/no commits/i);
+  });
+
+  it("errors on a group with no label", () => {
+    const e = err("group");
+    expect(e.message).toMatch(/group needs a label/i);
   });
 });

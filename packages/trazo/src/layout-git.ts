@@ -23,25 +23,30 @@
 
 import type {
   Commit,
+  CommitBracket,
   CommitGraph,
   CommitId,
   EdgeKind,
   EdgeStyle,
   GitLabelSide,
   GitOrientation,
+  LaneLabel,
   LayoutOptions,
   PositionedEdge,
   PositionedGraph,
   PositionedNode,
+  PositionedNote,
   Point,
 } from "./types.js";
 import {
   curveBetween,
   measureLabel,
+  truncateLabel,
   badgeWidth,
   NODE_HALF,
   LABEL_GAP,
   BADGE_H,
+  type MainAxis,
 } from "./geometry.js";
 
 const DEFAULTS = {
@@ -129,13 +134,56 @@ function orderCommits(commits: Commit[]): Commit[] {
 }
 
 /**
- * Assign an integer lane to every commit using the first-parent-stable walk
- * described at the top of this file.
+ * Assign one dedicated lane per branch, keyed by branch name (mermaid style):
+ * every commit on branch B lands in B's column for the whole graph, so a
+ * multi-branch history is legible at a glance and lanes can be labeled with the
+ * branch name. Lanes are ordered by first appearance while walking the commits
+ * top-to-bottom (main, then each branch as it first shows up) — a fixed function
+ * of input order, so output stays deterministic.
+ *
+ * Only usable when EVERY commit carries a `branch` (the git DSL always sets it;
+ * a raw `CommitGraph` built by a consumer may not). `assignLanes` picks this
+ * path when branches are complete and falls back to the compact algorithm
+ * otherwise, preserving the engine contract for non-DSL callers.
+ */
+function assignBranchLanes(ordered: Commit[]): {
+  laneOf: Map<CommitId, number>;
+  laneCount: number;
+  branchOfLane: string[];
+} {
+  const laneOf = new Map<CommitId, number>();
+  const laneForBranch = new Map<string, number>();
+  const branchOfLane: string[] = [];
+
+  for (const commit of ordered) {
+    const branch = commit.branch as string;
+    let lane = laneForBranch.get(branch);
+    if (lane === undefined) {
+      lane = branchOfLane.length;
+      laneForBranch.set(branch, lane);
+      branchOfLane.push(branch);
+    }
+    laneOf.set(commit.id, lane);
+  }
+
+  return { laneOf, laneCount: branchOfLane.length, branchOfLane };
+}
+
+/**
+ * Assign an integer lane to every commit. Prefers one lane per branch (see
+ * `assignBranchLanes`) when branch names are complete; otherwise falls back to
+ * the compact first-parent-stable walk described at the top of this file.
  */
 function assignLanes(ordered: Commit[]): {
   laneOf: Map<CommitId, number>;
   laneCount: number;
+  branchOfLane?: string[];
 } {
+  // Branch-per-lane only when every commit knows its branch (DSL guarantees it).
+  if (ordered.length > 0 && ordered.every((c) => c.branch !== undefined)) {
+    return assignBranchLanes(ordered);
+  }
+
   const laneOf = new Map<CommitId, number>();
 
   // `lanes[i]` holds the CommitId currently reserving column i, or null if free.
@@ -216,8 +264,9 @@ function edgePath(
   from: PositionedNode,
   to: PositionedNode,
   style: EdgeStyle,
+  mainAxis: MainAxis,
 ): string {
-  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y }, style);
+  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y }, style, mainAxis);
 }
 
 /**
@@ -238,22 +287,26 @@ function badgeAnchor(
   labelWidth: number,
   orientation: GitOrientation,
   side: GitLabelSide,
+  gutterCross: number,
 ): Point {
   const badgeW = badgeWidth(labelWidth);
   if (orientation === "horizontal") {
-    // Centered on the square's x; below (right) or above (left) on y.
+    // Centered on the square's x; below (right) or above (left) on y — from
+    // the GUTTER (outermost lane row), so badges never sit over lane lines.
     const x = center.x - badgeW / 2;
     const y =
       side === "left"
-        ? center.y - NODE_HALF - LABEL_GAP - BADGE_H
-        : center.y + NODE_HALF + LABEL_GAP;
+        ? gutterCross - NODE_HALF - LABEL_GAP - BADGE_H
+        : gutterCross + NODE_HALF + LABEL_GAP;
     return { x, y };
   }
-  // vertical: centered on the square's y; right (after) or left (before) on x.
+  // vertical: centered on the square's y; a shared message column right
+  // (after) or left (before) of the OUTERMOST lane — like `git log --graph`,
+  // and no badge ever crosses a lane line.
   const x =
     side === "left"
-      ? center.x - NODE_HALF - LABEL_GAP - badgeW
-      : center.x + NODE_HALF + LABEL_GAP;
+      ? gutterCross - NODE_HALF - LABEL_GAP - badgeW
+      : gutterCross + NODE_HALF + LABEL_GAP;
   const y = center.y - BADGE_H / 2;
   return { x, y };
 }
@@ -274,21 +327,34 @@ export function layoutGit(
   const horizontal = orientation === "horizontal";
 
   const ordered = orderCommits(input.commits);
-  const { laneOf, laneCount } = assignLanes(ordered);
+  const { laneOf, laneCount, branchOfLane } = assignLanes(ordered);
 
   // Pre-compute label widths for all commits that have any label content (hash,
   // message, or author). In horizontal mode these widths drive commit spacing so
   // adjacent badges don't overlap. We trim each part: an all-whitespace field is
   // treated as absent so it never produces a badge.
   const precomputedLabelWidths = new Map<CommitId, number>();
+  // Message text as drawn — the ellipsis-truncated subject when maxLabelWidth
+  // is set. Truncation happens ONCE here; widths and the emitted node.message
+  // both use it, so what's measured is exactly what's rendered.
+  const displayMessages = new Map<CommitId, string>();
+  const maxLabelWidth = options?.maxLabelWidth;
   for (const commit of ordered) {
     const hash = commit.hash?.trim();
     const message = commit.message?.trim();
     const author = commit.author?.trim();
     if (hash || message || author) {
       const hashPart = hash ? `${hash} ` : "";
-      const msgPart = message ?? "";
       const authorPart = author ? `  ${author}` : "";
+      let msgPart = message ?? "";
+      if (maxLabelWidth !== undefined && msgPart !== "") {
+        // Glyph-table measuring is strictly additive (advances + per-char
+        // tracking), so the message budget is exact: total minus the fixed
+        // hash/author parts. Hash and author are never cut.
+        const fixed = measureLabel(`${hashPart}${authorPart}`.toUpperCase());
+        msgPart = truncateLabel(msgPart, Math.max(24, maxLabelWidth - fixed));
+      }
+      if (message !== undefined) displayMessages.set(commit.id, msgPart);
       precomputedLabelWidths.set(
         commit.id,
         measureLabel(`${hashPart}${msgPart}${authorPart}`.toUpperCase()),
@@ -327,6 +393,11 @@ export function layoutGit(
   }
 
   const nodeById = new Map<CommitId, PositionedNode>();
+  // Badges anchor off a shared GUTTER at the outermost lane on the label side
+  // (`git log --graph` style): trailing side → the last lane; leading side →
+  // lane 0 (positions are `padding + lane * laneWidth`).
+  const gutterCross =
+    labelSide === "left" ? padding : padding + (laneCount - 1) * laneWidth;
   const nodes: PositionedNode[] = ordered.map((commit, row) => {
     const lane = laneOf.get(commit.id) ?? 0;
     // The "commit axis" advances with `row` (time); the "lane axis" with `lane`
@@ -347,7 +418,9 @@ export function layoutGit(
     // Only attach trimmed, non-empty label parts; empty/whitespace strings
     // would produce blank tspans in the renderer.
     const hash = commit.hash?.trim();
-    const message = commit.message?.trim();
+    // Emit the message AS MEASURED — the ellipsis-truncated subject when
+    // maxLabelWidth applied (displayMessages), the raw trim otherwise.
+    const message = displayMessages.get(commit.id) ?? commit.message?.trim();
     const author = commit.author?.trim();
     if (hash) node.hash = hash;
     if (author) node.author = author;
@@ -356,7 +429,7 @@ export function layoutGit(
     const labelW = precomputedLabelWidths.get(commit.id);
     if (labelW !== undefined) {
       node.labelWidth = labelW;
-      node.labelAnchor = badgeAnchor(node, labelW, orientation, labelSide);
+      node.labelAnchor = badgeAnchor(node, labelW, orientation, labelSide, gutterCross);
     }
     nodeById.set(commit.id, node);
     return node;
@@ -408,6 +481,37 @@ export function layoutGit(
     }
   }
 
+  // Branch-lane labels (mermaid-style `main:` / `feature-x:` tags in the left
+  // gutter). Only in HORIZONTAL orientation: there lanes are ROWS, so a
+  // horizontal branch name reads naturally beside its row (the reference/mermaid
+  // look). In vertical orientation lanes are narrow COLUMNS (laneWidth apart) and
+  // horizontal names would overlap — the per-lane COLOR already disambiguates, so
+  // we skip the text there rather than rotate it (rotated tags were rejected).
+  // The band is reserved and the grid pushed inward FIRST, so edge paths (built
+  // below from shifted node centers) bake in correctly.
+  let laneLabels: LaneLabel[] | undefined;
+  if (horizontal && branchOfLane !== undefined && branchOfLane.length > 0) {
+    const LANE_LABEL_GAP = LABEL_GAP + NODE_HALF;
+    // Left gutter as wide as the widest branch name (+ the trailing colon).
+    let band = 0;
+    for (const name of branchOfLane) {
+      band = Math.max(band, measureLabel(`${name}:`.toUpperCase()));
+    }
+    band += LANE_LABEL_GAP;
+    for (const node of nodes) {
+      node.x += band;
+      if (node.labelAnchor !== undefined) node.labelAnchor.x += band;
+    }
+
+    laneLabels = branchOfLane.map((branch, lane) => {
+      // Read a node on this lane so the label picks up the same normalization the
+      // grid got; fall back to the lane grid position for an (unusual) empty lane.
+      const onLane = nodes.find((n) => n.lane === lane);
+      const y = onLane ? onLane.y : padding + band + lane * laneWidth;
+      return { branch, lane, x: padding, y, color: laneColorKey(lane), align: "start" as const };
+    });
+  }
+
   const edges: PositionedEdge[] = [];
   for (const commit of ordered) {
     const from = nodeById.get(commit.id);
@@ -416,7 +520,7 @@ export function layoutGit(
       const parentId = commit.parents[p] as CommitId;
       const to = nodeById.get(parentId);
       if (!to) continue; // parent not in graph (shallow boundary) → no edge
-      const path = edgePath(from, to, edgeStyle);
+      const path = edgePath(from, to, edgeStyle, horizontal ? "x" : "y");
       // Edge kind from DAG structure:
       //  - a non-first parent of a multi-parent commit is a merge-in;
       //  - any other lane-changing edge (a line diverging from its parent's
@@ -455,8 +559,132 @@ export function layoutGit(
       maxY = Math.max(maxY, node.labelAnchor.y + BADGE_H);
     }
   }
+  // Horizontal lane tags sit in the reserved left band (x ≥ padding) and are
+  // vertically centered on their row — both already inside the node bounds, so
+  // no extra reservation is needed. (Vertical charts emit no lane labels.)
+
+  // Commit-range group brackets ("Elvira's commits" spanning e1–e2). The bracket
+  // runs parallel to the COMMIT axis (horizontal chart → a horizontal line under
+  // the commits; vertical chart → a vertical line beside them), on the far side
+  // from the badges, with a centered label. Purely annotational — placed after
+  // the grid is final, and it extends the bounds so nothing is clipped.
+  const BRACKET_GAP = 14;
+  const BRACKET_TICK = 6;
+  const BRACKET_LABEL_GAP = 6;
+  let commitBrackets: CommitBracket[] | undefined;
+  if (input.commitGroups !== undefined && input.commitGroups.length > 0) {
+    commitBrackets = [];
+    // Shared baseline so multiple groups under the same commit row sit at ONE
+    // level (side by side, like the reference), rather than stacking. Frozen
+    // from the pre-bracket bound; bounds extend once, after all brackets.
+    const baseline = horizontal ? maxY + BRACKET_GAP : maxX + BRACKET_GAP;
+    const labelOffset = BRACKET_TICK + BRACKET_LABEL_GAP;
+    let labelExtent = baseline; // furthest the labels reach past the baseline
+    // Horizontal: labels are centered UNDER their span and can overlap when two
+    // groups sit close. Track each label row's right edge and push a colliding
+    // label onto the next row (stacked), so nothing overprints. Vertical labels
+    // sit on distinct commit rows already, so they never collide.
+    const LABEL_ROW = BADGE_H;
+    const LABEL_PAD = 8;
+    const rowRightEdge: number[] = [];
+    for (const group of input.commitGroups) {
+      const range = memberRange(ordered, group.from, group.to);
+      const pts = ordered
+        .filter((_c, idx) => range.has(idx))
+        .map((c) => nodeById.get(c.id))
+        .filter((n): n is PositionedNode => n !== undefined);
+      if (pts.length === 0) continue;
+      if (horizontal) {
+        const x1 = Math.min(...pts.map((n) => n.x));
+        const x2 = Math.max(...pts.map((n) => n.x));
+        const labelW = measureLabel(group.label.toUpperCase());
+        const centerX = (x1 + x2) / 2;
+        const leftEdge = centerX - labelW / 2;
+        // First row whose last label ends before this one starts; else a new row.
+        let row = rowRightEdge.findIndex((edge) => edge <= leftEdge);
+        if (row === -1) {
+          row = rowRightEdge.length;
+          rowRightEdge.push(0);
+        }
+        rowRightEdge[row] = centerX + labelW / 2 + LABEL_PAD;
+        const labelY = baseline + labelOffset + BADGE_H / 2 + row * LABEL_ROW;
+        commitBrackets.push({
+          label: group.label,
+          x1,
+          y1: baseline,
+          x2,
+          y2: baseline,
+          labelX: centerX,
+          labelY,
+          tick: BRACKET_TICK,
+        });
+        labelExtent = Math.max(labelExtent, labelY + BADGE_H / 2);
+        maxX = Math.max(maxX, centerX + labelW / 2);
+      } else {
+        const y1 = Math.min(...pts.map((n) => n.y));
+        const y2 = Math.max(...pts.map((n) => n.y));
+        const labelX = baseline + labelOffset;
+        commitBrackets.push({
+          label: group.label,
+          x1: baseline,
+          y1,
+          x2: baseline,
+          y2,
+          labelX,
+          labelY: (y1 + y2) / 2,
+          tick: BRACKET_TICK,
+        });
+        labelExtent = Math.max(labelExtent, labelX + measureLabel(group.label.toUpperCase()));
+      }
+    }
+    if (horizontal) maxY = Math.max(maxY, labelExtent);
+    else maxX = Math.max(maxX, labelExtent);
+  }
+
+  // Free-form legend notes ("S = squash of x") stack below the whole graph,
+  // left-aligned at `padding`, one row each. They extend the height.
+  let gitNotes: PositionedNote[] | undefined;
+  if (input.notes !== undefined && input.notes.length > 0) {
+    gitNotes = [];
+    const NOTE_ROW = BADGE_H;
+    let y = (Number.isFinite(maxY) ? maxY : padding) + BRACKET_GAP + NOTE_ROW / 2;
+    for (const note of input.notes) {
+      gitNotes.push({ text: note.text, x: padding, y });
+      maxX = Math.max(maxX, padding + measureLabel(note.text.toUpperCase()));
+      maxY = Math.max(maxY, y + NOTE_ROW / 2);
+      y += NOTE_ROW;
+    }
+  }
+
   const width = Number.isFinite(maxX) ? maxX + padding : padding * 2;
   const height = Number.isFinite(maxY) ? maxY + padding : padding * 2;
 
-  return { nodes, edges, width, height, laneCount };
+  const result: PositionedGraph = { nodes, edges, width, height, laneCount };
+  if (laneLabels !== undefined) result.laneLabels = laneLabels;
+  if (commitBrackets !== undefined && commitBrackets.length > 0) {
+    result.commitBrackets = commitBrackets;
+  }
+  if (gitNotes !== undefined) result.gitNotes = gitNotes;
+  return result;
+}
+
+/**
+ * The set of `ordered` indices covered by a commit-id range [from, to]
+ * inclusive. Ranges are interpreted in the layout's top-to-bottom ordered array
+ * so the bracket covers a contiguous run regardless of source direction. If
+ * either endpoint is missing, returns an empty set (no bracket).
+ */
+function memberRange(
+  ordered: Commit[],
+  from: CommitId,
+  to: CommitId,
+): Set<number> {
+  const idxFrom = ordered.findIndex((c) => c.id === from);
+  const idxTo = ordered.findIndex((c) => c.id === to);
+  if (idxFrom === -1 || idxTo === -1) return new Set();
+  const lo = Math.min(idxFrom, idxTo);
+  const hi = Math.max(idxFrom, idxTo);
+  const out = new Set<number>();
+  for (let i = lo; i <= hi; i++) out.add(i);
+  return out;
 }

@@ -6,3 +6,6 @@ dist
 .DS_Store
 .claude/worktrees
 .worktrees/
+
+# Loop session notes — local working docs, not part of the repo
+loop/

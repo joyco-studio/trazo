@@ -44,6 +44,8 @@ import type {
   SemanticRole,
 } from "./types.js";
 import {
+  BADGE_H,
+  badgeWidth,
   edgeLabelPoint,
   faceAnchor,
   groupBounds,
@@ -54,6 +56,7 @@ import {
   pathThrough,
   roleColorKey,
   sizeShape,
+  wrapLabel,
   type AnchorFace,
 } from "./geometry.js";
 
@@ -113,6 +116,12 @@ interface Vertex {
   w: number;
   h: number;
   /**
+   * Extra cross-axis space (px) reserved past this node's trailing side for
+   * self-loop corridors, so a loop never collides with the next rank sibling.
+   * `nodeGap` per self-loop on the node; 0 when it has none.
+   */
+  loopPad: number;
+  /**
    * Cluster id this vertex belongs to (real node's `group`, or a dummy whose
    * edge is fully inside one group). Ungrouped → undefined. Drives contiguous
    * ordering and the group's bounding box.
@@ -138,6 +147,15 @@ export function layoutFlow(
     nodeHeight: options?.nodeHeight ?? DEFAULTS.nodeHeight,
     labelPadX: options?.labelPadX ?? DEFAULTS.labelPadX,
   };
+  // Word-wrap budget for the label TEXT (box width minus its side padding).
+  const maxLabelWidth =
+    options?.maxNodeWidth !== undefined
+      ? Math.max(8, options.maxNodeWidth - sizeOpts.labelPadX * 2)
+      : undefined;
+  const wrapNodeLabel = (label: string | undefined): string | undefined =>
+    label !== undefined && maxLabelWidth !== undefined
+      ? wrapLabel(label, maxLabelWidth)
+      : label;
 
   // ── 0. Normalize + index ──────────────────────────────────────────────
   const byId = new Map<NodeId, FlowNode>();
@@ -148,9 +166,17 @@ export function layoutFlow(
   });
 
   // Keep only edges whose endpoints both exist; preserve input edge order.
-  const edges = graph.edges.filter(
-    (e) => byId.has(e.from) && byId.has(e.to) && e.from !== e.to,
+  // Self-loops (from === to) skip the rank/order/dummy pipeline entirely — they
+  // are routed as wrap-around corridors after the regular edges (see below).
+  const validEdges = graph.edges.filter(
+    (e) => byId.has(e.from) && byId.has(e.to),
   );
+  const edges = validEdges.filter((e) => e.from !== e.to);
+  const selfLoops = validEdges.filter((e) => e.from === e.to);
+  const loopCount = new Map<NodeId, number>();
+  for (const e of selfLoops) {
+    loopCount.set(e.from, (loopCount.get(e.from) ?? 0) + 1);
+  }
 
   // Adjacency preserving input order.
   const outAdj = new Map<NodeId, NodeId[]>();
@@ -171,7 +197,10 @@ export function layoutFlow(
   const vById = new Map<NodeId, Vertex>();
   for (const n of graph.nodes) {
     const shape: NodeShape = n.shape ?? "box";
-    const { w, h } = sizeShape(shape, n.label, sizeOpts);
+    // Wrapping happens ONCE here; the same wrapped text sizes the shape and is
+    // emitted on the PositionedNode, so what's measured is what's drawn.
+    const label = wrapNodeLabel(n.label);
+    const { w, h } = sizeShape(shape, label, sizeOpts);
     vById.set(n.id, {
       id: n.id,
       index: indexOf.get(n.id) as number,
@@ -180,9 +209,10 @@ export function layoutFlow(
       isDummy: false,
       shape,
       role: n.role ?? "neutral",
-      label: n.label,
+      label,
       w,
       h,
+      loopPad: (loopCount.get(n.id) ?? 0) * nodeGap,
       group: n.group,
       center: { x: 0, y: 0 },
     });
@@ -196,6 +226,14 @@ export function layoutFlow(
   edges.forEach((e, ei) => {
     const r0 = rank.get(e.from) as number;
     const r1 = rank.get(e.to) as number;
+    // BACK-EDGES get no dummy chain: they route around the column via the
+    // lateral corridor (see edge routing below), so mid-rank waypoints would
+    // yank the path back INTO the layers it just detoured around — the
+    // "floating triangle" artifact. They also shouldn't occupy layer slots.
+    if (r0 > r1) {
+      dummyChain.set(e, []);
+      return;
+    }
     const lo = Math.min(r0, r1);
     const hi = Math.max(r0, r1);
     // A dummy belongs to a group only when BOTH endpoints are in that same
@@ -220,6 +258,7 @@ export function layoutFlow(
         label: undefined,
         w: 0,
         h: 0,
+        loopPad: 0,
         group: dummyGroup,
         center: { x: 0, y: 0 },
       };
@@ -371,7 +410,8 @@ export function layoutFlow(
       } else {
         v.center = { x: mainCenter, y: cursor };
       }
-      cursor += half + nodeGap;
+      // Trailing side also reserves the node's self-loop corridor space.
+      cursor += half + v.loopPad + nodeGap;
       prevGroup = v.group;
       prevSeen = true;
     }
@@ -379,31 +419,79 @@ export function layoutFlow(
     if (layerCrossEnd > crossMax) crossMax = layerCrossEnd;
   }
 
-  // ── Straighten single-node chains on the cross axis ───────────────────
-  // Packing centers each node by its own half-width, so a chain of differently
-  // sized nodes (Great! → Deploy → End) drifts a few px per step and every edge
-  // picks up a tiny 45° jog. For a node that is ALONE in its layer there is no
-  // sibling to collide with, so it can be snapped onto its upstream neighbor's
-  // cross coordinate — making a straight, single-column chain. Top-down sweep so
-  // the alignment propagates down the chain (C → E → F). Deterministic: uses the
-  // input-order up-neighbor list and the median for forks.
+  // ── Cross-axis refinement: center nodes over their neighbors ──────────
+  // The initial pack is left-aligned; mermaid-style readability wants every
+  // node centered relative to what it connects to (a root centered over its
+  // fan-out, chains perfectly straight). Alternating median-alignment sweeps
+  // (down: toward up-neighbors; up: toward down-neighbors) move each node to
+  // its desired cross position, and each layer is then re-solved with PAVA
+  // (pool-adjacent-violators): expressing positions as shift + cumulative
+  // min-separation offsets turns "keep order + never overlap" into "shifts
+  // must be non-decreasing", whose least-squares fit is the classic isotonic
+  // regression — blocks of conflicting nodes settle at the mean of their
+  // desired shifts. Deterministic: fixed sweep count, input-order neighbor
+  // lists, stable block merging. Dummy nodes participate, so long edges
+  // straighten too. (Subsumes the old lone-node chain straightening.)
   const crossOf = (v: Vertex): number => (direction === "TD" ? v.center.x : v.center.y);
   const setCross = (v: Vertex, c: number): void => {
     if (direction === "TD") v.center.x = c;
     else v.center.y = c;
   };
-  for (let r = 1; r < layers.length; r++) {
-    const layer = layers[r] as Vertex[];
-    if (layer.length !== 1) continue; // only safe when there's no sibling
-    const v = layer[0] as Vertex;
-    const ups = (upNeighbors.get(v.id) as NodeId[])
-      .map((id) => crossOf(vById.get(id) as Vertex))
-      .sort((a, b) => a - b);
-    if (ups.length === 0) continue;
-    const mid = ups.length % 2 === 1
-      ? (ups[(ups.length - 1) / 2] as number)
-      : ((ups[ups.length / 2 - 1] as number) + (ups[ups.length / 2] as number)) / 2;
-    setCross(v, mid);
+  const medianCross = (ids: NodeId[]): number | undefined => {
+    if (ids.length === 0) return undefined;
+    const xs = ids.map((id) => crossOf(vById.get(id) as Vertex)).sort((a, b) => a - b);
+    return xs.length % 2 === 1
+      ? (xs[(xs.length - 1) / 2] as number)
+      : ((xs[xs.length / 2 - 1] as number) + (xs[xs.length / 2] as number)) / 2;
+  };
+  // Minimum center-to-center separation between layer neighbors — the same
+  // rule the initial pack used (halves + loop corridor + gap + group boundary).
+  const minSep = (a: Vertex, b: Vertex): number => {
+    const halfA = (direction === "TD" ? a.w : a.h) / 2;
+    const halfB = (direction === "TD" ? b.w : b.h) / 2;
+    const boundary = hasGroups && a.group !== b.group ? groupBoundaryGap : 0;
+    return halfA + a.loopPad + nodeGap + boundary + halfB;
+  };
+  const alignLayer = (layer: Vertex[], neighbors: Map<NodeId, NodeId[]>): void => {
+    const n = layer.length;
+    if (n === 0) return;
+    const offsets: number[] = [0];
+    for (let i = 1; i < n; i++) {
+      offsets[i] =
+        (offsets[i - 1] as number) + minSep(layer[i - 1] as Vertex, layer[i] as Vertex);
+    }
+    // PAVA over desired shifts (desired center minus the node's offset).
+    const blocks: { sum: number; count: number; end: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const v = layer[i] as Vertex;
+      const desired = medianCross(neighbors.get(v.id) as NodeId[]) ?? crossOf(v);
+      let sum = desired - (offsets[i] as number);
+      let count = 1;
+      while (blocks.length > 0) {
+        const prev = blocks[blocks.length - 1] as { sum: number; count: number; end: number };
+        if (prev.sum / prev.count < sum / count) break;
+        blocks.pop();
+        sum += prev.sum;
+        count += prev.count;
+      }
+      blocks.push({ sum, count, end: i });
+    }
+    let i = 0;
+    for (const block of blocks) {
+      const shift = block.sum / block.count;
+      for (; i <= block.end; i++) {
+        setCross(layer[i] as Vertex, shift + (offsets[i] as number));
+      }
+    }
+  };
+  const REFINE_SWEEPS = 2;
+  for (let sweep = 0; sweep < REFINE_SWEEPS; sweep++) {
+    for (let r = 1; r < layers.length; r++) {
+      alignLayer(layers[r] as Vertex[], upNeighbors);
+    }
+    for (let r = layers.length - 2; r >= 0; r--) {
+      alignLayer(layers[r] as Vertex[], downNeighbors);
+    }
   }
 
   // Aligning lone nodes to a narrower upstream neighbor can push a wider node's
@@ -416,7 +504,7 @@ export function layoutFlow(
     for (const v of vById.values()) {
       const half = (direction === "TD" ? v.w : v.h) / 2;
       const lead = crossOf(v) - half;
-      const trail = crossOf(v) + half;
+      const trail = crossOf(v) + half + v.loopPad;
       if (lead < minLead) minLead = lead;
       if (trail > maxTrail) maxTrail = trail;
     }
@@ -498,11 +586,13 @@ export function layoutFlow(
       w: v.w,
       h: v.h,
     };
-    if (n.label !== undefined) {
-      node.label = n.label;
-      // Labels render uppercase (JOYCO style) with tracking; a multi-line label
+    if (v.label !== undefined) {
+      // The vertex label is the (possibly auto-wrapped) text the shape was
+      // sized against — emit THAT, not the raw input, so the renderer draws
+      // exactly what was measured. Uppercase + tracking; a multi-line label
       // reserves its WIDEST line's width.
-      node.labelWidth = measureMultiline(n.label).width;
+      node.label = v.label;
+      node.labelWidth = measureMultiline(v.label).width;
     }
     return node;
   });
@@ -514,6 +604,9 @@ export function layoutFlow(
   let routeMaxY = 0;
   let routeMinX = 0;
   let routeMinY = 0;
+  // Waypoints per edge, parallel to `positionedEdges`. Path strings are built
+  // AFTER the label-bounds normalization below, which may shift every point.
+  const edgePoints: Point[][] = [];
   const positionedEdges: PositionedEdge[] = edges.map((e) => {
     const fromV = vById.get(e.from) as Vertex;
     const toV = vById.get(e.to) as Vertex;
@@ -552,9 +645,27 @@ export function layoutFlow(
     const exit = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
     const entry = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
 
-    // Dummy chain is built low-rank → high-rank; orient it from→to.
+    // Dummy chain is built low-rank → high-rank; orient it from→to. Each dummy
+    // contributes TWO waypoints spanning its whole rank (entering just above,
+    // leaving just below) at the dummy's RESERVED cross position — so the edge
+    // passes rank interiors strictly vertically through its own empty column,
+    // and every cross shift happens in the inter-rank gaps. Routing through
+    // the dummy CENTER instead put cross-runs exactly on a rank's boundary
+    // line, grazing sibling boxes. Fresh Point objects (no vertex aliasing).
     const fromIsLower = fromV.rank <= toV.rank;
-    const middle = chain.map((id) => (vById.get(id) as Vertex).center);
+    const spanInset = Math.min(stub, layerGap / 2);
+    const middle: Point[] = [];
+    for (const id of chain) {
+      const dv = vById.get(id) as Vertex;
+      const spanStart = (rankMainStart[dv.rank] as number) - spanInset;
+      const spanEnd =
+        (rankMainStart[dv.rank] as number) + (rankThickness[dv.rank] as number) + spanInset;
+      if (direction === "TD") {
+        middle.push({ x: dv.center.x, y: spanStart }, { x: dv.center.x, y: spanEnd });
+      } else {
+        middle.push({ x: spanStart, y: dv.center.y }, { x: spanEnd, y: dv.center.y });
+      }
+    }
     const orderedMiddle = fromIsLower ? middle : [...middle].reverse();
 
     // Perpendicular stubs off each chosen face so the edge always leaves/enters
@@ -564,26 +675,36 @@ export function layoutFlow(
 
     // A back-edge detours out past the side of its endpoints and runs along a
     // parallel corridor, so it never overlaps the forward edge between the same
-    // pair. The corridor offset clears the wider of the two endpoints.
+    // pair. The corridor must clear EVERY node in the ranks it travels past
+    // (a wide box on an intermediate rank would otherwise be sliced), so it
+    // offsets from the outermost cross extent across the spanned rank range.
     const backDetour: Point[] = [];
     if (isBackEdge) {
       const goingEnd = exitFace === "cross-end";
-      // The exit/entry stubs already sit one `stub` px outside each node's side
-      // face (which itself accounts for half-width), so the corridor only needs a
-      // small extra gap beyond the outermost stub to read as a clean arc.
       const clearance = nodeGap;
+      const rLo = Math.min(fromV.rank, toV.rank);
+      const rHi = Math.max(fromV.rank, toV.rank);
+      let spanTrail = -Infinity;
+      let spanLead = Infinity;
+      for (const v of vById.values()) {
+        if (v.rank < rLo || v.rank > rHi) continue;
+        const half = (direction === "TD" ? v.w : v.h) / 2;
+        const cross = direction === "TD" ? v.center.x : v.center.y;
+        if (cross + half + v.loopPad > spanTrail) spanTrail = cross + half + v.loopPad;
+        if (cross - half < spanLead) spanLead = cross - half;
+      }
       if (direction === "TD") {
         const corridorX = goingEnd
-          ? Math.max(exitStub.x, entryStub.x) + clearance
-          : Math.max(padding, Math.min(exitStub.x, entryStub.x) - clearance);
+          ? Math.max(exitStub.x, entryStub.x, spanTrail + stub) + clearance
+          : Math.max(padding, Math.min(exitStub.x, entryStub.x, spanLead - stub) - clearance);
         backDetour.push(
           { x: corridorX, y: exitStub.y },
           { x: corridorX, y: entryStub.y },
         );
       } else {
         const corridorY = goingEnd
-          ? Math.max(exitStub.y, entryStub.y) + clearance
-          : Math.max(padding, Math.min(exitStub.y, entryStub.y) - clearance);
+          ? Math.max(exitStub.y, entryStub.y, spanTrail + stub) + clearance
+          : Math.max(padding, Math.min(exitStub.y, entryStub.y, spanLead - stub) - clearance);
         backDetour.push(
           { x: exitStub.x, y: corridorY },
           { x: entryStub.x, y: corridorY },
@@ -606,10 +727,13 @@ export function layoutFlow(
       if (p.y < routeMinY) routeMinY = p.y;
     }
 
+    edgePoints.push(points);
     const edge: PositionedEdge = {
       from: e.from,
       to: e.to,
-      path: pathThrough(points, edgeStyle),
+      // Placeholder — the real path is built after label-bounds normalization,
+      // once every waypoint is final.
+      path: "",
       kind: "flow",
       // Default edges are neutral accent; opt in to the source role's color.
       color: e.colored ? roleColorKey(fromV.role) : "accent",
@@ -626,6 +750,55 @@ export function layoutFlow(
     return edge;
   });
 
+  // ── Self-loops (A → A) ────────────────────────────────────────────────
+  // A self-loop leaves the node's FORWARD face, runs along a corridor past the
+  // node's cross-end side (space the packing reserved via `loopPad`), and
+  // re-enters the CROSS-END face — so its arrowhead never stacks on the
+  // backward-face arrows of the node's regular in-edges. Multiple loops on one
+  // node nest at `nodeGap` intervals, innermost first. Deterministic: input
+  // edge order.
+  const loopSeen = new Map<NodeId, number>();
+  for (const e of selfLoops) {
+    const v = vById.get(e.from) as Vertex;
+    const nth = loopSeen.get(e.from) ?? 0;
+    loopSeen.set(e.from, nth + 1);
+    const corridorGap = nodeGap * (nth + 1);
+    const exit = faceAnchor(v.center, v.w, v.h, v.shape, direction, "forward");
+    const entry = faceAnchor(v.center, v.w, v.h, v.shape, direction, "cross-end");
+    const exitStub = stubPoint(exit, "forward", direction, stub);
+    // The entry stub doubles as the corridor turn: `corridorGap` px past the
+    // cross-end face, perpendicular to it.
+    const entryStub = stubPoint(entry, "cross-end", direction, corridorGap);
+    const corner =
+      direction === "TD"
+        ? { x: entryStub.x, y: exitStub.y }
+        : { x: exitStub.x, y: entryStub.y };
+    const points: Point[] = [exit, exitStub, corner, entryStub, entry];
+    for (const p of points) {
+      if (p.x > routeMaxX) routeMaxX = p.x;
+      if (p.y > routeMaxY) routeMaxY = p.y;
+    }
+    edgePoints.push(points);
+    const edge: PositionedEdge = {
+      from: e.from,
+      to: e.to,
+      path: "",
+      kind: "flow",
+      color: e.colored ? roleColorKey(v.role) : "accent",
+      arrowHead: e.arrow ?? "end",
+    };
+    if (e.label !== undefined) {
+      edge.label = e.label;
+      // Center the badge on the corridor run (the segment beside the node).
+      edge.labelPoint =
+        direction === "TD"
+          ? { x: entryStub.x, y: (exitStub.y + entryStub.y) / 2 }
+          : { x: (exitStub.x + entryStub.x) / 2, y: entryStub.y };
+      edge.labelWidth = measureMultiline(e.label).width;
+    }
+    positionedEdges.push(edge);
+  }
+
   // ── Align sibling edge labels to a shared level ───────────────────────
   // Labels on edges that fan out from the SAME source land on each edge's own
   // diagonal, which can sit at different main-axis depths (one high near the
@@ -637,6 +810,8 @@ export function layoutFlow(
   const labeledBySource = new Map<NodeId, PositionedEdge[]>();
   for (const pe of positionedEdges) {
     if (pe.labelPoint === undefined) continue;
+    // Self-loop labels sit on their own corridor, not the fan-out row.
+    if (pe.from === pe.to) continue;
     const list = labeledBySource.get(pe.from);
     if (list) list.push(pe);
     else labeledBySource.set(pe.from, [pe]);
@@ -654,6 +829,61 @@ export function layoutFlow(
     }
   }
 
+  // ── Fold edge-label badges into the bounds ────────────────────────────
+  // Edge labels render as a sliced badge centered on `labelPoint`
+  // (badgeWidth × BADGE_H). A label wider than the graph spills past the
+  // viewBox on either side, breaking the contract that width/height bound ALL
+  // geometry including labels. Left/top spill shifts the whole geometry
+  // right/down (same normalization as the git leading badge); right/bottom
+  // spill just grows the canvas.
+  let labelMinX = Infinity;
+  let labelMinY = Infinity;
+  let labelMaxX = -Infinity;
+  let labelMaxY = -Infinity;
+  for (const pe of positionedEdges) {
+    if (pe.labelPoint === undefined) continue;
+    const halfW = badgeWidth(pe.labelWidth ?? 0) / 2;
+    if (pe.labelPoint.x - halfW < labelMinX) labelMinX = pe.labelPoint.x - halfW;
+    if (pe.labelPoint.x + halfW > labelMaxX) labelMaxX = pe.labelPoint.x + halfW;
+    if (pe.labelPoint.y - BADGE_H / 2 < labelMinY) labelMinY = pe.labelPoint.y - BADGE_H / 2;
+    if (pe.labelPoint.y + BADGE_H / 2 > labelMaxY) labelMaxY = pe.labelPoint.y + BADGE_H / 2;
+  }
+  const shiftX = labelMinX === Infinity ? 0 : Math.max(0, padding - labelMinX);
+  const shiftY = labelMinY === Infinity ? 0 : Math.max(0, padding - labelMinY);
+  if (shiftX > 0 || shiftY > 0) {
+    for (const n of nodes) {
+      n.x += shiftX;
+      n.y += shiftY;
+    }
+    if (positionedGroups !== undefined) {
+      for (const g of positionedGroups) {
+        g.x += shiftX;
+        g.y += shiftY;
+      }
+    }
+    // Every waypoint (stubs, detours, dummy span points) is a fresh per-edge
+    // object — no shared Point references, so no double shifts.
+    for (const pts of edgePoints) {
+      for (const p of pts) {
+        p.x += shiftX;
+        p.y += shiftY;
+      }
+    }
+    for (const pe of positionedEdges) {
+      if (pe.labelPoint !== undefined) {
+        pe.labelPoint = { x: pe.labelPoint.x + shiftX, y: pe.labelPoint.y + shiftY };
+      }
+    }
+    routeMaxX += shiftX;
+    routeMaxY += shiftY;
+    width += shiftX;
+    height += shiftY;
+  }
+  if (labelMaxX !== -Infinity) {
+    if (labelMaxX + shiftX + padding > width) width = labelMaxX + shiftX + padding;
+    if (labelMaxY + shiftY + padding > height) height = labelMaxY + shiftY + padding;
+  }
+
   // Grow the viewBox to include any edge route that bulged past the node bounds
   // (back-edge side detours). routeMin* are clamped at 0 by the corridor guard,
   // so geometry never needs a global shift here.
@@ -661,6 +891,12 @@ export function layoutFlow(
   if (routeMaxY + padding > height) height = routeMaxY + padding;
   void routeMinX;
   void routeMinY;
+
+  // Build the SVG path strings now that every waypoint is final.
+  const mainAxis = direction === "LR" ? "x" : "y";
+  positionedEdges.forEach((pe, i) => {
+    pe.path = pathThrough(edgePoints[i] as Point[], edgeStyle, mainAxis);
+  });
 
   const result: PositionedGraph = {
     nodes,

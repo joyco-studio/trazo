@@ -28,6 +28,12 @@ export interface GraphClassNames {
   groupLabel?: string;
   /** The sequence-diagram lifelines (vertical dashed lines). */
   lifeline?: string;
+  /** The git branch-lane labels (`main:` / `feature-x:` tags). */
+  laneLabel?: string;
+  /** The git commit-range group brackets. */
+  commitBracket?: string;
+  /** The git free-form legend note lines. */
+  gitNote?: string;
 }
 
 export interface GraphProps {

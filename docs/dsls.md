@@ -19,6 +19,10 @@ checkout <name>               switch the current branch.
 merge <name> [: <message>]    merge <name> into the current branch (two parents).
 ```
 
+- Auto-generated ids (`c<N>` for anonymous commits, `m<N>` for merges) **skip
+  any id the user already wrote** — a user commit literally named `m2` used to
+  silently fuse with the second merge's auto id, dropping a commit from the
+  layout. The counter only moves forward, so ids stay deterministic.
 - First branch is `main`.
 - A 6+ hex-digit token used as the commit id doubles as the hash; otherwise a
   **deterministic** pseudo-hash is derived from the id (FNV-1a — never random, so

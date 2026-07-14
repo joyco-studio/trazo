@@ -419,8 +419,29 @@ function insetPathEnds(
 export function Graph(props: GraphProps): JSX.Element {
   const { graph, className, classNames, title } = props;
   const label = title ?? "Commit graph";
+  // When an arrowless connector ends exactly where an ARROWED edge ends (a
+  // shared entry anchor), its plain stroke would run through the other edge's
+  // trimmed head gap and visually swallow the arrowhead. Promote such
+  // connectors to carry the head too, so coincident lanes read as ONE edge.
+  const arrowedEnds = new Set<string>();
+  for (const e of graph.edges) {
+    if (e.arrowHead === "end" || e.arrowHead === "both") {
+      const pts = parsePolyline(e.path);
+      const p = pts[pts.length - 1];
+      if (p !== undefined) arrowedEnds.add(`${p.x},${p.y}`);
+    }
+  }
+  const edges = graph.edges.map((e) => {
+    if (e.kind !== "flow" || (e.arrowHead !== undefined && e.arrowHead !== "none")) {
+      return e;
+    }
+    const pts = parsePolyline(e.path);
+    const p = pts[pts.length - 1];
+    if (p === undefined || !arrowedEnds.has(`${p.x},${p.y}`)) return e;
+    return { ...e, arrowHead: "end" as const };
+  });
   // Distinct edge colors needing an arrowhead marker — computed once.
-  const markerTokens = arrowColorTokens(graph.edges);
+  const markerTokens = arrowColorTokens(edges);
 
   return (
     <svg
@@ -492,17 +513,103 @@ export function Graph(props: GraphProps): JSX.Element {
         </g>
       ) : null}
 
+      {graph.laneLabels && graph.laneLabels.length > 0 ? (
+        <g data-slot="lane-labels">
+          {graph.laneLabels.map((ll) => (
+            <text
+              key={ll.branch}
+              data-slot="lane-label"
+              data-lane={ll.lane}
+              className={classNames?.laneLabel}
+              x={ll.x}
+              y={ll.y}
+              // Vertical lanes: tag centered above its column. Horizontal lanes:
+              // tag left-aligned in the reserved gutter, vertically centered.
+              textAnchor={ll.align}
+              dominantBaseline="central"
+              fill={nodeColor(ll.color)}
+              fontFamily={LABEL_FONT}
+              fontSize={LABEL_SIZE}
+              style={UPPERCASE}
+            >
+              {ll.branch}:
+            </text>
+          ))}
+        </g>
+      ) : null}
+
+      {graph.commitBrackets && graph.commitBrackets.length > 0 ? (
+        <g data-slot="commit-brackets">
+          {graph.commitBrackets.map((b, i) => {
+            // A square bracket ⊐ hugging the commit run: the long side runs along
+            // the commit axis, short end-caps (tick) turn toward the commits.
+            const horizontal = b.y1 === b.y2;
+            const d = horizontal
+              ? `M ${b.x1} ${b.y1 - b.tick} L ${b.x1} ${b.y1} L ${b.x2} ${b.y2} L ${b.x2} ${b.y2 - b.tick}`
+              : `M ${b.x1 - b.tick} ${b.y1} L ${b.x1} ${b.y1} L ${b.x2} ${b.y2} L ${b.x2 - b.tick} ${b.y2}`;
+            return (
+              <g key={`bracket:${i}`} data-slot="commit-bracket">
+                <path
+                  data-slot="commit-bracket-line"
+                  className={classNames?.commitBracket}
+                  d={d}
+                  fill="none"
+                  stroke={GROUP_STROKE}
+                  strokeWidth={1.5}
+                />
+                <text
+                  data-slot="commit-bracket-label"
+                  x={b.labelX}
+                  y={b.labelY}
+                  textAnchor={horizontal ? "middle" : "start"}
+                  dominantBaseline="central"
+                  fill={MUTED_FG}
+                  fontFamily={LABEL_FONT}
+                  fontSize={LABEL_SIZE}
+                  style={UPPERCASE}
+                >
+                  {b.label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      ) : null}
+
+      {graph.gitNotes && graph.gitNotes.length > 0 ? (
+        <g data-slot="git-notes">
+          {graph.gitNotes.map((n, i) => (
+            <text
+              key={`note:${i}`}
+              data-slot="git-note"
+              className={classNames?.gitNote}
+              x={n.x}
+              y={n.y}
+              dominantBaseline="central"
+              fill={MUTED_FG}
+              fontFamily={LABEL_FONT}
+              fontSize={LABEL_SIZE}
+              style={UPPERCASE}
+            >
+              {n.text}
+            </text>
+          ))}
+        </g>
+      ) : null}
+
       <g data-slot="edges" aria-hidden="true">
-        {orderEdgesByPaint(graph.edges).map((edge, i) => {
+        {orderEdgesByPaint(edges).map((edge, i) => {
           const head = edge.arrowHead;
           const markerRef = head && head !== "none" ? `url(#${arrowMarkerId(edge.color)})` : undefined;
           // Pull the stroke back from any arrowed end by the head length so the
-          // line ends under the head's base, not its tip.
+          // line ends under the head's base, not its tip — PLUS half the node
+          // border, so the tip rests on the border's OUTER edge instead of
+          // halfway into the chip-lift stroke band.
           const insetEnd = head === "end" || head === "both" ? head : "none";
           const insetStart = head === "both";
           const d =
             head && head !== "none"
-              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN)
+              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN + BOX_STROKE / 2)
               : edge.path;
           return (
             <path

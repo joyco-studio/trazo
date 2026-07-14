@@ -113,10 +113,12 @@ describe("layout()", () => {
       padding: 10,
     });
     const a = g.nodes.find((n) => n.id === "E");
-    expect(a?.x).toBe(10); // lane 0 → padding
-    expect(a?.y).toBe(10); // row 0 → padding
     const b = g.nodes.find((n) => n.id === "C");
+    expect(a?.x).toBe(10); // lane 0 → padding
+    expect(a?.y).toBe(10); // row 0 → padding (vertical charts reserve no band)
     expect(b?.y).toBe(110); // row 1 → padding + rowHeight
+    // Both mainline commits share lane 0's x.
+    expect(b?.x).toBe(10);
   });
 
   it("sets viewBox bounds and laneCount", () => {
@@ -139,6 +141,39 @@ describe("layout()", () => {
     expect(g.nodes.every((n) => n.lane === 0)).toBe(true);
     // No messages → no labelWidth.
     expect(g.nodes.every((n) => n.labelWidth === undefined)).toBe(true);
+    // No branch names → legacy compaction, no branch-lane labels emitted.
+    expect(g.laneLabels).toBeUndefined();
+  });
+
+  it("assigns one dedicated lane per branch (no reuse across branches)", () => {
+    const g = layout(fixture);
+    // main → lane 0, feat → lane 1 (first-appearance order, newest-first walk).
+    // Every commit lands in its own branch's lane.
+    const laneOf = (id: string) => g.nodes.find((n) => n.id === id)?.lane;
+    expect(laneOf("A")).toBe(0);
+    expect(laneOf("B")).toBe(0);
+    expect(laneOf("C")).toBe(0);
+    expect(laneOf("E")).toBe(0);
+    expect(laneOf("D")).toBe(1);
+    expect(g.laneCount).toBe(2);
+    // Vertical charts emit NO lane labels (narrow columns can't hold the wide
+    // horizontal names — the per-lane color disambiguates instead).
+    expect(g.laneLabels).toBeUndefined();
+  });
+
+  it("horizontal git chart puts branch lane labels in the left gutter", () => {
+    const g = layout(fixture, { orientation: "horizontal" });
+    expect(g.laneLabels).toBeDefined();
+    expect(g.laneLabels!.map((l) => l.branch)).toEqual(["main", "feat"]);
+    expect(g.laneLabels!.every((l) => l.align === "start")).toBe(true);
+    // All tags share the same small x (the reserved left gutter).
+    const xs = new Set(g.laneLabels!.map((l) => l.x));
+    expect(xs.size).toBe(1);
+    // Each tag is vertically centered on its lane's row (matches a node there).
+    for (const l of g.laneLabels!) {
+      const onLane = g.nodes.find((n) => n.lane === l.lane);
+      expect(l.y).toBe(onLane?.y);
+    }
   });
 
   it("populates labelWidth via measure() when a message is present", () => {
@@ -233,5 +268,48 @@ describe("git orientation + labelSide", () => {
   it("stays deterministic for the new options", () => {
     const opts = { orientation: "horizontal" as const, labelSide: "left" as const };
     expect(layout(fixture, opts)).toEqual(layout(fixture, opts));
+  });
+
+  it("positions free-form notes below the graph", () => {
+    const withNote: CommitGraph = {
+      ...fixture,
+      notes: [{ text: "S = squash of feat" }],
+    };
+    const g = layout(withNote);
+    expect(g.gitNotes).toBeDefined();
+    expect(g.gitNotes).toHaveLength(1);
+    const note = g.gitNotes![0]!;
+    expect(note.text).toBe("S = squash of feat");
+    const lowestCommit = Math.max(...g.nodes.map((n) => n.y));
+    expect(note.y).toBeGreaterThan(lowestCommit);
+    expect(note.y).toBeLessThanOrEqual(g.height);
+  });
+
+  it("positions a commit-range bracket over its members", () => {
+    const withGroup: CommitGraph = {
+      ...fixture,
+      commitGroups: [{ label: "main work", from: "C", to: "B" }],
+    };
+    const g = layout(withGroup, { orientation: "horizontal" });
+    expect(g.commitBrackets).toBeDefined();
+    expect(g.commitBrackets).toHaveLength(1);
+    const br = g.commitBrackets![0]!;
+    expect(br.label).toBe("main work");
+    // Horizontal chart: bracket is a horizontal line (y1 === y2).
+    expect(br.y1).toBe(br.y2);
+    const cNode = g.nodes.find((n) => n.id === "C")!;
+    const bNode = g.nodes.find((n) => n.id === "B")!;
+    const lo = Math.min(cNode.x, bNode.x);
+    const hi = Math.max(cNode.x, bNode.x);
+    expect(br.x1).toBe(lo);
+    expect(br.x2).toBe(hi);
+    expect(br.labelX).toBe((lo + hi) / 2);
+    expect(br.labelY).toBeLessThanOrEqual(g.height);
+  });
+
+  it("omits notes and brackets when the input declares none", () => {
+    const g = layout(fixture);
+    expect(g.gitNotes).toBeUndefined();
+    expect(g.commitBrackets).toBeUndefined();
   });
 });

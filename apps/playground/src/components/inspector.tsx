@@ -31,8 +31,8 @@ import {
   type PositionedGraph,
 } from '@joycostudio/trazo'
 import { Graph } from '@joycostudio/trazo/react'
-import { Check, Copy, Download } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { Check, Copy, Download, Plus, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { GraphViewport } from '@/components/graph-viewport'
 import { Badge } from '@/components/ui/badge'
@@ -41,6 +41,7 @@ import { Cluster, Filler } from '@/components/ui/cluster'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { useGraphDocs } from '@/hooks/use-graph-docs'
 import { parseDsl, type ParseError, SEED_PROGRAM } from '@/lib/dsl'
 import { directionOf, parseFlow, SEED_FLOW } from '@/lib/flow-dsl'
 import { SEED_BLOCK, SEED_SEQUENCE } from '@/lib/seeds'
@@ -106,9 +107,18 @@ export interface InspectorProps {
 
 export function Inspector({ initialMode, initialSource, initialGraph }: InspectorProps) {
   const [mode, setMode] = useState<Mode>(initialMode)
-  // One source per mode so switching tabs preserves each editor's content. The
-  // server-rendered mode keeps its exact seed; the other gets its default.
-  const [sources, setSources] = useState<Record<Mode, string>>({
+  // Documents per mode (multiple diagrams, localStorage-persisted). The
+  // server-rendered mode keeps its exact seed; the others get their defaults —
+  // so the first client render matches the SSR markup.
+  const {
+    docs,
+    active,
+    restoredAt,
+    setSource: setDocSource,
+    addDoc,
+    selectDoc,
+    deleteDoc,
+  } = useGraphDocs<Mode>({
     git: initialMode === 'git' ? initialSource : SEED_PROGRAM,
     flow: initialMode === 'flow' ? initialSource : SEED_FLOW,
     sequence: initialMode === 'sequence' ? initialSource : SEED_SEQUENCE,
@@ -132,7 +142,9 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
   const [codeCopied, setCodeCopied] = useState(false)
   const [svgCopied, setSvgCopied] = useState(false)
 
-  const source = sources[mode]
+  const activeDocs = docs[mode]
+  const activeDocId = active[mode]
+  const source = (activeDocs.find((d) => d.id === activeDocId) ?? activeDocs[0]).source
 
   const recompute = useCallback((nextMode: Mode, nextSource: string, nextEdgeStyle: EdgeStyle, nextGit: GitOptions) => {
     const { graph: next, error: nextError } = build(nextMode, nextSource, nextEdgeStyle, nextGit)
@@ -140,24 +152,60 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
     if (next) setGraph(next) // keep last good graph when parse yields nothing
   }, [])
 
+  // After the localStorage restore swaps in persisted docs, the active source
+  // may differ from the SSR seed — re-layout it once. Reacting to that
+  // external-store restore is the legitimate setState-in-effect case.
+  useEffect(() => {
+    if (restoredAt === 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    recompute(mode, source, edgeStyle, git)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoredAt])
+
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const next = event.target.value
-      setSources((prev) => ({ ...prev, [mode]: next }))
+      setDocSource(mode, next)
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => recompute(mode, next, edgeStyle, git), DEBOUNCE_MS)
     },
-    [mode, recompute, edgeStyle, git]
+    [mode, setDocSource, recompute, edgeStyle, git]
   )
 
   const handleMode = useCallback(
     (next: string) => {
       const m = next as Mode
       setMode(m)
+      const doc = docs[m].find((d) => d.id === active[m]) ?? docs[m][0]
       if (debounceRef.current) clearTimeout(debounceRef.current)
-      recompute(m, sources[m], edgeStyle, git) // immediate on an explicit switch
+      recompute(m, doc.source, edgeStyle, git) // immediate on an explicit switch
     },
-    [recompute, sources, edgeStyle, git]
+    [recompute, docs, active, edgeStyle, git]
+  )
+
+  const handleAddDoc = useCallback(() => {
+    const nextSource = addDoc(mode)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    recompute(mode, nextSource, edgeStyle, git)
+  }, [addDoc, mode, recompute, edgeStyle, git])
+
+  const handleSelectDoc = useCallback(
+    (id: string) => {
+      const nextSource = selectDoc(mode, id)
+      if (nextSource === null) return
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      recompute(mode, nextSource, edgeStyle, git)
+    },
+    [selectDoc, mode, recompute, edgeStyle, git]
+  )
+
+  const handleDeleteDoc = useCallback(
+    (id: string) => {
+      const nextSource = deleteDoc(mode, id)
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      recompute(mode, nextSource, edgeStyle, git)
+    },
+    [deleteDoc, mode, recompute, edgeStyle, git]
   )
 
   const handleEdgeStyle = useCallback(
@@ -266,6 +314,44 @@ export function Inspector({ initialMode, initialSource, initialGraph }: Inspecto
               <TabsTrigger value="block">block</TabsTrigger>
             </TabsList>
           </Tabs>
+          <span aria-hidden="true" className="bg-border h-4 w-px self-center" />
+          {/* Per-mode documents: switch, start a fresh one from the seed, or
+            delete the current one — all persisted to localStorage. */}
+          <div role="group" aria-label="Diagram documents" className="flex items-center gap-0.5">
+            {activeDocs.map((doc, i) => (
+              <Button
+                key={doc.id}
+                variant={doc.id === activeDocId ? 'secondary' : 'ghost'}
+                size="icon-sm"
+                onClick={() => handleSelectDoc(doc.id)}
+                aria-pressed={doc.id === activeDocId}
+                aria-label={`Open document ${i + 1}`}
+                className="text-muted-foreground size-6 font-mono text-xs tabular-nums"
+              >
+                {i + 1}
+              </Button>
+            ))}
+            {activeDocs.length > 1 ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => handleDeleteDoc(activeDocId)}
+                aria-label="Delete current document"
+                className="text-muted-foreground size-6"
+              >
+                <X />
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleAddDoc}
+              aria-label="New document from the seed"
+              className="text-muted-foreground size-6"
+            >
+              <Plus />
+            </Button>
+          </div>
           <Filler />
           <Button
             variant="ghost"
