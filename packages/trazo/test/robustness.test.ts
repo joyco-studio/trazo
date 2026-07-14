@@ -88,6 +88,72 @@ function expectDeterministic(fn: () => PositionedGraph): PositionedGraph {
   return a;
 }
 
+/** Liang-Barsky segment-vs-rect: does p→q pass through the rect's interior? */
+function segmentCrossesRect(
+  p: { x: number; y: number },
+  q: { x: number; y: number },
+  r: { x0: number; y0: number; x1: number; y1: number },
+): boolean {
+  const dx = q.x - p.x;
+  const dy = q.y - p.y;
+  let t0 = 0;
+  let t1 = 1;
+  const clips: Array<[number, number]> = [
+    [-dx, p.x - r.x0],
+    [dx, r.x1 - p.x],
+    [-dy, p.y - r.y0],
+    [dy, r.y1 - p.y],
+  ];
+  for (const [den, num] of clips) {
+    if (den === 0) {
+      if (num < 0) return false;
+      continue;
+    }
+    const t = num / den;
+    if (den < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+  }
+  return t1 > t0;
+}
+
+/**
+ * No edge segment may pass through a node's box interior (its own endpoints'
+ * boxes excluded — edges legitimately touch those faces). Rects are shrunk 1px
+ * so face-touching approaches don't false-positive. elbow45/orthogonal paths
+ * are pure M/L polylines, so the `d` numbers pair up into vertices.
+ */
+function expectEdgesClearOfNodes(g: PositionedGraph): void {
+  for (const e of g.edges) {
+    const nums = (e.path.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+    const pts: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      pts.push({ x: nums[i] as number, y: nums[i + 1] as number });
+    }
+    for (const n of g.nodes) {
+      if (n.id === e.from || n.id === e.to) continue;
+      const w = n.w ?? 12;
+      const h = n.h ?? 12;
+      const rect = {
+        x0: n.x - w / 2 + 1,
+        y0: n.y - h / 2 + 1,
+        x1: n.x + w / 2 - 1,
+        y1: n.y + h / 2 - 1,
+      };
+      for (let i = 1; i < pts.length; i++) {
+        expect(
+          segmentCrossesRect(pts[i - 1]!, pts[i]!, rect),
+          `edge ${e.from}->${e.to} segment ${i} crosses node ${n.id}`,
+        ).toBe(false);
+      }
+    }
+  }
+}
+
 describe("flow robustness", () => {
   it("routes a self-loop instead of dropping it", () => {
     const g = expectDeterministic(() =>
@@ -225,6 +291,94 @@ describe("flow robustness", () => {
         ),
       ),
     );
+  });
+
+  it("keeps every edge clear of unrelated node boxes (torture case)", () => {
+    // Cycles + a wide middle node + a self-loop + a skip edge: back-edge
+    // corridors must clear the WIDE box, long edges must pass ranks through
+    // their reserved dummy columns, and nothing may slice a box interior.
+    const g = layoutFlow(
+      flow(
+        [
+          { id: "a", label: "Start" },
+          { id: "b", label: "Process with a very long label that keeps going and going" },
+          { id: "c", label: "Retry?", shape: "diamond" },
+          { id: "d", label: "Done" },
+        ],
+        [
+          { from: "a", to: "b" },
+          { from: "b", to: "c" },
+          { from: "c", to: "b" },
+          { from: "c", to: "a" },
+          { from: "b", to: "b" },
+          { from: "c", to: "d" },
+        ],
+      ),
+      { maxNodeWidth: 260 },
+    );
+    expectSane(g);
+    expectEdgesClearOfNodes(g);
+  });
+
+  it("keeps long-edge rank pass-throughs clear of siblings (dense case)", () => {
+    const g = layoutFlow(
+      flow(
+        [
+          { id: "a", label: "Gateway" },
+          { id: "b", label: "Auth" },
+          { id: "c", label: "Cart" },
+          { id: "f", label: "Session" },
+          { id: "h", label: "Response" },
+        ],
+        [
+          { from: "a", to: "b" },
+          { from: "a", to: "c" },
+          { from: "b", to: "f" },
+          { from: "c", to: "f" },
+          { from: "f", to: "h" },
+          { from: "b", to: "h" },
+        ],
+      ),
+    );
+    expectSane(g);
+    expectEdgesClearOfNodes(g);
+  });
+
+  it("centers a root over its fan-out and children under parents", () => {
+    const g = layoutFlow(
+      flow(
+        [
+          { id: "root", label: "Root" },
+          { id: "l", label: "Left" },
+          { id: "m", label: "Mid" },
+          { id: "r", label: "Right" },
+          { id: "child", label: "Child" },
+        ],
+        [
+          { from: "root", to: "l" },
+          { from: "root", to: "m" },
+          { from: "root", to: "r" },
+          { from: "m", to: "child" },
+        ],
+      ),
+    );
+    const at = (id: string) => g.nodes.find((n) => n.id === id)!;
+    // Root sits on the median of its three children; the lone child under its parent.
+    expect(at("root").x).toBeCloseTo(at("m").x, 5);
+    expect(at("child").x).toBeCloseTo(at("m").x, 5);
+  });
+
+  it("anchors cylinder entries at the cap apex (the box edge)", () => {
+    const g = layoutFlow(
+      flow(
+        [{ id: "a", label: "A" }, { id: "cyl", label: "DB", shape: "cylinder" }],
+        [{ from: "a", to: "cyl" }],
+      ),
+    );
+    const cyl = g.nodes.find((n) => n.id === "cyl")!;
+    const nums = (g.edges[0]!.path.match(/-?\d+(?:\.\d+)?/g) as string[]).map(Number);
+    const endY = nums[nums.length - 1]!;
+    expect(endY).toBeCloseTo(cyl.y - cyl.h! / 2, 5);
   });
 
   it("handles a 100-node chain", () => {
@@ -381,6 +535,22 @@ describe("git robustness", () => {
       });
     }
     expectSane(expectDeterministic(() => layoutGit(git(commits))));
+  });
+
+  it("aligns every badge to a shared gutter column past the last lane", () => {
+    const commits: CommitGraph["commits"] = [
+      { id: "a", parents: [], message: "root" },
+      { id: "b", parents: ["a"], branch: "feat", message: "feat work" },
+      { id: "c", parents: ["a"], message: "main work" },
+      { id: "m", parents: ["c", "b"], message: "merge" },
+    ];
+    const g = layoutGit(git(commits));
+    const anchors = g.nodes
+      .filter((n) => n.labelAnchor !== undefined)
+      .map((n) => n.labelAnchor!.x);
+    expect(anchors.length).toBeGreaterThan(0);
+    // git-log style: one message column — every badge starts at the same x.
+    for (const x of anchors) expect(x).toBeCloseTo(anchors[0]!, 5);
   });
 
   it("survives missing parents, duplicate ids, and empty input", () => {

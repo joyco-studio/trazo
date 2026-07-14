@@ -43,6 +43,7 @@ import {
   NODE_HALF,
   LABEL_GAP,
   BADGE_H,
+  type MainAxis,
 } from "./geometry.js";
 
 const DEFAULTS = {
@@ -217,8 +218,9 @@ function edgePath(
   from: PositionedNode,
   to: PositionedNode,
   style: EdgeStyle,
+  mainAxis: MainAxis,
 ): string {
-  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y }, style);
+  return curveBetween({ x: from.x, y: from.y }, { x: to.x, y: to.y }, style, mainAxis);
 }
 
 /**
@@ -239,22 +241,26 @@ function badgeAnchor(
   labelWidth: number,
   orientation: GitOrientation,
   side: GitLabelSide,
+  gutterCross: number,
 ): Point {
   const badgeW = badgeWidth(labelWidth);
   if (orientation === "horizontal") {
-    // Centered on the square's x; below (right) or above (left) on y.
+    // Centered on the square's x; below (right) or above (left) on y — from
+    // the GUTTER (outermost lane row), so badges never sit over lane lines.
     const x = center.x - badgeW / 2;
     const y =
       side === "left"
-        ? center.y - NODE_HALF - LABEL_GAP - BADGE_H
-        : center.y + NODE_HALF + LABEL_GAP;
+        ? gutterCross - NODE_HALF - LABEL_GAP - BADGE_H
+        : gutterCross + NODE_HALF + LABEL_GAP;
     return { x, y };
   }
-  // vertical: centered on the square's y; right (after) or left (before) on x.
+  // vertical: centered on the square's y; a shared message column right
+  // (after) or left (before) of the OUTERMOST lane — like `git log --graph`,
+  // and no badge ever crosses a lane line.
   const x =
     side === "left"
-      ? center.x - NODE_HALF - LABEL_GAP - badgeW
-      : center.x + NODE_HALF + LABEL_GAP;
+      ? gutterCross - NODE_HALF - LABEL_GAP - badgeW
+      : gutterCross + NODE_HALF + LABEL_GAP;
   const y = center.y - BADGE_H / 2;
   return { x, y };
 }
@@ -341,6 +347,11 @@ export function layoutGit(
   }
 
   const nodeById = new Map<CommitId, PositionedNode>();
+  // Badges anchor off a shared GUTTER at the outermost lane on the label side
+  // (`git log --graph` style): trailing side → the last lane; leading side →
+  // lane 0 (positions are `padding + lane * laneWidth`).
+  const gutterCross =
+    labelSide === "left" ? padding : padding + (laneCount - 1) * laneWidth;
   const nodes: PositionedNode[] = ordered.map((commit, row) => {
     const lane = laneOf.get(commit.id) ?? 0;
     // The "commit axis" advances with `row` (time); the "lane axis" with `lane`
@@ -372,7 +383,7 @@ export function layoutGit(
     const labelW = precomputedLabelWidths.get(commit.id);
     if (labelW !== undefined) {
       node.labelWidth = labelW;
-      node.labelAnchor = badgeAnchor(node, labelW, orientation, labelSide);
+      node.labelAnchor = badgeAnchor(node, labelW, orientation, labelSide, gutterCross);
     }
     nodeById.set(commit.id, node);
     return node;
@@ -432,7 +443,7 @@ export function layoutGit(
       const parentId = commit.parents[p] as CommitId;
       const to = nodeById.get(parentId);
       if (!to) continue; // parent not in graph (shallow boundary) → no edge
-      const path = edgePath(from, to, edgeStyle);
+      const path = edgePath(from, to, edgeStyle, horizontal ? "x" : "y");
       // Edge kind from DAG structure:
       //  - a non-first parent of a multi-parent commit is a merge-in;
       //  - any other lane-changing edge (a line diverging from its parent's

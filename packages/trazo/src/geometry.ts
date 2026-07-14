@@ -24,6 +24,14 @@ export function roleColorKey(role: SemanticRole): string {
   return `role-${role}`;
 }
 
+/**
+ * The axis a diagram's flow travels along — TD/vertical charts flow along "y",
+ * LR/horizontal ones along "x". Turn geometry (`turnKnees`) needs it so an
+ * edge's FINAL approach into a node always runs along the main axis (the
+ * cross shift happens near the source), regardless of segment proportions.
+ */
+export type MainAxis = "x" | "y";
+
 /** Font used to size flow-node labels — Public Sans, hub body size. */
 const LABEL_FONT = { family: "PublicSans", size: 13 } as const;
 
@@ -295,13 +303,16 @@ export function faceAnchor(
   direction: FlowDirection,
   face: AnchorFace,
 ): Point {
-  const capInset = shape === "cylinder" ? 6 : 0;
+  // The cylinder's cap APEX sits exactly on the bounding box edge at center-x
+  // (the curve's midpoint), so main-axis anchors use the plain box edge — an
+  // inset would land arrowheads INSIDE the cap.
+  void shape;
   if (direction === "TD") {
     switch (face) {
       case "forward":
-        return { x: center.x, y: center.y + h / 2 - capInset };
+        return { x: center.x, y: center.y + h / 2 };
       case "backward":
-        return { x: center.x, y: center.y - h / 2 + capInset };
+        return { x: center.x, y: center.y - h / 2 };
       case "cross-start":
         return { x: center.x - w / 2, y: center.y };
       case "cross-end":
@@ -325,7 +336,7 @@ export function faceAnchor(
  * Exit anchor on the boundary of a node's bounding box, toward the next layer.
  * TD: bottom-center; LR: right-center. Diamond exits from its bottom/right
  * point (same center coords — the box already encodes the point extent).
- * Cylinder exits from the bottom cap flat (slightly inset).
+ * Cylinder exits from its bottom cap apex (on the box edge).
  */
 export function exitAnchor(
   center: Point,
@@ -339,7 +350,7 @@ export function exitAnchor(
 
 /**
  * Entry anchor on the boundary of a node's bounding box, from the prior layer.
- * TD: top-center; LR: left-center. Cylinder enters at the top cap flat.
+ * TD: top-center; LR: left-center. Cylinder enters at its top cap apex.
  */
 export function entryAnchor(
   center: Point,
@@ -367,27 +378,46 @@ export function entryAnchor(
  * `turn()` draws — kept here so both the `d` string and the label placement
  * reason over the SAME expanded polyline.
  */
-function turnKnees(from: Point, to: Point, style: EdgeStyle): Point[] {
+function turnKnees(
+  from: Point,
+  to: Point,
+  style: EdgeStyle,
+  mainAxis: MainAxis,
+): Point[] {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   if (dx === 0 || dy === 0) return [];
 
-  if (style === "orthogonal") {
-    if (Math.abs(dy) >= Math.abs(dx)) return [{ x: from.x, y: to.y }];
-    return [{ x: to.x, y: from.y }];
-  }
-
-  // elbow45
-  const adx = Math.abs(dx);
-  const ady = Math.abs(dy);
   const sx = Math.sign(dx);
   const sy = Math.sign(dy);
-  if (ady >= adx) {
-    const kneeY = to.y - sy * adx;
-    return [{ x: from.x, y: kneeY }];
+  const adm = Math.abs(mainAxis === "y" ? dy : dx); // main-axis delta
+  const adc = Math.abs(mainAxis === "y" ? dx : dy); // cross-axis delta
+
+  // The turn always happens NEAR THE SOURCE: shift across at the source's
+  // main-axis level, then run the main axis cleanly into the target (the
+  // mermaid/mock look). Turning near the target reads as a last-second jog.
+
+  if (style === "orthogonal") {
+    return [mainAxis === "y" ? { x: to.x, y: from.y } : { x: from.x, y: to.y }];
   }
-  const kneeX = to.x - sx * ady;
-  return [{ x: kneeX, y: from.y }];
+
+  // elbow45 — one 45° diagonal carries the cross shift:
+  //  - cross-dominant: straight cross-run at the source's main level, then the
+  //    diagonal lands directly on `to` (it covers the whole main delta).
+  //  - main-dominant: the diagonal comes FIRST (covers the whole cross delta),
+  //    then a long straight main-axis run descends into `to`.
+  if (adc >= adm) {
+    return [
+      mainAxis === "y"
+        ? { x: to.x - sx * adm, y: from.y }
+        : { x: from.x, y: to.y - sy * adm },
+    ];
+  }
+  return [
+    mainAxis === "y"
+      ? { x: to.x, y: from.y + sy * adc }
+      : { x: from.x + sx * adc, y: to.y },
+  ];
 }
 
 /**
@@ -395,13 +425,17 @@ function turnKnees(from: Point, to: Point, style: EdgeStyle): Point[] {
  * knee points. The result is exactly the sequence of vertices the SVG path
  * visits (start, every knee, every waypoint, end). Pure.
  */
-export function expandPath(points: Point[], style: EdgeStyle = "elbow45"): Point[] {
+export function expandPath(
+  points: Point[],
+  style: EdgeStyle = "elbow45",
+  mainAxis: MainAxis = "y",
+): Point[] {
   if (points.length <= 1) return [...points];
   const out: Point[] = [points[0] as Point];
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1] as Point;
     const cur = points[i] as Point;
-    out.push(...turnKnees(prev, cur, style), cur);
+    out.push(...turnKnees(prev, cur, style, mainAxis), cur);
   }
   return out;
 }
@@ -413,8 +447,12 @@ export function expandPath(points: Point[], style: EdgeStyle = "elbow45"): Point
  * at each end (see {@link withStubs}) so edges always leave/enter a node face
  * at 90° before any turn. Pure function of its inputs.
  */
-export function pathThrough(points: Point[], style: EdgeStyle = "elbow45"): string {
-  const expanded = expandPath(points, style);
+export function pathThrough(
+  points: Point[],
+  style: EdgeStyle = "elbow45",
+  mainAxis: MainAxis = "y",
+): string {
+  const expanded = expandPath(points, style, mainAxis);
   if (expanded.length === 0) return "";
   const first = expanded[0] as Point;
   if (expanded.length === 1) return `M ${first.x} ${first.y}`;
@@ -437,8 +475,9 @@ export function curveBetween(
   from: Point,
   to: Point,
   style: EdgeStyle = "elbow45",
+  mainAxis: MainAxis = "y",
 ): string {
-  return pathThrough([from, to], style);
+  return pathThrough([from, to], style, mainAxis);
 }
 
 
@@ -458,8 +497,9 @@ export function edgeLabelPoint(
   style: EdgeStyle,
   direction: FlowDirection,
 ): Point {
-  void direction;
-  const poly = expandPath(points, style);
+  // The label rides the rendered polyline, so expand with the SAME main axis
+  // the renderer's knees use or the label lands off the drawn line.
+  const poly = expandPath(points, style, direction === "LR" ? "x" : "y");
   if (poly.length <= 1) return polylineMidpoint(poly);
 
   let best: { mid: Point; len: number } | null = null;

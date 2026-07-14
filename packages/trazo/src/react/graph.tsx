@@ -419,8 +419,29 @@ function insetPathEnds(
 export function Graph(props: GraphProps): JSX.Element {
   const { graph, className, classNames, title } = props;
   const label = title ?? "Commit graph";
+  // When an arrowless connector ends exactly where an ARROWED edge ends (a
+  // shared entry anchor), its plain stroke would run through the other edge's
+  // trimmed head gap and visually swallow the arrowhead. Promote such
+  // connectors to carry the head too, so coincident lanes read as ONE edge.
+  const arrowedEnds = new Set<string>();
+  for (const e of graph.edges) {
+    if (e.arrowHead === "end" || e.arrowHead === "both") {
+      const pts = parsePolyline(e.path);
+      const p = pts[pts.length - 1];
+      if (p !== undefined) arrowedEnds.add(`${p.x},${p.y}`);
+    }
+  }
+  const edges = graph.edges.map((e) => {
+    if (e.kind !== "flow" || (e.arrowHead !== undefined && e.arrowHead !== "none")) {
+      return e;
+    }
+    const pts = parsePolyline(e.path);
+    const p = pts[pts.length - 1];
+    if (p === undefined || !arrowedEnds.has(`${p.x},${p.y}`)) return e;
+    return { ...e, arrowHead: "end" as const };
+  });
   // Distinct edge colors needing an arrowhead marker — computed once.
-  const markerTokens = arrowColorTokens(graph.edges);
+  const markerTokens = arrowColorTokens(edges);
 
   return (
     <svg
@@ -493,16 +514,18 @@ export function Graph(props: GraphProps): JSX.Element {
       ) : null}
 
       <g data-slot="edges" aria-hidden="true">
-        {orderEdgesByPaint(graph.edges).map((edge, i) => {
+        {orderEdgesByPaint(edges).map((edge, i) => {
           const head = edge.arrowHead;
           const markerRef = head && head !== "none" ? `url(#${arrowMarkerId(edge.color)})` : undefined;
           // Pull the stroke back from any arrowed end by the head length so the
-          // line ends under the head's base, not its tip.
+          // line ends under the head's base, not its tip — PLUS half the node
+          // border, so the tip rests on the border's OUTER edge instead of
+          // halfway into the chip-lift stroke band.
           const insetEnd = head === "end" || head === "both" ? head : "none";
           const insetStart = head === "both";
           const d =
             head && head !== "none"
-              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN)
+              ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN + BOX_STROKE / 2)
               : edge.path;
           return (
             <path
