@@ -29,6 +29,7 @@ import type {
   EdgeStyle,
   GitLabelSide,
   GitOrientation,
+  LaneLabel,
   LayoutOptions,
   PositionedEdge,
   PositionedGraph,
@@ -131,13 +132,56 @@ function orderCommits(commits: Commit[]): Commit[] {
 }
 
 /**
- * Assign an integer lane to every commit using the first-parent-stable walk
- * described at the top of this file.
+ * Assign one dedicated lane per branch, keyed by branch name (mermaid style):
+ * every commit on branch B lands in B's column for the whole graph, so a
+ * multi-branch history is legible at a glance and lanes can be labeled with the
+ * branch name. Lanes are ordered by first appearance while walking the commits
+ * top-to-bottom (main, then each branch as it first shows up) — a fixed function
+ * of input order, so output stays deterministic.
+ *
+ * Only usable when EVERY commit carries a `branch` (the git DSL always sets it;
+ * a raw `CommitGraph` built by a consumer may not). `assignLanes` picks this
+ * path when branches are complete and falls back to the compact algorithm
+ * otherwise, preserving the engine contract for non-DSL callers.
+ */
+function assignBranchLanes(ordered: Commit[]): {
+  laneOf: Map<CommitId, number>;
+  laneCount: number;
+  branchOfLane: string[];
+} {
+  const laneOf = new Map<CommitId, number>();
+  const laneForBranch = new Map<string, number>();
+  const branchOfLane: string[] = [];
+
+  for (const commit of ordered) {
+    const branch = commit.branch as string;
+    let lane = laneForBranch.get(branch);
+    if (lane === undefined) {
+      lane = branchOfLane.length;
+      laneForBranch.set(branch, lane);
+      branchOfLane.push(branch);
+    }
+    laneOf.set(commit.id, lane);
+  }
+
+  return { laneOf, laneCount: branchOfLane.length, branchOfLane };
+}
+
+/**
+ * Assign an integer lane to every commit. Prefers one lane per branch (see
+ * `assignBranchLanes`) when branch names are complete; otherwise falls back to
+ * the compact first-parent-stable walk described at the top of this file.
  */
 function assignLanes(ordered: Commit[]): {
   laneOf: Map<CommitId, number>;
   laneCount: number;
+  branchOfLane?: string[];
 } {
+  // Branch-per-lane only when every commit knows its branch (DSL guarantees it).
+  if (ordered.length > 0 && ordered.every((c) => c.branch !== undefined)) {
+    return assignBranchLanes(ordered);
+  }
+
   const laneOf = new Map<CommitId, number>();
 
   // `lanes[i]` holds the CommitId currently reserving column i, or null if free.
@@ -281,7 +325,7 @@ export function layoutGit(
   const horizontal = orientation === "horizontal";
 
   const ordered = orderCommits(input.commits);
-  const { laneOf, laneCount } = assignLanes(ordered);
+  const { laneOf, laneCount, branchOfLane } = assignLanes(ordered);
 
   // Pre-compute label widths for all commits that have any label content (hash,
   // message, or author). In horizontal mode these widths drive commit spacing so
@@ -435,6 +479,37 @@ export function layoutGit(
     }
   }
 
+  // Branch-lane labels (mermaid-style `main:` / `feature-x:` tags in the left
+  // gutter). Only in HORIZONTAL orientation: there lanes are ROWS, so a
+  // horizontal branch name reads naturally beside its row (the reference/mermaid
+  // look). In vertical orientation lanes are narrow COLUMNS (laneWidth apart) and
+  // horizontal names would overlap — the per-lane COLOR already disambiguates, so
+  // we skip the text there rather than rotate it (rotated tags were rejected).
+  // The band is reserved and the grid pushed inward FIRST, so edge paths (built
+  // below from shifted node centers) bake in correctly.
+  let laneLabels: LaneLabel[] | undefined;
+  if (horizontal && branchOfLane !== undefined && branchOfLane.length > 0) {
+    const LANE_LABEL_GAP = LABEL_GAP + NODE_HALF;
+    // Left gutter as wide as the widest branch name (+ the trailing colon).
+    let band = 0;
+    for (const name of branchOfLane) {
+      band = Math.max(band, measureLabel(`${name}:`.toUpperCase()));
+    }
+    band += LANE_LABEL_GAP;
+    for (const node of nodes) {
+      node.x += band;
+      if (node.labelAnchor !== undefined) node.labelAnchor.x += band;
+    }
+
+    laneLabels = branchOfLane.map((branch, lane) => {
+      // Read a node on this lane so the label picks up the same normalization the
+      // grid got; fall back to the lane grid position for an (unusual) empty lane.
+      const onLane = nodes.find((n) => n.lane === lane);
+      const y = onLane ? onLane.y : padding + band + lane * laneWidth;
+      return { branch, lane, x: padding, y, color: laneColorKey(lane), align: "start" as const };
+    });
+  }
+
   const edges: PositionedEdge[] = [];
   for (const commit of ordered) {
     const from = nodeById.get(commit.id);
@@ -482,8 +557,14 @@ export function layoutGit(
       maxY = Math.max(maxY, node.labelAnchor.y + BADGE_H);
     }
   }
+  // Horizontal lane tags sit in the reserved left band (x ≥ padding) and are
+  // vertically centered on their row — both already inside the node bounds, so
+  // no extra reservation is needed. (Vertical charts emit no lane labels.)
+
   const width = Number.isFinite(maxX) ? maxX + padding : padding * 2;
   const height = Number.isFinite(maxY) ? maxY + padding : padding * 2;
 
-  return { nodes, edges, width, height, laneCount };
+  const result: PositionedGraph = { nodes, edges, width, height, laneCount };
+  if (laneLabels !== undefined) result.laneLabels = laneLabels;
+  return result;
 }

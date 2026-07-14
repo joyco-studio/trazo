@@ -513,6 +513,31 @@ export function Graph(props: GraphProps): JSX.Element {
         </g>
       ) : null}
 
+      {graph.laneLabels && graph.laneLabels.length > 0 ? (
+        <g data-slot="lane-labels">
+          {graph.laneLabels.map((ll) => (
+            <text
+              key={ll.branch}
+              data-slot="lane-label"
+              data-lane={ll.lane}
+              className={classNames?.laneLabel}
+              x={ll.x}
+              y={ll.y}
+              // Vertical lanes: tag centered above its column. Horizontal lanes:
+              // tag left-aligned in the reserved gutter, vertically centered.
+              textAnchor={ll.align}
+              dominantBaseline="central"
+              fill={nodeColor(ll.color)}
+              fontFamily={LABEL_FONT}
+              fontSize={LABEL_SIZE}
+              style={UPPERCASE}
+            >
+              {ll.branch}:
+            </text>
+          ))}
+        </g>
+      ) : null}
+
       <g data-slot="edges" aria-hidden="true">
         {orderEdgesByPaint(edges).map((edge, i) => {
           const head = edge.arrowHead;
