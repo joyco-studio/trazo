@@ -366,6 +366,61 @@ describe("parseFlow — subgraphs", () => {
   });
 });
 
+// ── notes (annotations) ─────────────────────────────────────────────────────
+
+describe("parseFlow — notes", () => {
+  it("parses a quoted note on all four sides", () => {
+    const g = ok(
+      [
+        "layout",
+        'note layout above "top"',
+        'note layout below "bottom"',
+        'note layout left "left"',
+        'note layout right "right"',
+      ].join("\n"),
+    );
+    expect(g.notes).toBeDefined();
+    expect(g.notes!.map((n) => n.side)).toEqual(["above", "below", "left", "right"]);
+    expect(g.notes!.map((n) => n.label)).toEqual(["top", "bottom", "left", "right"]);
+    expect(g.notes!.every((n) => n.target === "layout")).toBe(true);
+  });
+
+  it("does not create a node for the note keyword or forward-referenced target", () => {
+    const g = ok('note layout below "hi"\nlayout["Layout"]');
+    // Only the real `layout` node exists — no `note` node, no ghost target.
+    expect(g.nodes.map((n) => n.id)).toEqual(["layout"]);
+    expect(g.notes).toHaveLength(1);
+    expect(g.notes![0]!.target).toBe("layout");
+  });
+
+  it("normalizes <br/> and \\n breaks in note text", () => {
+    const g = ok('a\nnote a below "line1<br/>line2"');
+    expect(g.notes![0]!.label).toBe("line1\nline2");
+  });
+
+  it("parses an optional trailing :role after a quoted note", () => {
+    const g = ok('a\nnote a below "watch out" :warning');
+    expect(g.notes![0]!.role).toBe("warning");
+    expect(g.notes![0]!.label).toBe("watch out");
+  });
+
+  it("case-insensitive side keyword", () => {
+    const g = ok('a\nnote a BELOW "x"');
+    expect(g.notes![0]!.side).toBe("below");
+  });
+
+  it("keeps `note` usable as an ordinary node id when not a full note statement", () => {
+    const g = ok("note --> other");
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["note", "other"]);
+    expect(g.notes).toBeUndefined();
+  });
+
+  it("errors on a note statement with empty text", () => {
+    const e = err('a\nnote a below ""');
+    expect(e.line).toBe(2);
+  });
+});
+
 // ── error cases ───────────────────────────────────────────────────────────────
 
 describe("parseFlow — errors", () => {

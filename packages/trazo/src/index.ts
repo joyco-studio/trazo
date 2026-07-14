@@ -47,6 +47,8 @@ export type {
   FlowNode,
   FlowEdge,
   ArrowEnds,
+  NoteSide,
+  FlowNote,
   FlowGroup,
   FlowGraph,
   ParseError,

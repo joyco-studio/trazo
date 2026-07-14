@@ -15,6 +15,11 @@
  *   <node>                     bare node declaration.
  *   subgraph G ["Label"]       open a cluster; nodes declared until `end` join it.
  *   end                        close the current cluster.
+ *   note <id> <side> "<text>"  a margin annotation on <id>, one of the four
+ *                              sides above|below|left|right, with a leader arrow
+ *                              pointing at that face. An optional trailing
+ *                              `:role` tints the note chip. Excluded from ranking
+ *                              (never moves a real node).
  *
  * Subgraphs are single-level (no nesting). A node belongs to at most one group
  * (the first that declares it wins). Multi-line labels: a literal `\n` or `<br>`
@@ -36,7 +41,9 @@ import type {
   FlowGraph,
   FlowGroup,
   FlowNode,
+  FlowNote,
   NodeShape,
+  NoteSide,
   ParseError,
   SemanticRole,
 } from "./types.js";
@@ -173,10 +180,72 @@ function parseNodeRef(input: string): { ref: NodeRef; rest: string } | null {
   return { ref, rest: cursor };
 }
 
+const NOTE_SIDES: ReadonlySet<string> = new Set<NoteSide>(["above", "below", "left", "right"]);
+
+/**
+ * Parse the body of a `note <id> <side> …` line — the text after the side
+ * keyword — into its label and optional trailing `:role`. The text is either a
+ * `"double"` / `'single'` quoted span (quotes stripped, `\"` un-escaped) or a
+ * bare run to end-of-line. A `:role` suffix (validated against {@link ROLES})
+ * may follow the closing quote or trail a bare run. Returns null on an unclosed
+ * quote or trailing junk after the text. `\n`/`<br>` breaks are normalized like
+ * every other label. Pure.
+ */
+function parseNoteBody(rest: string): { label: string; role?: SemanticRole } | null {
+  const s = rest.trim();
+  if (s === "") return null;
+
+  let label: string;
+  let after: string;
+  if (s.startsWith('"')) {
+    // First unescaped closing quote (a `\"` inside the text does not close it).
+    let close = -1;
+    for (let i = 1; i < s.length; i++) {
+      if (s[i] === '"' && s[i - 1] !== "\\") {
+        close = i;
+        break;
+      }
+    }
+    if (close === -1) return null;
+    label = s.slice(1, close).replace(/\\"/g, '"');
+    after = s.slice(close + 1);
+  } else if (s.startsWith("'")) {
+    const close = s.indexOf("'", 1);
+    if (close === -1) return null;
+    label = s.slice(1, close);
+    after = s.slice(close + 1);
+  } else {
+    // Bare text: peel an optional trailing `:role` token off the end so the
+    // label doesn't swallow it; otherwise the whole run is the label.
+    const roleAtEnd = /\s+:([a-z]+)\s*$/.exec(s);
+    if (roleAtEnd && ROLES.has(roleAtEnd[1] ?? "")) {
+      label = s.slice(0, roleAtEnd.index).trim();
+      after = ` :${roleAtEnd[1]}`;
+    } else {
+      label = s;
+      after = "";
+    }
+  }
+
+  let role: SemanticRole | undefined;
+  const roleMatch = /^\s*:([a-z]+)\s*$/.exec(after);
+  if (roleMatch && ROLES.has(roleMatch[1] ?? "")) {
+    role = roleMatch[1] as SemanticRole;
+  } else if (after.trim() !== "") {
+    return null; // unexpected trailing content after the note text
+  }
+
+  if (label === "") return null;
+  const body: { label: string; role?: SemanticRole } = { label: normalizeBreaks(label) };
+  if (role !== undefined) body.role = role;
+  return body;
+}
+
 export function parseFlow(source: string): FlowParseResult {
   const nodes = new Map<string, FlowNode>();
   const edges: FlowGraph["edges"] = [];
   const groups = new Map<string, FlowGroup>();
+  const notes: FlowNote[] = [];
   let direction: FlowDirection = "TD";
   // The cluster currently being declared (between `subgraph` and `end`).
   let currentGroup: string | undefined;
@@ -189,6 +258,7 @@ export function parseFlow(source: string): FlowParseResult {
       direction,
     };
     if (groups.size > 0) graph.groups = [...groups.values()];
+    if (notes.length > 0) graph.notes = notes;
     return graph;
   };
 
@@ -267,6 +337,29 @@ export function parseFlow(source: string): FlowParseResult {
       // First declaration of a group id wins its label.
       if (!groups.has(groupId)) groups.set(groupId, group);
       currentGroup = groupId;
+      continue;
+    }
+
+    // ── Annotation (`note`) ───────────────────────────────────────────────
+    // `note <id> <side> "<text>" [:role]`. Matched strictly (the side keyword is
+    // required) so a node literally named `note` — a valid id — still parses as a
+    // node/edge on any other line. The target need not be declared yet; forward
+    // references resolve at layout time (upsert is order-independent), and an
+    // unknown target is dropped there, mirroring an edge to an unknown node.
+    const noteMatch = /^note\s+([A-Za-z0-9_]+)\s+(above|below|left|right)\s+(.+)$/i.exec(raw);
+    if (noteMatch) {
+      const target = noteMatch[1]!;
+      const side = (noteMatch[2] ?? "").toLowerCase() as NoteSide;
+      const body = parseNoteBody(noteMatch[3] ?? "");
+      if (!body) {
+        return fail(lineNumber, `note on "${target}" has an invalid or empty "<text>"`);
+      }
+      // NOTE_SIDES is redundant with the regex alternation but keeps the side
+      // union and the accepted keywords from silently drifting apart.
+      if (!NOTE_SIDES.has(side)) return fail(lineNumber, `unknown note side "${side}"`);
+      const note: FlowNote = { target, side, label: body.label };
+      if (body.role !== undefined) note.role = body.role;
+      notes.push(note);
       continue;
     }
 

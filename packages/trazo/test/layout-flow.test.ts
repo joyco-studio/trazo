@@ -568,3 +568,156 @@ describe("layoutFlow() — subgraphs", () => {
     expect(faceGap).toBeCloseTo(56, 0); // default layerGap, un-widened
   });
 });
+
+// ── notes (annotations) ─────────────────────────────────────────────────────
+
+describe("layoutFlow() — notes", () => {
+  // The motivating case: a strictly linear pipeline plus one note below `layout`.
+  const pipeline = (withNote: boolean): FlowGraph => {
+    const g: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "js", label: "JS", shape: "box" },
+        { id: "style", label: "Style", shape: "box" },
+        { id: "layout", label: "Layout", shape: "box" },
+        { id: "paint", label: "Paint", shape: "box" },
+        { id: "composite", label: "Composite", shape: "box" },
+      ],
+      edges: [
+        { from: "js", to: "style", arrow: "none" },
+        { from: "style", to: "layout", arrow: "none" },
+        { from: "layout", to: "paint", arrow: "none" },
+        { from: "paint", to: "composite", arrow: "none" },
+      ],
+    };
+    if (withNote) {
+      g.notes = [{ target: "layout", side: "below", label: "this one makes fps cry" }];
+    }
+    return g;
+  };
+
+  it("has ZERO effect on real-node positions (regression guard vs ranking leakage)", () => {
+    const bare = layoutFlow(pipeline(false), { direction: "LR" });
+    const noted = layoutFlow(pipeline(true), { direction: "LR" });
+    const real = (g: ReturnType<typeof layoutFlow>) =>
+      g.nodes.filter((n) => n.kind !== "note").map((n) => ({ id: n.id, x: n.x, y: n.y }));
+    // Byte-identical positions for every real node.
+    expect(real(noted)).toEqual(real(bare));
+  });
+
+  it("renders the motivating pipeline as a single straight LR line", () => {
+    const g = layoutFlow(pipeline(true), { direction: "LR" });
+    const real = g.nodes.filter((n) => n.kind !== "note");
+    // Strictly linear: every real node shares one cross-axis (y) coordinate and
+    // x strictly increases in pipeline order.
+    const ys = new Set(real.map((n) => Math.round(n.y)));
+    expect(ys.size).toBe(1);
+    const order = ["js", "style", "layout", "paint", "composite"];
+    const xs = order.map((id) => real.find((n) => n.id === id)!.x);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]!).toBeGreaterThan(xs[i - 1]!);
+  });
+
+  it("emits the note as a kind:'note' chip and a neutral leader edge", () => {
+    const g = layoutFlow(pipeline(true), { direction: "LR" });
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    expect(note).toBeDefined();
+    expect(note.label).toBe("this one makes fps cry");
+    expect(note.shape).toBe("box");
+    const leader = g.edges.find((e) => e.kind === "note")!;
+    expect(leader).toBeDefined();
+    expect(leader.to).toBe("layout");
+    expect(leader.from).toBe(note.id);
+    expect(leader.color).toBe("accent"); // neutral, not tinted by the target role
+    expect(leader.arrowHead).toBe("end");
+    expect(leader.path).toBeTruthy();
+    expect(leader.path.includes("NaN")).toBe(false);
+  });
+
+  it("places the note below its target with the leader pointing up (LR)", () => {
+    const g = layoutFlow(pipeline(true), { direction: "LR" });
+    const target = g.nodes.find((n) => n.id === "layout")!;
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    // Below → note center-y is past the target's bottom face, roughly on its x.
+    expect(note.y).toBeGreaterThan(target.y + target.h! / 2);
+    expect(note.x).toBeCloseTo(target.x, 0);
+  });
+
+  const sides = [
+    { side: "above", axis: "y", dir: -1 },
+    { side: "below", axis: "y", dir: +1 },
+    { side: "left", axis: "x", dir: -1 },
+    { side: "right", axis: "x", dir: +1 },
+  ] as const;
+
+  for (const direction of ["TD", "LR"] as const) {
+    for (const { side, axis, dir } of sides) {
+      it(`places a '${side}' note on the correct side in ${direction}`, () => {
+        const g = layoutFlow(
+          {
+            kind: "flow",
+            nodes: [
+              { id: "a", label: "A", shape: "box" },
+              { id: "b", label: "B", shape: "box" },
+            ],
+            edges: [{ from: "a", to: "b" }],
+            notes: [{ target: "b", side, label: "note" }],
+          },
+          { direction },
+        );
+        const b = g.nodes.find((n) => n.id === "b")!;
+        const note = g.nodes.find((n) => n.kind === "note")!;
+        if (axis === "y") {
+          // Cross/main position on x is shared with the target; y is offset.
+          expect(note.x).toBeCloseTo(b.x, 0);
+          if (dir < 0) expect(note.y).toBeLessThan(b.y);
+          else expect(note.y).toBeGreaterThan(b.y);
+        } else {
+          expect(note.y).toBeCloseTo(b.y, 0);
+          if (dir < 0) expect(note.x).toBeLessThan(b.x);
+          else expect(note.x).toBeGreaterThan(b.x);
+        }
+        // The note chip is fully inside the reported bounds (never clipped).
+        expect(note.x - note.w! / 2).toBeGreaterThanOrEqual(-0.01);
+        expect(note.y - note.h! / 2).toBeGreaterThanOrEqual(-0.01);
+        expect(note.x + note.w! / 2).toBeLessThanOrEqual(g.width + 0.01);
+        expect(note.y + note.h! / 2).toBeLessThanOrEqual(g.height + 0.01);
+      });
+    }
+  }
+
+  it("stacks two notes on the same side outward from the target", () => {
+    const g = layoutFlow(
+      {
+        kind: "flow",
+        nodes: [{ id: "a", label: "A", shape: "box" }],
+        edges: [],
+        notes: [
+          { target: "a", side: "below", label: "first" },
+          { target: "a", side: "below", label: "second" },
+        ],
+      },
+      { direction: "TD" },
+    );
+    const a = g.nodes.find((n) => n.id === "a")!;
+    const first = g.nodes.find((n) => n.label === "first")!;
+    const second = g.nodes.find((n) => n.label === "second")!;
+    // Both below the target; the second sits farther out than the first.
+    expect(first.y).toBeGreaterThan(a.y);
+    expect(second.y).toBeGreaterThan(first.y);
+  });
+
+  it("drops a note whose target is not a real node", () => {
+    const g = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "a", label: "A", shape: "box" }],
+      edges: [],
+      notes: [{ target: "ghost", side: "below", label: "orphan" }],
+    });
+    expect(g.nodes.some((n) => n.kind === "note")).toBe(false);
+    expect(g.edges.some((e) => e.kind === "note")).toBe(false);
+  });
+
+  it("is deterministic with notes", () => {
+    expect(layoutFlow(pipeline(true))).toEqual(layoutFlow(pipeline(true)));
+  });
+});
