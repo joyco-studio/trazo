@@ -40,6 +40,16 @@ export const JOYCO_PRESET: TrazoTheme = {
     error: 'oklch(0.6677 0.2235 36.99)',
     'error-foreground': 'oklch(1 0 0)',
     info: 'oklch(0.7845 0.1325 181.91)',
+    // Git lane palette — 6 distinct, legible hues on the dark canvas so a
+    // multi-branch graph reads clearly (branch tags + lanes share these). Without
+    // these the git graph fell back to the app's shadcn chart tokens and ignored
+    // the theme. Foregrounds auto-derive by contrast.
+    'lane-1': 'oklch(0.5679 0.2312 264.14)',
+    'lane-2': 'oklch(0.8923 0.2626 135.42)',
+    'lane-3': 'oklch(0.8809 0.1806 94.02)',
+    'lane-4': 'oklch(0.7845 0.1325 181.91)',
+    'lane-5': 'oklch(0.7 0.16 320)',
+    'lane-6': 'oklch(0.6677 0.2235 36.99)',
     foreground: 'oklch(0.9461 0 0)',
     edge: 'oklch(0.5417 0 0)',
     accent: 'oklch(0.285 0 0)',
@@ -79,6 +89,21 @@ export const SOFT_PRESET: TrazoTheme = {
     'error-foreground': 'oklch(0.441 0.1287 29.81)',
     info: 'oklch(0.8721 0.0465 244.35)',
     'info-foreground': 'oklch(0.3986 0.0619 242.84)',
+    // Soft git lanes — muted pastels tuned to the beige canvas (tinted
+    // foregrounds are explicit below via the pairs). Shares the git graph's
+    // palette so it matches the rest of the soft theme instead of shadcn charts.
+    'lane-1': 'oklch(0.5497 0.0655 70.71)',
+    'lane-1-foreground': 'oklch(0.9513 0.0176 81.33)',
+    'lane-2': 'oklch(0.8791 0.0793 160.62)',
+    'lane-2-foreground': 'oklch(0.427 0.0786 160.2)',
+    'lane-3': 'oklch(0.9262 0.0761 95.33)',
+    'lane-3-foreground': 'oklch(0.4715 0.086 94.22)',
+    'lane-4': 'oklch(0.8721 0.0465 244.35)',
+    'lane-4-foreground': 'oklch(0.3986 0.0619 242.84)',
+    'lane-5': 'oklch(0.862 0.0585 302.94)',
+    'lane-5-foreground': 'oklch(0.3581 0.0879 292.94)',
+    'lane-6': 'oklch(0.8288 0.0714 28.38)',
+    'lane-6-foreground': 'oklch(0.441 0.1287 29.81)',
     foreground: 'oklch(0.342 0.0212 88.08)',
     edge: 'oklch(0.6088 0.0267 85.79)',
     accent: 'oklch(0.7049 0.0288 85.67)',
