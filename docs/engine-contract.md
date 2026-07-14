@@ -92,7 +92,12 @@ interface PositionedGraph {
 ## Layout options
 
 ```ts
-type EdgeStyle = "elbow45" | "orthogonal";   // default "elbow45"
+type EdgeStyle = "elbow45" | "orthogonal" | "rounded" | "bezier"; // default "elbow45"
+// "rounded" = orthogonal geometry with arced corners; "bezier" = a uniform
+// cubic B-SPLINE (d3 curveBasis) that only APPROXIMATES interior waypoints —
+// loose, ordinary arrow-spline curves, contained in the control hull (never
+// overshoots the canvas). The theme layer calls these "lanes modes"
+// (angular = elbow45).
 
 interface LayoutOptions {        // git
   laneWidth?; rowHeight?; nodeRadius?; padding?;
@@ -105,6 +110,7 @@ interface FlowLayoutOptions {    // flow
   direction?: FlowDirection;     // default "TD"
   layerGap?; nodeGap?; padding?; minNodeWidth?; nodeHeight?; labelPadX?;
   maxNodeWidth?: number;         // word-wrap labels so boxes cap near this px
+  edgeGap?: number;              // air (px) between edge ends/arrow tips and node faces
   edgeStyle?: EdgeStyle;
 }
 ```

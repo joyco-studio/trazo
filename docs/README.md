@@ -24,5 +24,11 @@ not a re-listing of the source.
   canvas / `window`), so the same diagram renders identically on the server and
   the client. That's the whole point: programmatic, server-rendered, on-brand
   SVG illustrations for the JOYCO logs.
+- **Theming** is a first-class `TrazoTheme` object (`src/theme.ts`): a layout
+  half (density, lanes mode, lane gap → `theme*Options()`) and a paint half
+  (color tokens, lane style, roundness, border, canvas → `<Graph theme>`),
+  on top of the `--trazo-*` CSS-var layer. `joycoTheme` is the house preset.
+  See [rendering-and-brand.md](./rendering-and-brand.md).
 - **Trazo Playground** (`apps/playground`) is a Next.js app to author and preview
-  diagrams against the engine, SSR-first.
+  diagrams against the engine, SSR-first — including a theme editor with
+  presets and JSON/CSS export.
