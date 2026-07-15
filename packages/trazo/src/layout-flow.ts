@@ -987,13 +987,29 @@ export function layoutFlow(
     if (list) list.push(pe);
     else labeledBySource.set(pe.from, [pe]);
   }
-  for (const group of labeledBySource.values()) {
+  for (const [from, group] of labeledBySource) {
     if (group.length < 2) continue;
     let level = Infinity;
     for (const pe of group) {
       const main = direction === "TD" ? (pe.labelPoint as Point).y : (pe.labelPoint as Point).x;
       if (main < level) level = main;
     }
+    // Snapping to the SHALLOWEST sibling can drag the group's TALLEST badge up
+    // into the source node: the inter-rank gap was widened for that badge's main
+    // extent, but this shared level rides the shallowest sibling's own diagonal,
+    // which can sit shallower than the gap's center. Floor the level so even the
+    // tallest badge clears the source's forward face by `LABEL_GAP`. Alignment
+    // only moves labels shallower, so the source side is the only one at risk.
+    const src = vById.get(from) as Vertex;
+    let maxHalf = 0;
+    for (const pe of group) {
+      const extent =
+        direction === "TD" ? badgeHeight(pe.labelHeight ?? 0) : badgeWidth(pe.labelWidth ?? 0);
+      if (extent / 2 > maxHalf) maxHalf = extent / 2;
+    }
+    const srcForward = direction === "TD" ? src.center.y + src.h / 2 : src.center.x + src.w / 2;
+    const floor = srcForward + maxHalf + LABEL_GAP;
+    if (level < floor) level = floor;
     for (const pe of group) {
       const lp = pe.labelPoint as Point;
       pe.labelPoint = direction === "TD" ? { x: lp.x, y: level } : { x: level, y: lp.y };

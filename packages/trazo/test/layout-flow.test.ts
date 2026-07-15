@@ -616,6 +616,39 @@ describe("layoutFlow() — subgraphs", () => {
     }
   });
 
+  it("keeps a tall sibling label clear of the source after alignment (#15)", () => {
+    // Sibling labels snap to the SHALLOWEST of the group's levels. A short
+    // sibling can set a level so shallow that a tall multi-line sibling, dragged
+    // up to it, would poke into the source box. The alignment floor must keep the
+    // tallest badge clear of the source's forward face (TD: bottom, LR: right).
+    for (const direction of ["TD", "LR"] as const) {
+      const graph: FlowGraph = {
+        kind: "flow",
+        nodes: [
+          { id: "s", label: "S" },
+          { id: "k0", label: "k0" },
+          { id: "k1", label: "k1" },
+        ],
+        edges: [
+          { from: "s", to: "k0", label: "a\nb\nc\nd\ne" },
+          { from: "s", to: "k1", label: "ok" },
+        ],
+      };
+      const g = layoutFlow(graph, { direction });
+      const s = g.nodes.find((n) => n.id === "s")!;
+      const srcForward = direction === "TD" ? s.y + s.h! / 2 : s.x + s.w! / 2;
+      for (const e of g.edges) {
+        if (e.labelPoint === undefined) continue;
+        const half =
+          (direction === "TD"
+            ? badgeHeight(e.labelHeight ?? 0)
+            : badgeWidth(e.labelWidth ?? 0)) / 2;
+        const main = direction === "TD" ? e.labelPoint.y : e.labelPoint.x;
+        expect(main - half).toBeGreaterThanOrEqual(srcForward - 0.5);
+      }
+    }
+  });
+
   it("leaves single-line edge labels unchanged (labelHeight = one line)", () => {
     const graph: FlowGraph = {
       kind: "flow",
