@@ -195,9 +195,13 @@ export type NoteSide = "above" | "below" | "left" | "right";
  * A free-floating annotation bound to an existing flow node — a margin note with
  * a leader arrow pointing at the target's near face. Unlike a {@link FlowNode},
  * a note is EXCLUDED from ranking: it never receives a rank, never generates a
- * dummy chain, and has zero effect on the position of any real node. The layout
- * places it in the gutter on `side` of the target after the main layout resolves
- * (see {@link PositionedNode.kind} and the leader {@link PositionedEdge}).
+ * dummy chain, and can never change which rank a real node lands in. The layout
+ * places it in the gutter on `side` of the target after the main layout resolves,
+ * centered on the target's cross-axis so its leader is a straight perpendicular
+ * arrow (see {@link PositionedNode.kind} and the leader {@link PositionedEdge}).
+ * A note that would spill off-canvas shifts the whole graph to stay in frame
+ * (a pure translation that keeps it aligned), so real-node coordinates are
+ * preserved only when no such shift is needed.
  */
 export interface FlowNote {
   /** Id of the {@link FlowNode} this note hangs off (declared anywhere in the graph). */

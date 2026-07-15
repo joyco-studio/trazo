@@ -18,11 +18,16 @@ edge, which forks the pipeline.
 - **Types:** new `FlowNote` / `NoteSide`, `FlowGraph.notes`, a `kind: "note"`
   discriminator on `PositionedNode`, a `"note"` `EdgeKind`, and a `calloutGap`
   `FlowLayoutOptions` knob (default 24).
-- **Layout:** notes are placed purely from resolved real-node centers as a
-  post-pass, so they have **zero** effect on real-node positions — removing every
-  `note` line yields byte-identical layout. The note chip + leader fold into the
-  same "labels grow the canvas" bounds pass, so they're never clipped. Multiple
-  notes on a side stack outward.
+- **Layout:** notes are excluded from ranking (they can never change which rank a
+  real node lands in) and placed from resolved real-node centers as a post-pass,
+  **centered on the target's cross-axis** so the leader is a straight
+  perpendicular arrow (vertical for `above`/`below`, horizontal for
+  `left`/`right`). The chip + leader fold into the same "labels grow the canvas"
+  bounds pass, so a note is never clipped — one that would spill off-canvas shifts
+  the whole graph (a pure translation that keeps it aligned). Multiple notes on a
+  side stack outward. No collision routing: a note placed where a real node
+  already sits (e.g. `below` a mid-pipeline node in `TD`) may overlap it — put it
+  on a side with room.
 - **Renderer:** the note draws as a filled chip under `data-slot="annotation"`
   (styleable via `classNames.annotation`) and the leader as a neutral connector
   with an arrowhead at the target face.

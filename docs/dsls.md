@@ -104,11 +104,21 @@ note <targetId> <side> "<text>" [:role]
   unknown node.
 
 A note is **excluded from ranking**: it never receives a rank, never generates a
-dummy chain, and has **zero** effect on the position of any real node (removing
-every `note` line yields byte-identical positions). The layout emits it as a
+dummy chain, and can never change which rank a real node lands in. It's placed
+**centered on its target's cross-axis**, so the leader is a straight
+perpendicular arrow — vertical for `above`/`below`, horizontal for `left`/`right`
+— and the chip reads as aligned with its node. The layout emits it as a
 `PositionedNode` flagged `kind: "note"` (rendered under `data-slot="annotation"`)
 plus a leader `PositionedEdge` (`kind: "note"`). Multiple notes on one side stack
-outward. No auto-routing around other nodes — place the note on a side with room.
+outward.
+
+A note that would spill off-canvas **shifts the whole graph** to stay in frame (a
+pure translation that keeps the note aligned and never clips), so real-node
+coordinates are preserved only when no such shift is needed — e.g. the canonical
+`LR` pipeline with a `below` note. There's **no collision routing**: a note placed
+where a real node already sits — such as `below` a mid-pipeline node in a `TD`
+flow, which lands between two ranks — will overlap it. Put the note on a side with
+room (in `TD`, that's usually `left`/`right`; in `LR`, `above`/`below`).
 
 ```
 flow LR

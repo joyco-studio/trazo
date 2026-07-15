@@ -596,12 +596,16 @@ describe("layoutFlow() — notes", () => {
     return g;
   };
 
-  it("has ZERO effect on real-node positions (regression guard vs ranking leakage)", () => {
+  it("leaves real-node positions byte-identical when the note needs no shift (canonical LR below)", () => {
+    // A `below` note on a mid-pipeline node in LR drops into free space and never
+    // spills off-canvas, so no normalization shift fires and real nodes are
+    // untouched — the primary regression guard against ranking leakage. (A note
+    // that WOULD spill is allowed to translate the graph to stay aligned + in
+    // frame; that case is covered separately.)
     const bare = layoutFlow(pipeline(false), { direction: "LR" });
     const noted = layoutFlow(pipeline(true), { direction: "LR" });
     const real = (g: ReturnType<typeof layoutFlow>) =>
       g.nodes.filter((n) => n.kind !== "note").map((n) => ({ id: n.id, x: n.x, y: n.y }));
-    // Byte-identical positions for every real node.
     expect(real(noted)).toEqual(real(bare));
   });
 
@@ -721,11 +725,11 @@ describe("layoutFlow() — notes", () => {
     expect(layoutFlow(pipeline(true))).toEqual(layoutFlow(pipeline(true)));
   });
 
-  it("an above/left note against the origin never moves real nodes (no whole-graph shift)", () => {
-    // The top-of-graph node sits one padding in from the origin; a note above it
-    // would spill past the padded origin. It must be clamped to the edge, NOT
-    // trigger the shared label-normalization shift that would translate the whole
-    // graph (real nodes included).
+  it("keeps a note aligned with its target and its leader perpendicular (straight), even against the origin", () => {
+    // A wide note on the top/left-most node would spill past the padded origin.
+    // The note stays CENTERED on its target's cross-axis (so the leader is a
+    // straight perpendicular arrow), and the whole graph shifts to keep it in
+    // frame — alignment + no-clip is preferred over holding real nodes fixed.
     const base: FlowGraph = {
       kind: "flow",
       nodes: [
@@ -738,24 +742,35 @@ describe("layoutFlow() — notes", () => {
         { from: "b", to: "c" },
       ],
     };
-    const real = (g: ReturnType<typeof layoutFlow>) =>
-      g.nodes.filter((n) => n.kind !== "note").map((n) => ({ id: n.id, x: n.x, y: n.y }));
-
-    for (const [direction, side] of [
-      ["TD", "above"],
-      ["LR", "left"],
-      ["LR", "above"],
+    const wide = "an annotation far wider than the tiny graph it hangs off";
+    // vertical sides align on x (vertical leader); horizontal sides align on y.
+    for (const [direction, side, axis] of [
+      ["TD", "above", "x"],
+      ["TD", "left", "y"],
+      ["LR", "above", "x"],
+      ["LR", "left", "y"],
     ] as const) {
-      const bare = layoutFlow(base, { direction });
-      const noted = layoutFlow(
-        { ...base, notes: [{ target: "a", side, label: "annotation on the edge node" }] },
+      const g = layoutFlow(
+        { ...base, notes: [{ target: "a", side, label: wide }] },
         { direction },
       );
-      expect(real(noted), `${direction}/${side}`).toEqual(real(bare));
-      // And the clamped note is still fully inside the viewBox (never clipped).
-      const note = noted.nodes.find((n) => n.kind === "note")!;
-      expect(note.x - note.w! / 2).toBeGreaterThanOrEqual(-0.01);
-      expect(note.y - note.h! / 2).toBeGreaterThanOrEqual(-0.01);
+      const target = g.nodes.find((n) => n.id === "a")!;
+      const note = g.nodes.find((n) => n.kind === "note")!;
+      const tag = `${direction}/${side}`;
+      // Aligned on the shared axis → a straight perpendicular leader.
+      if (axis === "x") expect(note.x, tag).toBeCloseTo(target.x, 5);
+      else expect(note.y, tag).toBeCloseTo(target.y, 5);
+      // Never clipped by the viewBox on any edge.
+      expect(note.x - note.w! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+      expect(note.y - note.h! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+      expect(note.x + note.w! / 2, tag).toBeLessThanOrEqual(g.width + 0.01);
+      expect(note.y + note.h! / 2, tag).toBeLessThanOrEqual(g.height + 0.01);
+      // The leader is straight along the shared axis: both endpoints match on it.
+      const leader = g.edges.find((e) => e.kind === "note")!;
+      const nums = leader.path.match(/-?\d+(\.\d+)?/g)!.map(Number);
+      const [x0, y0, x1, y1] = [nums[0]!, nums[1]!, nums[2]!, nums[3]!];
+      if (axis === "x") expect(Math.abs(x0 - x1), `${tag} vertical leader`).toBeLessThan(0.01);
+      else expect(Math.abs(y0 - y1), `${tag} horizontal leader`).toBeLessThan(0.01);
     }
   });
 
