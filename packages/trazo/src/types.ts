@@ -188,6 +188,36 @@ export interface FlowEdge {
 /** Which ends of an edge carry an arrowhead. */
 export type ArrowEnds = "none" | "end" | "both";
 
+/** Which side of its target a flow annotation (`note`) sits on. */
+export type NoteSide = "above" | "below" | "left" | "right";
+
+/**
+ * A free-floating annotation bound to an existing flow node — a margin note with
+ * a leader arrow pointing at the target's near face. Unlike a {@link FlowNode},
+ * a note is EXCLUDED from ranking: it never receives a rank, never generates a
+ * dummy chain, and can never change which rank a real node lands in. The layout
+ * places it in the gutter on `side` of the target after the main layout resolves,
+ * centered on the target's cross-axis so its leader is a straight perpendicular
+ * arrow (see {@link PositionedNode.kind} and the leader {@link PositionedEdge}).
+ * A note that would spill off-canvas shifts the whole graph to stay in frame
+ * (a pure translation that keeps it aligned), so real-node coordinates are
+ * preserved only when no such shift is needed.
+ */
+export interface FlowNote {
+  /** Id of the {@link FlowNode} this note hangs off (declared anywhere in the graph). */
+  target: NodeId;
+  /** Which side of the target the note sits on (and the face its leader points at). */
+  side: NoteSide;
+  /** Annotation text — same quoting/`<br/>`/inline-`code` rules as a node label. */
+  label: string;
+  /**
+   * Optional semantic role for the note chip. Absent → `neutral`. The leader line
+   * is always the neutral accent color regardless (a plain connector, not tinted
+   * by the target's or note's role).
+   */
+  role?: SemanticRole;
+}
+
 /** The full input for a flow layout. `kind` discriminates from `CommitGraph`. */
 export interface FlowGraph {
   kind: "flow";
@@ -205,6 +235,14 @@ export interface FlowGraph {
    * {@link PositionedGroup} bounding box per group with ≥1 positioned member.
    */
   groups?: FlowGroup[];
+  /**
+   * Free-floating annotations, each bound to a node via {@link FlowNote.target}.
+   * Excluded from ranking entirely — a note never moves a real node. The layout
+   * emits each as a {@link PositionedNode} flagged `kind: "note"` plus a leader
+   * {@link PositionedEdge}. A note whose target isn't a real node is dropped
+   * (same forgiving policy as an edge to an unknown node).
+   */
+  notes?: FlowNote[];
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -360,6 +398,15 @@ export interface PositionedNode {
   h?: number;
   /** Flow: node label text (rendered centered inside the shape). */
   label?: string;
+  /**
+   * Flow: discriminator marking a positioned entry as an ANNOTATION (a `note`)
+   * rather than a ranked graph node. Absent → a normal node. A `"note"` entry
+   * carries the same `shape`/`w`/`h`/`label`/`role` fields as a box node (so it
+   * sizes and renders as a filled chip) but was placed in the gutter relative to
+   * its target, outside the rank flow; the renderer draws it under
+   * `data-slot="annotation"`. Its leader is a separate `PositionedEdge`.
+   */
+  kind?: "note";
 }
 
 /**
@@ -397,7 +444,7 @@ export interface PositionedEdge {
   dashed?: boolean;
 }
 
-export type EdgeKind = "normal" | "branch" | "merge" | "flow" | "message";
+export type EdgeKind = "normal" | "branch" | "merge" | "flow" | "message" | "note";
 
 /**
  * A laid-out cluster container (subgraph box) or sequence note box. Unlike a
@@ -602,6 +649,11 @@ export interface FlowLayoutOptions {
   nodeGap?: number;
   /** Outer padding around the whole graph (px). */
   padding?: number;
+  /**
+   * Gap (px) between a `note` annotation's near face and its target's near face
+   * (and between stacked notes on the same side). Default 24.
+   */
+  calloutGap?: number;
   /** Minimum width (px) a sized box-like node may have. */
   minNodeWidth?: number;
   /** Base node height (px) before per-shape cap extents. */

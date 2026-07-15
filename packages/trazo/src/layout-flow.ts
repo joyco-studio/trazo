@@ -70,6 +70,7 @@ const DEFAULTS = {
   minNodeWidth: 64,
   nodeHeight: 36,
   labelPadX: 16,
+  calloutGap: 24,
 } as const;
 
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
@@ -141,6 +142,7 @@ export function layoutFlow(
   const layerGap = options?.layerGap ?? DEFAULTS.layerGap;
   const nodeGap = options?.nodeGap ?? DEFAULTS.nodeGap;
   const padding = options?.padding ?? DEFAULTS.padding;
+  const calloutGap = Math.max(0, options?.calloutGap ?? DEFAULTS.calloutGap);
   const edgeStyle = options?.edgeStyle ?? "elbow45";
   // Short perpendicular stub off each node face before any turn (px).
   const stub = 12;
@@ -852,6 +854,114 @@ export function layoutFlow(
     positionedEdges.push(edge);
   }
 
+  // ── Annotations (`note`) ──────────────────────────────────────────────
+  // Notes never participate in RANKING/ordering (they are not in `graph.nodes`,
+  // so `assignRanks` never saw them and no dummy chain was built) — they can
+  // never change which rank a real node lands in. Placement is a post-pass over
+  // the already-resolved real-node centers.
+  //
+  // Each note is a filled chip sized like a box node, sitting in the gutter on
+  // its `side`, offset from the target's near face by `calloutGap` and CENTERED
+  // on the target's cross-axis coordinate — so its leader is a straight
+  // PERPENDICULAR arrow (vertical for above/below, horizontal for left/right)
+  // and the chip reads as aligned with its node. Multiple notes on the same side
+  // stack outward (each beyond the previous).
+  //
+  // The note chip + leader are appended to `nodes`/`positionedEdges`/`edgePoints`
+  // BEFORE the label-bounds normalization below, so the same "labels grow the
+  // canvas" pass that guards edge labels also grows the viewBox for a note and,
+  // when one would spill past the top/left origin, SHIFTS the whole graph to keep
+  // it in frame. That shift is a pure translation (relative layout unchanged) and
+  // keeps the note aligned; it's preferred over nudging the note off its target's
+  // axis. So a note never clips, but it is only position-neutral for real nodes
+  // when no such shift is needed (e.g. a below/right note with room, as in the
+  // canonical LR pipeline). No collision routing: a note placed where a real node
+  // already sits (e.g. `below` a mid-pipeline node in TD) may overlap it — put it
+  // on a side with room.
+  const noteBoxes: PositionedNode[] = [];
+  if (graph.notes && graph.notes.length > 0) {
+    // Accumulated outward distance already consumed by prior notes on a side,
+    // keyed `${target}|${side}`, so stacked notes step past each other.
+    const stackOffset = new Map<string, number>();
+    let noteSeed = 0;
+    for (const note of graph.notes) {
+      const tv = vById.get(note.target);
+      // Drop notes whose target isn't a real node (same policy as a dangling edge).
+      if (tv === undefined || tv.isDummy) continue;
+      const role: SemanticRole = note.role ?? "neutral";
+      const label = wrapNodeLabel(note.label);
+      const { w: nw, h: nh } = sizeShape("box", label, sizeOpts);
+
+      const vertical = note.side === "above" || note.side === "below";
+      const sign = note.side === "above" || note.side === "left" ? -1 : +1;
+      const targetHalf = (vertical ? tv.h : tv.w) / 2;
+      const noteExtent = vertical ? nh : nw;
+      const key = `${note.target}|${note.side}`;
+      const consumed = stackOffset.get(key) ?? 0;
+      // Distance from the target CENTER out to the note's near face, then to its
+      // own center; the next same-side note starts one note + gap further out.
+      const nearFaceDist = targetHalf + calloutGap + consumed;
+      const centerDist = nearFaceDist + noteExtent / 2;
+      stackOffset.set(key, consumed + noteExtent + calloutGap);
+
+      // Keep the note CENTERED on the target's cross-axis so the leader stays
+      // perpendicular (a straight vertical arrow for above/below, horizontal for
+      // left/right) and the chip reads as aligned with its node. A note that
+      // would spill past the top/left origin is NOT nudged off this axis — it
+      // folds into the same "labels grow the canvas" normalization below, which
+      // shifts the whole graph so the note is never clipped AND stays aligned.
+      // (Real nodes may translate as a result; alignment + no-clip is preferred.)
+      const nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
+      const ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+
+      // Leader endpoints: the note's near face → the target's near face. `sign`
+      // aims the segment back at the target; the arrowhead lands on that face.
+      const noteFace: Point = vertical
+        ? { x: nx, y: ny - sign * (nh / 2) }
+        : { x: nx - sign * (nw / 2), y: ny };
+      const targetFace: Point = vertical
+        ? { x: tv.center.x, y: tv.center.y + sign * targetHalf }
+        : { x: tv.center.x + sign * targetHalf, y: tv.center.y };
+
+      const noteId = `__note_${noteSeed++}`;
+      const box: PositionedNode = {
+        id: noteId,
+        kind: "note",
+        x: nx,
+        y: ny,
+        color: roleColorKey(role),
+        shape: "box",
+        role,
+        w: nw,
+        h: nh,
+      };
+      if (label !== undefined) {
+        box.label = label;
+        box.labelWidth = measureMultiline(label, undefined, textCase).width;
+      }
+      nodes.push(box);
+      noteBoxes.push(box);
+
+      const points: Point[] = [noteFace, targetFace];
+      for (const p of points) {
+        if (p.x > routeMaxX) routeMaxX = p.x;
+        if (p.y > routeMaxY) routeMaxY = p.y;
+        if (p.x < routeMinX) routeMinX = p.x;
+        if (p.y < routeMinY) routeMinY = p.y;
+      }
+      edgePoints.push(points);
+      positionedEdges.push({
+        from: noteId,
+        to: note.target,
+        path: "",
+        kind: "note",
+        // Leaders are always the neutral accent connector — never tinted.
+        color: "accent",
+        arrowHead: "end",
+      });
+    }
+  }
+
   // ── Align sibling edge labels to a shared level ───────────────────────
   // Labels on edges that fan out from the SAME source land on each edge's own
   // diagonal, which can sit at different main-axis depths (one high near the
@@ -900,6 +1010,20 @@ export function layoutFlow(
     if (pe.labelPoint.x + halfW > labelMaxX) labelMaxX = pe.labelPoint.x + halfW;
     if (pe.labelPoint.y - BADGE_H / 2 < labelMinY) labelMinY = pe.labelPoint.y - BADGE_H / 2;
     if (pe.labelPoint.y + BADGE_H / 2 > labelMaxY) labelMaxY = pe.labelPoint.y + BADGE_H / 2;
+  }
+  // Annotation chips ride the same normalization as edge labels: an `above`/
+  // `left` note spilling past the top/left origin drives a shift that translates
+  // the whole graph (so the note stays perfectly aligned with its target AND is
+  // never clipped), while a `below`/`right` note just grows the far canvas. The
+  // note keeps its target's cross-axis coordinate throughout, so its leader
+  // stays a straight perpendicular arrow.
+  for (const nb of noteBoxes) {
+    const halfW = (nb.w ?? 0) / 2;
+    const halfH = (nb.h ?? 0) / 2;
+    if (nb.x - halfW < labelMinX) labelMinX = nb.x - halfW;
+    if (nb.x + halfW > labelMaxX) labelMaxX = nb.x + halfW;
+    if (nb.y - halfH < labelMinY) labelMinY = nb.y - halfH;
+    if (nb.y + halfH > labelMaxY) labelMaxY = nb.y + halfH;
   }
   const shiftX = labelMinX === Infinity ? 0 : Math.max(0, padding - labelMinX);
   const shiftY = labelMinY === Infinity ? 0 : Math.max(0, padding - labelMinY);

@@ -74,3 +74,34 @@ describe("<Graph> inline code", () => {
     expect(html).not.toContain('data-slot="label-code"');
   });
 });
+
+describe("<Graph> annotations (notes)", () => {
+  const g: FlowGraph = {
+    kind: "flow",
+    nodes: [
+      { id: "a", label: "A", shape: "box", role: "neutral" },
+      { id: "b", label: "B", shape: "box", role: "neutral" },
+    ],
+    edges: [{ from: "a", to: "b" }],
+    notes: [{ target: "b", side: "below", label: "watch `this`" }],
+  };
+
+  it("renders the note under data-slot=annotation with a leader edge", () => {
+    const html = render(g);
+    expect(html).toContain('data-slot="annotation"');
+    expect(html).toContain('data-slot="annotation-box"');
+    // Leader edge is drawn as a plain connector with kind="note".
+    expect(html).toContain('data-kind="note"');
+    // Note text obeys the same inline-code rule as node labels.
+    expect(html).toContain('data-slot="label-code"');
+  });
+
+  it("does not emit an annotation slot for a note-free graph", () => {
+    const plain: FlowGraph = {
+      kind: "flow",
+      nodes: [{ id: "a", label: "A", shape: "box", role: "neutral" }],
+      edges: [],
+    };
+    expect(render(plain)).not.toContain('data-slot="annotation"');
+  });
+});

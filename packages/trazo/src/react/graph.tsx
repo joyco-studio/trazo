@@ -865,14 +865,58 @@ export function Graph(props: GraphProps): JSX.Element {
       ) : null}
 
       <g data-slot="nodes">
-        {graph.nodes.map((node) => (
-          <g key={node.id} data-slot="node-group">
-            {renderNodeShape(node, classNames?.node, classNames?.nodeBox, paint)}
-            {renderNodeLabel(node, classNames?.label, paint.uppercase)}
-          </g>
-        ))}
+        {graph.nodes.map((node) =>
+          node.kind === "note" ? (
+            renderAnnotation(node, classNames, paint)
+          ) : (
+            <g key={node.id} data-slot="node-group">
+              {renderNodeShape(node, classNames?.node, classNames?.nodeBox, paint)}
+              {renderNodeLabel(node, classNames?.label, paint.uppercase)}
+            </g>
+          ),
+        )}
       </g>
     </svg>
+  );
+}
+
+/**
+ * Render a flow annotation (`note`) — a filled chip in the gutter beside its
+ * target, under a distinct `data-slot="annotation"` so consumers can style notes
+ * apart from real nodes. The chip reuses the box geometry (fill = the note's role
+ * color, `BG` border for the chip-lift) and the shared flow-label renderer, so a
+ * note obeys the same casing / `<br/>` / inline-`code` rules as a node label. Its
+ * leader arrow is a separate `PositionedEdge` (kind `"note"`) drawn with the
+ * edges. Pure.
+ */
+function renderAnnotation(
+  node: PositionedNode,
+  classNames: GraphProps["classNames"],
+  paint: ResolvedThemePaint,
+): JSX.Element {
+  const w = node.w ?? 0;
+  const h = node.h ?? 0;
+  const x = node.x - w / 2;
+  const y = node.y - h / 2;
+  return (
+    <g key={node.id} data-slot="annotation" className={classNames?.annotation}>
+      <rect
+        data-slot="annotation-box"
+        className={classNames?.nodeBox}
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx={paint.cornerRadius}
+        ry={paint.cornerRadius}
+        fill={nodeColor(node.color)}
+        stroke={BG}
+        strokeWidth={paint.borderWidth}
+      />
+      {node.label !== undefined
+        ? renderFlowLabel(node, classNames?.label, paint.uppercase)
+        : null}
+    </g>
   );
 }
 

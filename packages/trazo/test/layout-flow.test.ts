@@ -568,3 +568,247 @@ describe("layoutFlow() — subgraphs", () => {
     expect(faceGap).toBeCloseTo(56, 0); // default layerGap, un-widened
   });
 });
+
+// ── notes (annotations) ─────────────────────────────────────────────────────
+
+describe("layoutFlow() — notes", () => {
+  // The motivating case: a strictly linear pipeline plus one note below `layout`.
+  const pipeline = (withNote: boolean): FlowGraph => {
+    const g: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "js", label: "JS", shape: "box" },
+        { id: "style", label: "Style", shape: "box" },
+        { id: "layout", label: "Layout", shape: "box" },
+        { id: "paint", label: "Paint", shape: "box" },
+        { id: "composite", label: "Composite", shape: "box" },
+      ],
+      edges: [
+        { from: "js", to: "style", arrow: "none" },
+        { from: "style", to: "layout", arrow: "none" },
+        { from: "layout", to: "paint", arrow: "none" },
+        { from: "paint", to: "composite", arrow: "none" },
+      ],
+    };
+    if (withNote) {
+      g.notes = [{ target: "layout", side: "below", label: "this one makes fps cry" }];
+    }
+    return g;
+  };
+
+  it("leaves real-node positions byte-identical when the note needs no shift (canonical LR below)", () => {
+    // A `below` note on a mid-pipeline node in LR drops into free space and never
+    // spills off-canvas, so no normalization shift fires and real nodes are
+    // untouched — the primary regression guard against ranking leakage. (A note
+    // that WOULD spill is allowed to translate the graph to stay aligned + in
+    // frame; that case is covered separately.)
+    const bare = layoutFlow(pipeline(false), { direction: "LR" });
+    const noted = layoutFlow(pipeline(true), { direction: "LR" });
+    const real = (g: ReturnType<typeof layoutFlow>) =>
+      g.nodes.filter((n) => n.kind !== "note").map((n) => ({ id: n.id, x: n.x, y: n.y }));
+    expect(real(noted)).toEqual(real(bare));
+  });
+
+  it("renders the motivating pipeline as a single straight LR line", () => {
+    const g = layoutFlow(pipeline(true), { direction: "LR" });
+    const real = g.nodes.filter((n) => n.kind !== "note");
+    // Strictly linear: every real node shares one cross-axis (y) coordinate and
+    // x strictly increases in pipeline order.
+    const ys = new Set(real.map((n) => Math.round(n.y)));
+    expect(ys.size).toBe(1);
+    const order = ["js", "style", "layout", "paint", "composite"];
+    const xs = order.map((id) => real.find((n) => n.id === id)!.x);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]!).toBeGreaterThan(xs[i - 1]!);
+  });
+
+  it("emits the note as a kind:'note' chip and a neutral leader edge", () => {
+    const g = layoutFlow(pipeline(true), { direction: "LR" });
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    expect(note).toBeDefined();
+    expect(note.label).toBe("this one makes fps cry");
+    expect(note.shape).toBe("box");
+    const leader = g.edges.find((e) => e.kind === "note")!;
+    expect(leader).toBeDefined();
+    expect(leader.to).toBe("layout");
+    expect(leader.from).toBe(note.id);
+    expect(leader.color).toBe("accent"); // neutral, not tinted by the target role
+    expect(leader.arrowHead).toBe("end");
+    expect(leader.path).toBeTruthy();
+    expect(leader.path.includes("NaN")).toBe(false);
+  });
+
+  it("places the note below its target with the leader pointing up (LR)", () => {
+    const g = layoutFlow(pipeline(true), { direction: "LR" });
+    const target = g.nodes.find((n) => n.id === "layout")!;
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    // Below → note center-y is past the target's bottom face, roughly on its x.
+    expect(note.y).toBeGreaterThan(target.y + target.h! / 2);
+    expect(note.x).toBeCloseTo(target.x, 0);
+  });
+
+  const sides = [
+    { side: "above", axis: "y", dir: -1 },
+    { side: "below", axis: "y", dir: +1 },
+    { side: "left", axis: "x", dir: -1 },
+    { side: "right", axis: "x", dir: +1 },
+  ] as const;
+
+  for (const direction of ["TD", "LR"] as const) {
+    for (const { side, axis, dir } of sides) {
+      it(`places a '${side}' note on the correct side in ${direction}`, () => {
+        const g = layoutFlow(
+          {
+            kind: "flow",
+            nodes: [
+              { id: "a", label: "A", shape: "box" },
+              { id: "b", label: "B", shape: "box" },
+            ],
+            edges: [{ from: "a", to: "b" }],
+            notes: [{ target: "b", side, label: "note" }],
+          },
+          { direction },
+        );
+        const b = g.nodes.find((n) => n.id === "b")!;
+        const note = g.nodes.find((n) => n.kind === "note")!;
+        if (axis === "y") {
+          // Cross/main position on x is shared with the target; y is offset.
+          expect(note.x).toBeCloseTo(b.x, 0);
+          if (dir < 0) expect(note.y).toBeLessThan(b.y);
+          else expect(note.y).toBeGreaterThan(b.y);
+        } else {
+          expect(note.y).toBeCloseTo(b.y, 0);
+          if (dir < 0) expect(note.x).toBeLessThan(b.x);
+          else expect(note.x).toBeGreaterThan(b.x);
+        }
+        // The note chip is fully inside the reported bounds (never clipped).
+        expect(note.x - note.w! / 2).toBeGreaterThanOrEqual(-0.01);
+        expect(note.y - note.h! / 2).toBeGreaterThanOrEqual(-0.01);
+        expect(note.x + note.w! / 2).toBeLessThanOrEqual(g.width + 0.01);
+        expect(note.y + note.h! / 2).toBeLessThanOrEqual(g.height + 0.01);
+      });
+    }
+  }
+
+  it("stacks two notes on the same side outward from the target", () => {
+    const g = layoutFlow(
+      {
+        kind: "flow",
+        nodes: [{ id: "a", label: "A", shape: "box" }],
+        edges: [],
+        notes: [
+          { target: "a", side: "below", label: "first" },
+          { target: "a", side: "below", label: "second" },
+        ],
+      },
+      { direction: "TD" },
+    );
+    const a = g.nodes.find((n) => n.id === "a")!;
+    const first = g.nodes.find((n) => n.label === "first")!;
+    const second = g.nodes.find((n) => n.label === "second")!;
+    // Both below the target; the second sits farther out than the first.
+    expect(first.y).toBeGreaterThan(a.y);
+    expect(second.y).toBeGreaterThan(first.y);
+  });
+
+  it("drops a note whose target is not a real node", () => {
+    const g = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "a", label: "A", shape: "box" }],
+      edges: [],
+      notes: [{ target: "ghost", side: "below", label: "orphan" }],
+    });
+    expect(g.nodes.some((n) => n.kind === "note")).toBe(false);
+    expect(g.edges.some((e) => e.kind === "note")).toBe(false);
+  });
+
+  it("is deterministic with notes", () => {
+    expect(layoutFlow(pipeline(true))).toEqual(layoutFlow(pipeline(true)));
+  });
+
+  it("keeps a note aligned with its target and its leader perpendicular (straight), even against the origin", () => {
+    // A wide note on the top/left-most node would spill past the padded origin.
+    // The note stays CENTERED on its target's cross-axis (so the leader is a
+    // straight perpendicular arrow), and the whole graph shifts to keep it in
+    // frame — alignment + no-clip is preferred over holding real nodes fixed.
+    const base: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "Top", shape: "box" },
+        { id: "b", label: "Mid", shape: "box" },
+        { id: "c", label: "Bot", shape: "box" },
+      ],
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+    };
+    const wide = "an annotation far wider than the tiny graph it hangs off";
+    // vertical sides align on x (vertical leader); horizontal sides align on y.
+    for (const [direction, side, axis] of [
+      ["TD", "above", "x"],
+      ["TD", "left", "y"],
+      ["LR", "above", "x"],
+      ["LR", "left", "y"],
+    ] as const) {
+      const g = layoutFlow(
+        { ...base, notes: [{ target: "a", side, label: wide }] },
+        { direction },
+      );
+      const target = g.nodes.find((n) => n.id === "a")!;
+      const note = g.nodes.find((n) => n.kind === "note")!;
+      const tag = `${direction}/${side}`;
+      // Aligned on the shared axis → a straight perpendicular leader.
+      if (axis === "x") expect(note.x, tag).toBeCloseTo(target.x, 5);
+      else expect(note.y, tag).toBeCloseTo(target.y, 5);
+      // Never clipped by the viewBox on any edge.
+      expect(note.x - note.w! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+      expect(note.y - note.h! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+      expect(note.x + note.w! / 2, tag).toBeLessThanOrEqual(g.width + 0.01);
+      expect(note.y + note.h! / 2, tag).toBeLessThanOrEqual(g.height + 0.01);
+      // The leader is straight along the shared axis: both endpoints match on it.
+      const leader = g.edges.find((e) => e.kind === "note")!;
+      const nums = leader.path.match(/-?\d+(\.\d+)?/g)!.map(Number);
+      const [x0, y0, x1, y1] = [nums[0]!, nums[1]!, nums[2]!, nums[3]!];
+      if (axis === "x") expect(Math.abs(x0 - x1), `${tag} vertical leader`).toBeLessThan(0.01);
+      else expect(Math.abs(y0 - y1), `${tag} horizontal leader`).toBeLessThan(0.01);
+    }
+  });
+
+  it("never clips a note — even a wide one on an extreme node, across sides/dirs/padding", () => {
+    // Clamping guards the near edges (both axes); far-side growth guards the far
+    // edges. This pins that they compose so a note box (and its leader) is ALWAYS
+    // inside the reported viewBox, including the worst cases: a label far wider
+    // than the graph, hung off the top/left-most or bottom/right-most node.
+    const wide = "this annotation is deliberately far wider than the tiny graph it hangs off";
+    const base: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A", shape: "box" },
+        { id: "b", label: "B", shape: "box" },
+        { id: "c", label: "C", shape: "box" },
+      ],
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+    };
+    for (const direction of ["TD", "LR"] as const) {
+      for (const side of ["above", "below", "left", "right"] as const) {
+        for (const target of ["a", "c"] as const) {
+          for (const padding of [0, 24, 100]) {
+            const g = layoutFlow(
+              { ...base, notes: [{ target, side, label: wide }] },
+              { direction, padding },
+            );
+            const note = g.nodes.find((n) => n.kind === "note")!;
+            const tag = `${direction}/${side}/${target}/pad${padding}`;
+            expect(note.x - note.w! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+            expect(note.y - note.h! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+            expect(note.x + note.w! / 2, tag).toBeLessThanOrEqual(g.width + 0.01);
+            expect(note.y + note.h! / 2, tag).toBeLessThanOrEqual(g.height + 0.01);
+          }
+        }
+      }
+    }
+  });
+});
