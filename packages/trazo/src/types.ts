@@ -431,6 +431,12 @@ export interface PositionedEdge {
   /** Flow: measured pixel width of `label` (via `measure`). */
   labelWidth?: number;
   /**
+   * Flow: measured pixel height of `label` (`lines × labelLineHeight`). >1 line
+   * for a multi-line edge label (`\n`/`<br>`); the renderer stacks the lines and
+   * sizes the badge via `badgeHeight`, and the layout reserves the same height.
+   */
+  labelHeight?: number;
+  /**
    * Which ends of the edge carry an arrowhead (flow + sequence). Absent → the
    * renderer draws no head (git edges). `layoutFlow` emits "end" by default and
    * `layoutSequence` emits "end" on every message, so directed edges render an

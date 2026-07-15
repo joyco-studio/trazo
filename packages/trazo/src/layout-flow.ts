@@ -44,7 +44,7 @@ import type {
   SemanticRole,
 } from "./types.js";
 import {
-  BADGE_H,
+  badgeHeight,
   badgeWidth,
   edgeLabelPoint,
   faceAnchor,
@@ -388,10 +388,11 @@ export function layoutFlow(
   // centered in the gap between its two ranks. In a horizontal (LR) flow the
   // badge's WIDTH lies on the main axis and routinely exceeds the fixed
   // `layerGap`, so without reserving room the badge is drawn UNDER the
-  // neighbouring node boxes. Vertical (TD) flows stay tight: only the small
-  // BADGE_H sits on the main axis and already fits `layerGap`. Reserve, per rank
-  // boundary, enough main-axis room for the widest adjacent label crossing it
-  // (plus `LABEL_GAP` breathing space on each side).
+  // neighbouring node boxes. Vertical (TD) flows stay tight: the badge's height
+  // sits on the main axis and a single-line badge fits `layerGap` — but a
+  // multi-line label grows it, so reserve its real `badgeHeight`. Reserve, per
+  // rank boundary, enough main-axis room for the widest adjacent label crossing
+  // it (plus `LABEL_GAP` breathing space on each side).
   //
   // Only adjacent forward edges widen a gap. A rank-SPANNING edge's label isn't
   // gap-centered — it rides the polyline midpoint, which for a straightened span
@@ -405,12 +406,13 @@ export function layoutFlow(
     const fromV = vById.get(e.from) as Vertex;
     const toV = vById.get(e.to) as Vertex;
     if (toV.rank !== fromV.rank + 1) continue;
+    // Edge labels render verbatim (no inline-code chips), so measure them plain —
+    // backticks are ordinary glyphs, not consumed delimiters. In TD the badge's
+    // HEIGHT lies on the main axis (and grows with a multi-line label), in LR its
+    // width does.
+    const measured = measurePlainMultiline(e.label, undefined, textCase);
     const labelMainExtent =
-      direction === "TD"
-        ? BADGE_H
-        : // Edge labels render verbatim (no inline-code chips), so measure them
-          // plain — backticks are ordinary glyphs, not consumed delimiters.
-          badgeWidth(measurePlainMultiline(e.label, undefined, textCase).width);
+      direction === "TD" ? badgeHeight(measured.height) : badgeWidth(measured.width);
     const need = labelMainExtent + LABEL_GAP * 2;
     if (need > (labelGapAfter[fromV.rank] as number)) labelGapAfter[fromV.rank] = need;
   }
@@ -795,10 +797,13 @@ export function layoutFlow(
     if (e.label !== undefined) {
       edge.label = e.label;
       edge.labelPoint = edgeLabelPoint(points, edgeStyle, direction);
-      // Widest line, so a multi-line edge label reserves the right badge width.
+      // Widest line for width, line-count for height, so a multi-line edge label
+      // reserves the right badge in BOTH axes (the renderer stacks the lines).
       // Plain measure: the renderer draws `edge.label` verbatim (no inline-code
       // parsing), so backticks are literal glyphs here, not mono chips.
-      edge.labelWidth = measurePlainMultiline(e.label, undefined, textCase).width;
+      const measured = measurePlainMultiline(e.label, undefined, textCase);
+      edge.labelWidth = measured.width;
+      edge.labelHeight = measured.height;
     }
     return edge;
   });
@@ -849,7 +854,10 @@ export function layoutFlow(
         direction === "TD"
           ? { x: entryStub.x, y: (exitStub.y + entryStub.y) / 2 }
           : { x: (exitStub.x + entryStub.x) / 2, y: entryStub.y };
-      edge.labelWidth = measureMultiline(e.label, undefined, textCase).width;
+      // Plain measure (drawn verbatim, no inline-code chips), multi-line aware.
+      const measured = measurePlainMultiline(e.label, undefined, textCase);
+      edge.labelWidth = measured.width;
+      edge.labelHeight = measured.height;
     }
     positionedEdges.push(edge);
   }
@@ -979,13 +987,29 @@ export function layoutFlow(
     if (list) list.push(pe);
     else labeledBySource.set(pe.from, [pe]);
   }
-  for (const group of labeledBySource.values()) {
+  for (const [from, group] of labeledBySource) {
     if (group.length < 2) continue;
     let level = Infinity;
     for (const pe of group) {
       const main = direction === "TD" ? (pe.labelPoint as Point).y : (pe.labelPoint as Point).x;
       if (main < level) level = main;
     }
+    // Snapping to the SHALLOWEST sibling can drag the group's TALLEST badge up
+    // into the source node: the inter-rank gap was widened for that badge's main
+    // extent, but this shared level rides the shallowest sibling's own diagonal,
+    // which can sit shallower than the gap's center. Floor the level so even the
+    // tallest badge clears the source's forward face by `LABEL_GAP`. Alignment
+    // only moves labels shallower, so the source side is the only one at risk.
+    const src = vById.get(from) as Vertex;
+    let maxHalf = 0;
+    for (const pe of group) {
+      const extent =
+        direction === "TD" ? badgeHeight(pe.labelHeight ?? 0) : badgeWidth(pe.labelWidth ?? 0);
+      if (extent / 2 > maxHalf) maxHalf = extent / 2;
+    }
+    const srcForward = direction === "TD" ? src.center.y + src.h / 2 : src.center.x + src.w / 2;
+    const floor = srcForward + maxHalf + LABEL_GAP;
+    if (level < floor) level = floor;
     for (const pe of group) {
       const lp = pe.labelPoint as Point;
       pe.labelPoint = direction === "TD" ? { x: lp.x, y: level } : { x: level, y: lp.y };
@@ -994,7 +1018,7 @@ export function layoutFlow(
 
   // ── Fold edge-label badges into the bounds ────────────────────────────
   // Edge labels render as a sliced badge centered on `labelPoint`
-  // (badgeWidth × BADGE_H). A label wider than the graph spills past the
+  // (badgeWidth × badgeHeight). A label wider than the graph spills past the
   // viewBox on either side, breaking the contract that width/height bound ALL
   // geometry including labels. Left/top spill shifts the whole geometry
   // right/down (same normalization as the git leading badge); right/bottom
@@ -1006,10 +1030,11 @@ export function layoutFlow(
   for (const pe of positionedEdges) {
     if (pe.labelPoint === undefined) continue;
     const halfW = badgeWidth(pe.labelWidth ?? 0) / 2;
+    const halfH = badgeHeight(pe.labelHeight ?? 0) / 2;
     if (pe.labelPoint.x - halfW < labelMinX) labelMinX = pe.labelPoint.x - halfW;
     if (pe.labelPoint.x + halfW > labelMaxX) labelMaxX = pe.labelPoint.x + halfW;
-    if (pe.labelPoint.y - BADGE_H / 2 < labelMinY) labelMinY = pe.labelPoint.y - BADGE_H / 2;
-    if (pe.labelPoint.y + BADGE_H / 2 > labelMaxY) labelMaxY = pe.labelPoint.y + BADGE_H / 2;
+    if (pe.labelPoint.y - halfH < labelMinY) labelMinY = pe.labelPoint.y - halfH;
+    if (pe.labelPoint.y + halfH > labelMaxY) labelMaxY = pe.labelPoint.y + halfH;
   }
   // Annotation chips ride the same normalization as edge labels: an `above`/
   // `left` note spilling past the top/left origin drives a shift that translates

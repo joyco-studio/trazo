@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { layout, layoutFlow } from "../src/index.js";
-import { badgeWidth, BADGE_H } from "../src/geometry.js";
+import { badgeWidth, badgeHeight, BADGE_H, measurePlainMultiline } from "../src/geometry.js";
 import type { FlowGraph, NodeShape } from "../src/index.js";
 
 /**
@@ -566,6 +566,100 @@ describe("layoutFlow() — subgraphs", () => {
     const b = g.nodes.find((n) => n.id === "b")!;
     const faceGap = b.x - b.w! / 2 - (a.x + a.w! / 2);
     expect(faceGap).toBeCloseTo(56, 0); // default layerGap, un-widened
+  });
+
+  it("reserves a multi-line edge label's widest line (not the concatenation)", () => {
+    // Regression (#15): the engine measured edge labels multi-line but the
+    // renderer drew them single-line, so the badge width tracked the WIDEST line
+    // while the drawn text ran every line together (wider) and overflowed. Now
+    // both agree: labelWidth = widest line, labelHeight = line count × line-height.
+    const graph: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "main" },
+        { id: "b", label: "elvira/checkout" },
+      ],
+      edges: [{ from: "a", to: "b", label: "commit\nscroll deltas" }],
+    };
+    const g = layoutFlow(graph, { direction: "LR" });
+    const e = g.edges.find((x) => x.from === "a" && x.to === "b")!;
+    const measured = measurePlainMultiline("commit\nscroll deltas");
+    // Width is the widest single line, NOT "commit scroll deltas" concatenated.
+    expect(e.labelWidth).toBeCloseTo(measured.width, 3);
+    const concatenated = measurePlainMultiline("commit scroll deltas").width;
+    expect(e.labelWidth!).toBeLessThan(concatenated);
+    // Height spans both lines, so the badge grows past a single-line BADGE_H.
+    expect(e.labelHeight).toBeCloseTo(measured.height, 3);
+    expect(badgeHeight(e.labelHeight ?? 0)).toBeGreaterThan(BADGE_H);
+  });
+
+  it("keeps a multi-line edge label badge fully within the canvas (LR and TD)", () => {
+    // Acceptance (#15): both lines readable and fully contained, in LR and TD.
+    const graph: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      edges: [{ from: "a", to: "b", label: "one\ntwo" }],
+    };
+    for (const direction of ["LR", "TD"] as const) {
+      const g = layoutFlow(graph, { direction });
+      const e = g.edges.find((x) => x.from === "a" && x.to === "b")!;
+      const halfW = badgeWidth(e.labelWidth ?? 0) / 2;
+      const halfH = badgeHeight(e.labelHeight ?? 0) / 2;
+      const lp = e.labelPoint!;
+      expect(lp.x - halfW).toBeGreaterThanOrEqual(-0.5);
+      expect(lp.y - halfH).toBeGreaterThanOrEqual(-0.5);
+      expect(lp.x + halfW).toBeLessThanOrEqual(g.width + 0.5);
+      expect(lp.y + halfH).toBeLessThanOrEqual(g.height + 0.5);
+    }
+  });
+
+  it("keeps a tall sibling label clear of the source after alignment (#15)", () => {
+    // Sibling labels snap to the SHALLOWEST of the group's levels. A short
+    // sibling can set a level so shallow that a tall multi-line sibling, dragged
+    // up to it, would poke into the source box. The alignment floor must keep the
+    // tallest badge clear of the source's forward face (TD: bottom, LR: right).
+    for (const direction of ["TD", "LR"] as const) {
+      const graph: FlowGraph = {
+        kind: "flow",
+        nodes: [
+          { id: "s", label: "S" },
+          { id: "k0", label: "k0" },
+          { id: "k1", label: "k1" },
+        ],
+        edges: [
+          { from: "s", to: "k0", label: "a\nb\nc\nd\ne" },
+          { from: "s", to: "k1", label: "ok" },
+        ],
+      };
+      const g = layoutFlow(graph, { direction });
+      const s = g.nodes.find((n) => n.id === "s")!;
+      const srcForward = direction === "TD" ? s.y + s.h! / 2 : s.x + s.w! / 2;
+      for (const e of g.edges) {
+        if (e.labelPoint === undefined) continue;
+        const half =
+          (direction === "TD"
+            ? badgeHeight(e.labelHeight ?? 0)
+            : badgeWidth(e.labelWidth ?? 0)) / 2;
+        const main = direction === "TD" ? e.labelPoint.y : e.labelPoint.x;
+        expect(main - half).toBeGreaterThanOrEqual(srcForward - 0.5);
+      }
+    }
+  });
+
+  it("leaves single-line edge labels unchanged (labelHeight = one line)", () => {
+    const graph: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "a" },
+        { id: "b", label: "b" },
+      ],
+      edges: [{ from: "a", to: "b", label: "go" }],
+    };
+    const e = layoutFlow(graph).edges.find((x) => x.from === "a")!;
+    expect(badgeHeight(e.labelHeight ?? 0)).toBeCloseTo(BADGE_H, 3);
   });
 });
 

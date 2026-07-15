@@ -290,6 +290,21 @@ export function badgeWidth(labelWidth: number): number {
 }
 
 /**
+ * Full height (px) of an edge-label badge whose text measures `labelHeight` tall
+ * (from `measurePlainMultiline().height`, i.e. `lines × labelLineHeight`). Adds
+ * the same vertical padding a single-line badge carries, so a one-line label
+ * yields exactly `BADGE_H` and each extra line grows the chip by one line-height.
+ * An empty/zero height falls back to a single line. Single source of truth so the
+ * layout's bounds math and the renderer's drawn rect never drift for multi-line
+ * edge labels.
+ */
+export function badgeHeight(labelHeight: number): number {
+  const lineH = labelLineHeight();
+  const textHeight = labelHeight > 0 ? labelHeight : lineH;
+  return textHeight + (BADGE_H - lineH);
+}
+
+/**
  * Padding (px) between a subgraph's member nodes and its container box edge.
  * Shared so the layout reserves bounds and the renderer draws to match.
  */
