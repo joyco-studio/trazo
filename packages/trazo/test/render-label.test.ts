@@ -105,3 +105,27 @@ describe("<Graph> annotations (notes)", () => {
     expect(render(plain)).not.toContain('data-slot="annotation"');
   });
 });
+
+describe("<Graph> multi-line edge labels", () => {
+  it("stacks a multi-line edge label into per-line tspan rows (#15)", () => {
+    // Regression: SVG <text> collapses `\n` to a space, so a multi-line edge
+    // label used to render on one line inside an under-sized badge. The renderer
+    // must split it into stacked <tspan> rows like node labels do.
+    const g: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A", shape: "box", role: "neutral" },
+        { id: "b", label: "B", shape: "box", role: "neutral" },
+      ],
+      edges: [{ from: "a", to: "b", label: "commit\nscroll deltas" }],
+    };
+    const html = render(g);
+    const label = html.slice(html.indexOf('data-slot="edge-label"'));
+    // Both lines survive as their own tspans — not run together on one line.
+    // (Uppercasing is CSS `text-transform`, so the DOM text stays as authored.)
+    expect(label).toContain(">commit</tspan>");
+    expect(label).toContain(">scroll deltas</tspan>");
+    // The concatenated single-line form never appears.
+    expect(html).not.toContain("commit scroll deltas");
+  });
+});

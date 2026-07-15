@@ -19,6 +19,7 @@ import {
   LABEL_BADGE_PAD,
   BADGE_H,
   badgeWidth,
+  badgeHeight,
   labelLines,
   labelLineHeight,
   GROUP_PAD,
@@ -830,10 +831,13 @@ export function Graph(props: GraphProps): JSX.Element {
             }
             // Edge labels render as the same sliced-corner badge as git commit
             // labels — a chip centered ON the edge's midpoint so it sits aligned
-            // with the arrow line (the line passes through the chip's center).
+            // with the arrow line (the line passes through the chip's center). A
+            // multi-line label (`\n`/`<br>`) stacks into per-line rows and grows
+            // the badge height to match (engine reserves the same via badgeHeight).
             const badgeW = badgeWidth(edge.labelWidth ?? 0);
+            const badgeH = badgeHeight(edge.labelHeight ?? 0);
             const badgeX = edge.labelPoint.x - badgeW / 2;
-            const badgeY = edge.labelPoint.y - BADGE_H / 2;
+            const badgeY = edge.labelPoint.y - badgeH / 2;
             return (
               <g
                 key={`${edge.from}->${edge.to}:label:${i}`}
@@ -842,7 +846,7 @@ export function Graph(props: GraphProps): JSX.Element {
               >
                 <path
                   data-slot="edge-label-badge"
-                  d={badgePath(badgeX, badgeY, badgeW, BADGE_H)}
+                  d={badgePath(badgeX, badgeY, badgeW, badgeH)}
                   fill={ACCENT}
                   fillOpacity={0.85}
                 />
@@ -856,7 +860,7 @@ export function Graph(props: GraphProps): JSX.Element {
                   fontSize={LABEL_SIZE}
                   style={labelStyle}
                 >
-                  {edge.label}
+                  {renderMultilineText(edge.label, edge.labelPoint.x, edge.labelPoint.y)}
                 </text>
               </g>
             );
