@@ -129,3 +129,21 @@ describe("<Graph> multi-line edge labels", () => {
     expect(html).not.toContain("commit scroll deltas");
   });
 });
+
+describe("<Graph> reversed (start) arrow", () => {
+  it("emits marker-start (not marker-end) for an arrow:start edge", () => {
+    const g: FlowGraph = {
+      kind: "flow",
+      direction: "LR",
+      nodes: [
+        { id: "a", label: "A", shape: "box", role: "neutral" },
+        { id: "b", label: "B", shape: "box", role: "neutral" },
+      ],
+      edges: [{ from: "a", to: "b", arrow: "start" }],
+    };
+    const html = render(g);
+    const edgePath = html.match(/<path data-slot="edge"[^>]*>/)![0];
+    expect(edgePath).toContain("marker-start");
+    expect(edgePath).not.toContain("marker-end");
+  });
+});

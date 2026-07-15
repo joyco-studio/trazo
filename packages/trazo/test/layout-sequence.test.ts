@@ -168,6 +168,59 @@ describe("layoutSequence()", () => {
     }
   });
 
+  it("spreads adjacent columns so a straight message label fits BETWEEN them", () => {
+    // A message label wider than the base columnGap must push the two lifelines
+    // apart, so the centered badge sits within the pair span (both ends reaching
+    // a lifeline) instead of overhanging both and leaning the diagram left.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }],
+      messages: [{ from: "A", to: "B", label: "a rather wide message label here", kind: "sync" }],
+    });
+    const ax = g.nodes.find((n) => n.id === "A")!.x;
+    const bx = g.nodes.find((n) => n.id === "B")!.x;
+    const e = g.edges[0]!;
+    const badgeW = e.labelWidth! + 28; // badgeWidth = w + pads
+    // Center-to-center distance is at least the badge width.
+    expect(bx - ax).toBeGreaterThanOrEqual(badgeW - 0.5);
+    // The badge is centered on the span and fits within [A, B].
+    expect(e.labelPoint!.x - badgeW / 2).toBeGreaterThanOrEqual(ax - 0.5);
+    expect(e.labelPoint!.x + badgeW / 2).toBeLessThanOrEqual(bx + 0.5);
+  });
+
+  it("reserves room so a self-loop label clears the next column", () => {
+    // A self-message on the FIRST participant with a wide label must not overlap
+    // the second participant's lifeline — the column spacing reserves the loop +
+    // label reach.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }],
+      messages: [{ from: "A", to: "A", label: "a wide self message label", kind: "sync" }],
+    });
+    const self = g.edges[0]!;
+    const bx = g.nodes.find((n) => n.id === "B")!.x;
+    const badgeRight = self.labelPoint!.x + (self.labelWidth! + 28) / 2;
+    // The self-loop label's right edge clears B's lifeline.
+    expect(badgeRight).toBeLessThanOrEqual(bx + 0.5);
+  });
+
+  it("offsets a multi-line message label by its taller badge height", () => {
+    // A `<br/>` label's badge is taller; its center must sit far enough above the
+    // arrow that the whole (multi-line) badge clears the line.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }],
+      messages: [{ from: "A", to: "B", label: "first line\nsecond line\nthird line", kind: "sync" }],
+    });
+    const e = g.edges[0]!;
+    const arrowY = e.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number)[1]!;
+    // 3-line badge is BADGE_H(22) + 2*lineHeight(~16.9) ≈ 55.8 tall; its bottom
+    // (labelPoint.y + h/2) sits above the arrow.
+    const badgeBottom = e.labelPoint!.y + 55.8 / 2;
+    expect(badgeBottom).toBeLessThan(arrowY);
+    expect(g.height).toBeGreaterThan(0);
+  });
+
   it("handles a diagram with no notes (no groups key)", () => {
     const g = layoutSequence({
       kind: "sequence",

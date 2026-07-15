@@ -792,9 +792,10 @@ export function Graph(props: GraphProps): JSX.Element {
           // Pull the stroke back from any arrowed end by the head length so the
           // line ends under the head's base, not its tip — PLUS half the node
           // border, so the tip rests on the border's OUTER edge instead of
-          // halfway into the chip-lift stroke band.
-          const insetEnd = head === "end" || head === "both" ? head : "none";
-          const insetStart = head === "both";
+          // halfway into the chip-lift stroke band. "start" trims only the source
+          // end; "both" trims both; "end" only the target.
+          const insetEnd = head === "end" || head === "both" ? "end" : "none";
+          const insetStart = head === "both" || head === "start";
           const d =
             head && head !== "none"
               ? insetPathEnds(edge.path, insetEnd, insetStart, ARROW_LEN + paint.borderWidth / 2)
@@ -815,7 +816,7 @@ export function Graph(props: GraphProps): JSX.Element {
               strokeLinejoin="miter"
               strokeDasharray={edge.dashed ? EDGE_DASH : paint.dashArray}
               markerEnd={head === "end" || head === "both" ? markerRef : undefined}
-              markerStart={head === "both" ? markerRef : undefined}
+              markerStart={head === "both" || head === "start" ? markerRef : undefined}
             />
           );
         })}

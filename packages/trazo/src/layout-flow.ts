@@ -202,6 +202,78 @@ export function layoutFlow(
   // ── 1. Rank assignment (longest-path via Kahn, cycle-safe) ────────────
   const rank = assignRanks(graph.nodes, edges, indexOf, inAdj, outAdj);
 
+  // ── 1b. Cluster cohesion: pull an edge-less group member into its band ──
+  // A grouped node with NO edges is a rank-0 source by longest-path, which can
+  // strand it far from its edge-connected cluster-mates — e.g. a bare node in a
+  // right-side subgraph dragged back to the left source rank, stretching the
+  // cluster box across a foreign subgraph (the two boxes then overlap). Re-rank
+  // each such isolated member to its cluster's ANCHOR rank (the lowest rank held
+  // by an edge-connected member of the same group), so the cluster stays a
+  // compact, contiguous band instead of spanning the whole chart. Members that
+  // carry edges are untouched (their rank is load-bearing). Deterministic: a
+  // fixed function of ranks + input membership.
+  if ((graph.groups?.length ?? 0) > 0) {
+    const isolated = (id: NodeId): boolean =>
+      (outAdj.get(id) as NodeId[]).length === 0 && (inAdj.get(id) as NodeId[]).length === 0;
+    const anchorRank = new Map<string, number>();
+    for (const n of graph.nodes) {
+      if (n.group === undefined || isolated(n.id)) continue;
+      const r = rank.get(n.id) as number;
+      const prev = anchorRank.get(n.group);
+      if (prev === undefined || r < prev) anchorRank.set(n.group, r);
+    }
+    for (const n of graph.nodes) {
+      if (n.group === undefined || !isolated(n.id)) continue;
+      const anchor = anchorRank.get(n.group);
+      if (anchor !== undefined) rank.set(n.id, anchor);
+    }
+
+    // ── 1c. Lift external predecessors ABOVE a self-contained cluster ─────
+    // When an UNGROUPED node feeds INTO a subgraph and shares the subgraph's top
+    // rank, longest-path drops it beside the top members — inside the container
+    // box, reading as part of the cluster (Mermaid instead stacks such feeders
+    // ABOVE the box, pointing down in). Push the whole cluster DOWN so its top
+    // rank clears every external predecessor. Guarded to a "downward-closed"
+    // cluster — one whose members only send edges to OTHER members — so the shift
+    // can't strand an external successor at a now-higher rank (no rank cascade).
+    // Deterministic: groups processed in declared order; ranks are integers.
+    const memberOf = new Map<string, NodeId[]>();
+    for (const n of graph.nodes) {
+      if (n.group === undefined) continue;
+      const list = memberOf.get(n.group);
+      if (list) list.push(n.id);
+      else memberOf.set(n.group, [n.id]);
+    }
+    for (const g of graph.groups as FlowGroup[]) {
+      const members = memberOf.get(g.id);
+      if (!members || members.length === 0) continue;
+      const inGroup = new Set(members);
+      // Skip unless every out-edge stays inside the cluster (no downward exit).
+      let downwardClosed = true;
+      for (const m of members) {
+        for (const succ of outAdj.get(m) as NodeId[]) {
+          if (!inGroup.has(succ)) {
+            downwardClosed = false;
+            break;
+          }
+        }
+        if (!downwardClosed) break;
+      }
+      if (!downwardClosed) continue;
+      let topRank = Infinity;
+      for (const m of members) topRank = Math.min(topRank, rank.get(m) as number);
+      // Highest rank held by an external node that feeds a member.
+      let maxExtPred = -Infinity;
+      for (const m of members) {
+        for (const pred of inAdj.get(m) as NodeId[]) {
+          if (!inGroup.has(pred)) maxExtPred = Math.max(maxExtPred, rank.get(pred) as number);
+        }
+      }
+      const delta = maxExtPred === -Infinity ? 0 : maxExtPred + 1 - topRank;
+      if (delta > 0) for (const m of members) rank.set(m, (rank.get(m) as number) + delta);
+    }
+  }
+
   // ── Build real vertices ───────────────────────────────────────────────
   const vById = new Map<NodeId, Vertex>();
   for (const n of graph.nodes) {
@@ -602,6 +674,16 @@ export function layoutFlow(
       // renderer places the title uniformly (top-left of the box).
       box.y -= GROUP_TITLE_H;
       box.h += GROUP_TITLE_H;
+      // A subgraph box narrower than its own title clips the label (the title
+      // renders left-aligned at `box.x + GROUP_PAD`). Widen the box to the RIGHT
+      // so it's at least as wide as the title needs — GROUP_PAD on each side of
+      // the measured label — keeping members left-aligned and growing the canvas
+      // via the viewBox check below. Mirrors the sequence note box's title fit.
+      const labelWidth = g.label !== undefined ? measureMultiline(g.label).width : 0;
+      if (labelWidth > 0) {
+        const titleNeed = labelWidth + GROUP_PAD * 2;
+        if (box.w < titleNeed) box.w = titleNeed;
+      }
       const pg: PositionedGroup = {
         id: g.id,
         x: box.x,
@@ -612,7 +694,7 @@ export function layoutFlow(
       };
       if (g.label !== undefined) {
         pg.label = g.label;
-        pg.labelWidth = measureMultiline(g.label).width;
+        pg.labelWidth = labelWidth;
       }
       out.push(pg);
       // Grow the viewBox to contain the box (leads keep the near edges ≥ 0).

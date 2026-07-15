@@ -661,6 +661,108 @@ describe("layoutFlow() — subgraphs", () => {
     const e = layoutFlow(graph).edges.find((x) => x.from === "a")!;
     expect(badgeHeight(e.labelHeight ?? 0)).toBeCloseTo(BADGE_H, 3);
   });
+
+  it("widens a group box narrower than its own title so the title isn't clipped", () => {
+    // A one-node group whose title is far wider than the node: the box must be
+    // at least the title width (+ padding on each side), so the left-aligned
+    // title fits inside instead of overflowing the box / viewBox.
+    const g = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "x", label: "X", group: "G" }],
+      edges: [],
+      groups: [{ id: "G", label: "A Very Long Subgraph Title Here" }],
+    });
+    const box = g.groups!.find((gp) => gp.id === "G")!;
+    expect(box.labelWidth).toBeGreaterThan(0);
+    // Title + a GROUP_PAD (16) gutter on each side must fit within the box.
+    expect(box.w).toBeGreaterThanOrEqual(box.labelWidth! + 16 * 2 - 0.5);
+    // And the box stays within the viewBox.
+    expect(box.x + box.w).toBeLessThanOrEqual(g.width + 0.5);
+  });
+
+  it("pulls an edge-less group member into its cluster's rank band", () => {
+    // `dom` has no edges, so longest-path would strand it at rank 0 (left in LR),
+    // stretching the `page` box across the `window` box. Cluster cohesion re-ranks
+    // it to sit with its edge-connected cluster-mate `canvas` (rank 1), so the two
+    // subgraph boxes end up side by side and DON'T overlap.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "LR",
+      nodes: [
+        { id: "view", label: "Viewport", group: "window" },
+        { id: "canvas", label: "Canvas", group: "page" },
+        { id: "dom", label: "DOM", group: "page" },
+      ],
+      edges: [{ from: "view", to: "canvas" }],
+      groups: [
+        { id: "window", label: "Window" },
+        { id: "page", label: "Page" },
+      ],
+    });
+    const win = g.groups!.find((gp) => gp.id === "window")!;
+    const page = g.groups!.find((gp) => gp.id === "page")!;
+    // Boxes are disjoint on one axis (side by side in x).
+    const disjoint =
+      win.x + win.w <= page.x + 0.5 ||
+      page.x + page.w <= win.x + 0.5 ||
+      win.y + win.h <= page.y + 0.5 ||
+      page.y + page.h <= win.y + 0.5;
+    expect(disjoint).toBe(true);
+    // `dom` sits inside its own box (not stranded far left inside `window`).
+    const dom = g.nodes.find((n) => n.id === "dom")!;
+    expect(dom.x - dom.w! / 2).toBeGreaterThanOrEqual(page.x - 0.5);
+    expect(dom.x + dom.w! / 2).toBeLessThanOrEqual(page.x + page.w + 0.5);
+  });
+
+  it("lifts an external predecessor ABOVE a self-contained cluster (no overlap)", () => {
+    // `ext` feeds a node inside a downward-closed cluster and would otherwise
+    // share the cluster's top rank (landing inside the box). It must sit ABOVE
+    // the box instead, clear of it.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "top", label: "Top", group: "C" },
+        { id: "mid", label: "Mid", group: "C" },
+        { id: "bot", label: "Bot", group: "C" },
+        { id: "ext", label: "External feeder" },
+      ],
+      edges: [
+        { from: "top", to: "mid" },
+        { from: "mid", to: "bot" },
+        { from: "ext", to: "mid" },
+      ],
+      groups: [{ id: "C", label: "Cluster" }],
+    });
+    const box = g.groups!.find((gp) => gp.id === "C")!;
+    const ext = g.nodes.find((n) => n.id === "ext")!;
+    // `ext` is entirely above the cluster box (its bottom edge clears the box top).
+    expect(ext.y + ext.h! / 2).toBeLessThanOrEqual(box.y + 0.5);
+    // The three cluster members are inside the box.
+    for (const id of ["top", "mid", "bot"]) {
+      const n = g.nodes.find((m) => m.id === id)!;
+      expect(n.y - n.h! / 2).toBeGreaterThanOrEqual(box.y - 0.5);
+      expect(n.y + n.h! / 2).toBeLessThanOrEqual(box.y + box.h + 0.5);
+    }
+  });
+});
+
+// ── reversed (start) arrows ──────────────────────────────────────────────────
+
+describe("layoutFlow() — reversed arrows", () => {
+  it("carries a start arrowhead through to the positioned edge", () => {
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "LR",
+      nodes: [{ id: "main", label: "main" }, { id: "child", label: "child" }],
+      edges: [{ from: "main", to: "child", arrow: "start", label: "base of" }],
+    });
+    // main stays the source (leftmost); the head is emitted at the source end.
+    const main = g.nodes.find((n) => n.id === "main")!;
+    const child = g.nodes.find((n) => n.id === "child")!;
+    expect(main.x).toBeLessThan(child.x);
+    expect(g.edges[0]?.arrowHead).toBe("start");
+  });
 });
 
 // ── notes (annotations) ─────────────────────────────────────────────────────

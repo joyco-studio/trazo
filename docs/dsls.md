@@ -48,7 +48,14 @@ commit (Elvira) : Squash of elvira/checkout
 flow TD | flow LR             set layout direction (top-down / left-right). Default TD.
 <node> --> <node>             a directed edge — NEUTRAL accent line (default).
 <node> ==> <node>             a COLORED edge — takes its source box's role color.
-<node> -->|label| <node>      an edge carrying a label (works with ==> too).
+<node> --- / === <node>       an undirected edge (no arrowhead; === is colored).
+<node> <--> / <==> <node>     a bidirectional edge (arrowhead at BOTH ends).
+<node> <-- / <== <node>       a REVERSED arrow: head at the SOURCE (from ← to),
+                              still from → to for layout (a "based on" relation).
+<node> -->|label| <node>      an edge carrying a label (works with every arrow).
+                              Surrounding quotes are stripped like node labels:
+                              |"base of"| and |base of| both read "base of";
+                              a `<br/>`/`\n` wraps the label onto multiple lines.
 <node>                        declare a node on its own line (also auto-declared
                               the first time it appears in an edge).
 subgraph G ["Label"] … end    group the nodes declared until `end` in a container.

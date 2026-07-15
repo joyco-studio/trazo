@@ -177,16 +177,19 @@ export interface FlowEdge {
   colored?: boolean;
   /**
    * Which ends get an arrowhead:
-   *  - "end"  → a single arrowhead at `to` (the default; a directed `from → to`).
-   *  - "none" → a plain connector line with no head (an undirected association).
-   *  - "both" → arrowheads at both ends (a bidirectional / two-way relation).
+   *  - "end"   → a single arrowhead at `to` (the default; a directed `from → to`).
+   *  - "start" → a single arrowhead at `from` (a reversed arrow: the edge still
+   *    flows `from → to` for layout, but the head points back at the source —
+   *    e.g. a "based on" / child→parent relation drawn `parent ← child`).
+   *  - "none"  → a plain connector line with no head (an undirected association).
+   *  - "both"  → arrowheads at both ends (a bidirectional / two-way relation).
    * Absent is treated as "end" so existing directed edges are unchanged.
    */
   arrow?: ArrowEnds;
 }
 
 /** Which ends of an edge carry an arrowhead. */
-export type ArrowEnds = "none" | "end" | "both";
+export type ArrowEnds = "none" | "end" | "start" | "both";
 
 /** Which side of its target a flow annotation (`note`) sits on. */
 export type NoteSide = "above" | "below" | "left" | "right";
@@ -440,7 +443,8 @@ export interface PositionedEdge {
    * Which ends of the edge carry an arrowhead (flow + sequence). Absent → the
    * renderer draws no head (git edges). `layoutFlow` emits "end" by default and
    * `layoutSequence` emits "end" on every message, so directed edges render an
-   * arrowhead; "both" draws one at each end, "none" a plain line.
+   * arrowhead; "start" draws one at the source end (a reversed arrow), "both"
+   * draws one at each end, "none" a plain line.
    */
   arrowHead?: ArrowEnds;
   /**
