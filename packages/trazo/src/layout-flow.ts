@@ -896,8 +896,16 @@ export function layoutFlow(
       const centerDist = nearFaceDist + noteExtent / 2;
       stackOffset.set(key, consumed + noteExtent + calloutGap);
 
-      const nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
-      const ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+      let nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
+      let ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+      // Keep the note inside the viewBox origin by clamping ITS OWN leading edge
+      // to ≥ 0 — never by shifting the whole graph. An `above`/`left` note placed
+      // with no headroom is pulled back to the edge (the v1 "place on a side with
+      // room" limitation) instead of translating every real node, so notes stay
+      // provably zero-effect on real-node positions. `below`/`right` notes have
+      // large coords and are untouched; they grow the far bounds below instead.
+      nx = Math.max(nx, nw / 2);
+      ny = Math.max(ny, nh / 2);
 
       // Leader endpoints: the note's near face → the target's near face. `sign`
       // aims the segment back at the target; the arrowhead lands on that face.
@@ -996,15 +1004,15 @@ export function layoutFlow(
     if (pe.labelPoint.y - BADGE_H / 2 < labelMinY) labelMinY = pe.labelPoint.y - BADGE_H / 2;
     if (pe.labelPoint.y + BADGE_H / 2 > labelMaxY) labelMaxY = pe.labelPoint.y + BADGE_H / 2;
   }
-  // Annotation chips ride the same normalization: an `above`/`left` note tight
-  // against the top/left origin shifts the whole graph so it isn't clipped, and
-  // a `below`/`right` note just grows the canvas on the far side.
+  // Annotation chips only ever GROW the far bounds (labelMax) — they are
+  // deliberately kept OUT of the near-side spill (labelMin) that drives the
+  // shift, so a note can never translate a real node (their leading edge is
+  // already clamped to ≥ 0 at placement time). A `below`/`right` note grows the
+  // canvas here; an `above`/`left` note was pulled to the origin edge instead.
   for (const nb of noteBoxes) {
     const halfW = (nb.w ?? 0) / 2;
     const halfH = (nb.h ?? 0) / 2;
-    if (nb.x - halfW < labelMinX) labelMinX = nb.x - halfW;
     if (nb.x + halfW > labelMaxX) labelMaxX = nb.x + halfW;
-    if (nb.y - halfH < labelMinY) labelMinY = nb.y - halfH;
     if (nb.y + halfH > labelMaxY) labelMaxY = nb.y + halfH;
   }
   const shiftX = labelMinX === Infinity ? 0 : Math.max(0, padding - labelMinX);

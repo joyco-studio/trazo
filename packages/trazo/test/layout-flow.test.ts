@@ -720,4 +720,80 @@ describe("layoutFlow() — notes", () => {
   it("is deterministic with notes", () => {
     expect(layoutFlow(pipeline(true))).toEqual(layoutFlow(pipeline(true)));
   });
+
+  it("an above/left note against the origin never moves real nodes (no whole-graph shift)", () => {
+    // The top-of-graph node sits one padding in from the origin; a note above it
+    // would spill past the padded origin. It must be clamped to the edge, NOT
+    // trigger the shared label-normalization shift that would translate the whole
+    // graph (real nodes included).
+    const base: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "Top", shape: "box" },
+        { id: "b", label: "Mid", shape: "box" },
+        { id: "c", label: "Bot", shape: "box" },
+      ],
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+    };
+    const real = (g: ReturnType<typeof layoutFlow>) =>
+      g.nodes.filter((n) => n.kind !== "note").map((n) => ({ id: n.id, x: n.x, y: n.y }));
+
+    for (const [direction, side] of [
+      ["TD", "above"],
+      ["LR", "left"],
+      ["LR", "above"],
+    ] as const) {
+      const bare = layoutFlow(base, { direction });
+      const noted = layoutFlow(
+        { ...base, notes: [{ target: "a", side, label: "annotation on the edge node" }] },
+        { direction },
+      );
+      expect(real(noted), `${direction}/${side}`).toEqual(real(bare));
+      // And the clamped note is still fully inside the viewBox (never clipped).
+      const note = noted.nodes.find((n) => n.kind === "note")!;
+      expect(note.x - note.w! / 2).toBeGreaterThanOrEqual(-0.01);
+      expect(note.y - note.h! / 2).toBeGreaterThanOrEqual(-0.01);
+    }
+  });
+
+  it("never clips a note — even a wide one on an extreme node, across sides/dirs/padding", () => {
+    // Clamping guards the near edges (both axes); far-side growth guards the far
+    // edges. This pins that they compose so a note box (and its leader) is ALWAYS
+    // inside the reported viewBox, including the worst cases: a label far wider
+    // than the graph, hung off the top/left-most or bottom/right-most node.
+    const wide = "this annotation is deliberately far wider than the tiny graph it hangs off";
+    const base: FlowGraph = {
+      kind: "flow",
+      nodes: [
+        { id: "a", label: "A", shape: "box" },
+        { id: "b", label: "B", shape: "box" },
+        { id: "c", label: "C", shape: "box" },
+      ],
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+    };
+    for (const direction of ["TD", "LR"] as const) {
+      for (const side of ["above", "below", "left", "right"] as const) {
+        for (const target of ["a", "c"] as const) {
+          for (const padding of [0, 24, 100]) {
+            const g = layoutFlow(
+              { ...base, notes: [{ target, side, label: wide }] },
+              { direction, padding },
+            );
+            const note = g.nodes.find((n) => n.kind === "note")!;
+            const tag = `${direction}/${side}/${target}/pad${padding}`;
+            expect(note.x - note.w! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+            expect(note.y - note.h! / 2, tag).toBeGreaterThanOrEqual(-0.01);
+            expect(note.x + note.w! / 2, tag).toBeLessThanOrEqual(g.width + 0.01);
+            expect(note.y + note.h! / 2, tag).toBeLessThanOrEqual(g.height + 0.01);
+          }
+        }
+      }
+    }
+  });
 });
