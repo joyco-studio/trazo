@@ -99,7 +99,15 @@ Palettes (in `graph.tsx`):
   while member nodes, edges and the canvas texture stay legible through the wash.
   A subgraph with no `:role` keeps the default transparent fill + neutral gray
   outline, so existing diagrams are unchanged. The role is threaded from the DSL
-  onto `FlowGroup.role` → `PositionedGroup.role` and painted in `renderGroup`.
+  onto `FlowGroup.role` → `PositionedGroup.role`.
+  **Paint order — the container is split across two passes** (like the note /
+  lifelines split): the **fill** (`renderGroupFill`, `data-slot="group-fill"`)
+  draws in the earliest pass, *behind* lanes and nodes, so the tint reads as a
+  wash the whole diagram sits on; the **border + title** (`renderGroup`,
+  `data-slot="group"`) draw *after* the edges, so connector lanes entering the
+  subgraph never cross over the outline or the title. (Nodes still paint last, so
+  their boxes stay on top of the frame — the `GROUP_PAD` inset means they never
+  actually touch it.)
   **Decision — the tint is coupled to the role token, not a separate surface
   slot:** the fill is `ROLE_VARS[role]` with `fill-opacity`, so overriding
   `--trazo-success` recolors success *nodes* and success *group washes* together.
