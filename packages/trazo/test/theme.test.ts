@@ -117,6 +117,23 @@ describe("automatic contrast foregrounds", () => {
     expect(paint.vars["--trazo-error-foreground"]).toBe("#ffffff");
     expect(paint.vars["--trazo-info-foreground"]).toBeUndefined();
   });
+
+  it("derives a readable code-foreground when only the code box is overridden", () => {
+    // Boxed chip on a dark fill → readable light text, instead of inheriting
+    // the node's (possibly dark) foreground and reading dark-on-dark.
+    const dark = resolveThemePaint({ tokens: { code: "#1a1a1a" } });
+    expect(dark.vars["--trazo-code-foreground"]).toBe("oklch(0.985 0 0)");
+    // A transparent chip is not a literal color → nothing derived, so the code
+    // text keeps its `inherit` default (the per-node foreground). This is the
+    // hub theme's setup, and it must stay on the inherit path.
+    const transparent = resolveThemePaint({ tokens: { code: "transparent" } });
+    expect(transparent.vars["--trazo-code-foreground"]).toBeUndefined();
+    // Explicit code-foreground always wins over the derived pick.
+    const explicit = resolveThemePaint({
+      tokens: { code: "#1a1a1a", "code-foreground": "#abcdef" },
+    });
+    expect(explicit.vars["--trazo-code-foreground"]).toBe("#abcdef");
+  });
 });
 
 describe("resolveThemePaint", () => {

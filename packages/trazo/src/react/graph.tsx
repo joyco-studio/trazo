@@ -253,6 +253,10 @@ const CODE_BG = "var(--trazo-code, transparent)";
  * `fill` is an inherited property, even a browser that rejects that fallback
  * lands on the same parent color. Set the `code-foreground` theme token to pin
  * a distinct chip text color.
+ *
+ * DO NOT "fix" the `inherit` fallback back into a global chain like
+ * `var(--color-foreground, …)`: that resolves to the PAGE foreground, silently
+ * reverting the per-node color this default exists to provide.
  */
 const CODE_FG = "var(--trazo-code-foreground, inherit)";
 /**
