@@ -1278,7 +1278,7 @@ function assignRanks(
   // ── Identify back-edges via a deterministic DFS, then rank on the DAG ──
   const backEdges = findBackEdges(inputNodes, indexOf, outAdj);
   // Acyclic adjacency + indegree: every edge except the back-edges. A back-edge
-  // is keyed "from to"; all parallel duplicates of that pair are dropped.
+  // is keyed "from to"; all parallel duplicates of that pair are dropped.
   const dagOut = new Map<NodeId, NodeId[]>();
   const dagIndeg = new Map<NodeId, number>();
   for (const n of inputNodes) {
