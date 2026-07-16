@@ -1,5 +1,42 @@
 # @joycostudio/trazo
 
+## 0.8.0
+
+### Minor Changes
+
+- 1044dc5: Remove the deprecated `streamed` semantic role. It was an alias resolving to the
+  `info` slot; while still pre-1.0 we drop it outright rather than carry the alias.
+  Use `:info` (and the `--trazo-info` token) instead. `streamed` is no longer part
+  of the `SemanticRole` union or `SEMANTIC_ROLES`, and `:streamed` in a DSL is no
+  longer recognized as a role.
+- 9d191b0: Sequence message arrows now adopt their **source participant's role** color, the
+  same way a flow `==>` edge tints to its source node's role. Messages from a
+  participant left at the default (no `:role`) keep the neutral `accent` color, so
+  existing diagrams are unchanged and a themed neutral (e.g. JOYCO's black) never
+  renders the arrows invisible. Block cells already carried per-cell `role-*`
+  colors; together this lets sequence and block diagrams pick up the active theme.
+
+### Patch Changes
+
+- 8ac3620: fix(trazo): sequence `note over` paints on top of lifelines and messages
+
+  Sequence notes and flow subgraph containers are both modeled as groups and were
+  emitted in a single early layer, so the dashed lifeline (and message strokes)
+  painted on top of the opaque note panel. The groups layer now renders only
+  subgraph containers (which must sit under nodes/edges), while sequence notes
+  render in a later `data-slot="notes"` layer after the edges — so the note panel
+  covers the lifeline and any message strokes running behind it.
+
+- 0fffc74: fix(trazo): strip stray null byte from `layout-flow.ts` comment
+
+  A single `NUL` (`\x00`) byte had crept into a comment in `layout-flow.ts`,
+  where a space belonged — the comment reads `keyed "from to"`, matching how
+  `edgeKey` joins its two node ids. The byte had no runtime effect (it lived
+  inside a comment), but any file containing a null byte is treated as
+  **binary** by `grep`/`ripgrep`, so the whole file silently dropped out of
+  codebase-wide text searches. Replacing the `NUL` with the intended space
+  restores the file to plain text with no behavior change.
+
 ## 0.7.1
 
 ### Patch Changes
