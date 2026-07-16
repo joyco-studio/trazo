@@ -44,6 +44,7 @@ import type {
   SemanticRole,
 } from "./types.js";
 import {
+  BADGE_H,
   badgeHeight,
   badgeWidth,
   edgeLabelPoint,
@@ -735,6 +736,28 @@ export function layoutFlow(
   let routeMaxY = 0;
   let routeMinX = 0;
   let routeMinY = 0;
+
+  // A "parallel pair": two nodes on ADJACENT ranks with edges in BOTH directions
+  // (a↔b), each the SOLE real node on its rank. That's a 1↔1 sync relationship
+  // (e.g. commit / scroll-deltas between two threads) — Mermaid draws it as two
+  // parallel lines with both labels centered BETWEEN the boxes. Route both edges
+  // straight through the shared inter-rank gap, offset to opposite sides of
+  // centre, instead of arcing the reverse edge out on a lateral corridor (which
+  // strands its label at the far edge). The "sole on rank" guard keeps genuine
+  // branch/merge loops — a retry edge back to a decision that fans out, so its
+  // target rank has siblings — on the lateral arc, where the outward bulge reads
+  // as a loop and clears the crowded gap. Deterministic: input edge order.
+  const edgeDirs = new Set<string>();
+  for (const e of edges) edgeDirs.add(`${e.from} ${e.to}`);
+  const realPerRank: number[] = layers.map(
+    (layer) => layer.filter((v) => !v.isDummy).length,
+  );
+  const isParallelPair = (fromV: Vertex, toV: Vertex, e: FlowEdge): boolean =>
+    Math.abs(fromV.rank - toV.rank) === 1 &&
+    edgeDirs.has(`${e.to} ${e.from}`) &&
+    (realPerRank[fromV.rank] as number) === 1 &&
+    (realPerRank[toV.rank] as number) === 1;
+
   // Waypoints per edge, parallel to `positionedEdges`. Path strings are built
   // AFTER the label-bounds normalization below, which may shift every point.
   const edgePoints: Point[][] = [];
@@ -754,11 +777,18 @@ export function layoutFlow(
     //    loop back to a decision.
     //  - same-rank: route along the cross axis between the two sides.
     const isBackEdge = fromV.rank > toV.rank;
+    const parallel = isParallelPair(fromV, toV, e);
     let exitFace: AnchorFace;
     let entryFace: AnchorFace;
     if (fromV.rank < toV.rank) {
       exitFace = "forward";
       entryFace = "backward";
+    } else if (isBackEdge && parallel) {
+      // Parallel pair: send the reverse edge back through the SAME gap as its
+      // forward twin (leave the lower-rank-facing side, enter the twin's
+      // gap-facing side), offset below centre — not out on a lateral corridor.
+      exitFace = "backward";
+      entryFace = "forward";
     } else if (isBackEdge) {
       // Exit and re-enter on the same lateral side (the side the source sits on,
       // so the loop bulges outward away from the column's center).
@@ -775,8 +805,30 @@ export function layoutFlow(
 
     // With an edgeGap the path starts/ends a few px OFF the face, so the line
     // (and the arrow tip, which sits at the path end) never touches the box.
-    const exitAnchor = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
-    const entryAnchor = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+    let exitAnchor = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
+    let entryAnchor = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+    // Parallel pair: slide BOTH anchors off the face centre along the cross axis
+    // — the low→high (forward) twin toward cross-start, the high→low (reverse)
+    // toward cross-end — so the two lines run parallel with a clear gap and each
+    // label centres on its own line, stacked between the boxes (Mermaid parity).
+    // The offset is half the label-badge height (so the two centred labels clear
+    // each other), clamped to stay on the node face.
+    if (parallel) {
+      const minHalf = Math.min(
+        direction === "TD" ? fromV.w : fromV.h,
+        direction === "TD" ? toV.w : toV.h,
+      ) / 2;
+      const halfOff = Math.min(BADGE_H / 2 + 2, Math.max(0, minHalf - 4));
+      const d = (fromV.rank < toV.rank ? -1 : 1) * halfOff;
+      exitAnchor =
+        direction === "TD"
+          ? { x: exitAnchor.x + d, y: exitAnchor.y }
+          : { x: exitAnchor.x, y: exitAnchor.y + d };
+      entryAnchor =
+        direction === "TD"
+          ? { x: entryAnchor.x + d, y: entryAnchor.y }
+          : { x: entryAnchor.x, y: entryAnchor.y + d };
+    }
     const exit = edgeGap > 0 ? stubPoint(exitAnchor, exitFace, direction, edgeGap) : exitAnchor;
     const entry = edgeGap > 0 ? stubPoint(entryAnchor, entryFace, direction, edgeGap) : entryAnchor;
 
@@ -812,9 +864,11 @@ export function layoutFlow(
     // parallel corridor, so it never overlaps the forward edge between the same
     // pair. The corridor must clear EVERY node in the ranks it travels past
     // (a wide box on an intermediate rank would otherwise be sliced), so it
-    // offsets from the outermost cross extent across the spanned rank range.
+    // offsets from the outermost cross extent across the spanned rank range. A
+    // parallel-pair reverse edge skips this — it already runs straight through
+    // the gap, offset from its forward twin.
     const backDetour: Point[] = [];
-    if (isBackEdge) {
+    if (isBackEdge && !parallel) {
       const goingEnd = exitFace === "cross-end";
       const clearance = nodeGap;
       const rLo = Math.min(fromV.rank, toV.rank);

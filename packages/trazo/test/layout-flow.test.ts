@@ -765,6 +765,60 @@ describe("layoutFlow() — reversed arrows", () => {
   });
 });
 
+// ── parallel bidirectional pairs ─────────────────────────────────────────────
+
+describe("layoutFlow() — parallel bidirectional pairs", () => {
+  it("routes a 1↔1 pair as two parallel lines with both labels centered", () => {
+    // A↔B, each the sole node on its rank: Mermaid draws two parallel lines with
+    // both labels stacked BETWEEN the boxes. The reverse edge must run through the
+    // gap (offset from its twin), NOT dip out on a lateral corridor.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "LR",
+      nodes: [{ id: "A", label: "A" }, { id: "B", label: "B" }],
+      edges: [
+        { from: "A", to: "B", label: "commit" },
+        { from: "B", to: "A", label: "scroll deltas" },
+      ],
+    });
+    const fwd = g.edges.find((e) => e.from === "A" && e.to === "B")!;
+    const rev = g.edges.find((e) => e.from === "B" && e.to === "A")!;
+    // Both labels share the gap-centre main-axis coordinate (LR → x), offset on
+    // the cross axis (y) so they stack.
+    expect(Math.abs(fwd.labelPoint!.x - rev.labelPoint!.x)).toBeLessThan(0.5);
+    expect(Math.abs(fwd.labelPoint!.y - rev.labelPoint!.y)).toBeGreaterThan(4);
+    // The reverse edge stays within the boxes' vertical band — no lateral dip.
+    const A = g.nodes.find((n) => n.id === "A")!;
+    const revYs = rev.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number).filter((_, i) => i % 2 === 1);
+    expect(Math.max(...revYs)).toBeLessThanOrEqual(A.y + A.h! / 2 + 0.5);
+  });
+
+  it("keeps a retry loop into a fanned-out decision on the lateral arc", () => {
+    // B(decision) → {C, D}, D → B. D's rank has a sibling (C), so the pair is NOT
+    // sole-on-rank: the back-edge keeps its outward lateral corridor (loop look).
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "B", label: "Decide", shape: "diamond" },
+        { id: "C", label: "C" },
+        { id: "D", label: "D" },
+      ],
+      edges: [
+        { from: "B", to: "C" },
+        { from: "B", to: "D" },
+        { from: "D", to: "B" },
+      ],
+    });
+    const B = g.nodes.find((n) => n.id === "B")!;
+    const D = g.nodes.find((n) => n.id === "D")!;
+    const back = g.edges.find((e) => e.from === "D" && e.to === "B")!;
+    const xs = back.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number).filter((_, i) => i % 2 === 0);
+    // The corridor bulges right, past both boxes' right faces.
+    expect(Math.max(...xs)).toBeGreaterThan(Math.max(B.x + B.w! / 2, D.x + D.w! / 2));
+  });
+});
+
 // ── notes (annotations) ─────────────────────────────────────────────────────
 
 describe("layoutFlow() — notes", () => {

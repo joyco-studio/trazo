@@ -221,6 +221,53 @@ describe("layoutSequence()", () => {
     expect(g.height).toBeGreaterThan(0);
   });
 
+  it("keeps a tall label's badge below the previous event (no upward overlap)", () => {
+    // m0 is a tall 3-line message, m1 follows it. m0's badge must not reach up
+    // into the header, and m1's tall badge must not reach up into m0's arrow —
+    // the extra badge height is fully reserved above each arrow, not split.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }],
+      messages: [
+        { from: "A", to: "B", label: "l1\nl2\nl3\nl4", kind: "sync", seq: 0 },
+        { from: "A", to: "B", label: "m1\nm2\nm3\nm4", kind: "sync", seq: 1 },
+      ],
+    });
+    // 4-line badge ≈ BADGE_H(22) + 3*lineHeight(16.9) ≈ 72.7 tall; its top edge
+    // is labelPoint.y - h/2.
+    const badgeTop = (e: (typeof g.edges)[number]) => e.labelPoint!.y - 72.7 / 2;
+    const arrowY = (e: (typeof g.edges)[number]) =>
+      e.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number)[1]!;
+    const [m0, m1] = g.edges;
+    // First message: its badge top clears the top header band (padding buffer).
+    const headerBottom = Math.max(
+      ...g.nodes.filter((n) => !n.id.endsWith("__end")).map((n) => n.y + n.h! / 2),
+    );
+    expect(badgeTop(m0!)).toBeGreaterThanOrEqual(headerBottom);
+    // Second message's badge top stays below the first message's arrow.
+    expect(badgeTop(m1!)).toBeGreaterThan(arrowY(m0!));
+  });
+
+  it("fits a WIDE non-adjacent (A→C) label within its own two lifelines", () => {
+    // A wide label on a message spanning A→C is centered on the A–C span; the
+    // columns must spread so the badge stays within [colX[A], colX[C]] and never
+    // crosses the outer lifelines or leaves the viewBox on the left.
+    const g = layoutSequence({
+      kind: "sequence",
+      participants: [{ id: "A" }, { id: "B" }, { id: "C" }],
+      messages: [{ from: "A", to: "C", label: "a very wide message spanning three participants", kind: "sync" }],
+    });
+    const ax = g.nodes.find((n) => n.id === "A")!.x;
+    const cx = g.nodes.find((n) => n.id === "C")!.x;
+    const e = g.edges.find((x) => x.from === "A" && x.to === "C")!;
+    const halfBadge = (e.labelWidth! + 28) / 2;
+    // The centered badge sits within the A–C span (both edges reach a lifeline).
+    expect(e.labelPoint!.x - halfBadge).toBeGreaterThanOrEqual(ax - 0.5);
+    expect(e.labelPoint!.x + halfBadge).toBeLessThanOrEqual(cx + 0.5);
+    // And stays inside the viewBox on the left.
+    expect(e.labelPoint!.x - halfBadge).toBeGreaterThanOrEqual(0);
+  });
+
   it("handles a diagram with no notes (no groups key)", () => {
     const g = layoutSequence({
       kind: "sequence",

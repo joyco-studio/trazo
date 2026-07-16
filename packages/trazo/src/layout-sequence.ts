@@ -35,6 +35,7 @@ import type {
   SequenceParticipant,
 } from "./types.js";
 import {
+  BADGE_H,
   badgeHeight,
   badgeWidth,
   curveBetween,
@@ -98,17 +99,22 @@ export function layoutSequence(
   // ── 1. Column x: place headers left→right, spaced so message LABELS FIT ────
   // A fixed `columnGap` packs the lifelines tight to the left, so every message
   // label wider than the gap overhangs both lifelines and the whole diagram
-  // reads as leaning left. Mermaid instead spreads adjacent columns to fit the
-  // traffic between them; mirror that. For each adjacent pair reserve the larger
-  // of: the base gap, the widest straight-message badge that crosses the pair
-  // (so a centered label sits WITHIN the pair span, not spilling past both
-  // lifelines), and the left column's self-loop reach (loop + right-of-loop
-  // label badge) so a self-message clears the next column's box.
+  // reads as leaning left. Mermaid instead spreads the columns to fit the traffic
+  // between them; mirror that. For each straight message reserve enough that its
+  // centered label badge fits WITHIN its OWN span — not just adjacent pairs: a
+  // wide A→C badge is centered on the full A–C span, so if that span is narrower
+  // than the badge it crosses the outer lifelines (and its left edge can leave
+  // the viewBox, which `track` only guards on the right). A self-message instead
+  // reserves its loop + right-of-loop label reach so it clears the next column.
   const headerSize = order.map((id) => {
     const p = partById.get(id) as SequenceParticipant;
     return sizeShape("box", p.label ?? id);
   });
-  const pairStraightBadge: number[] = new Array(Math.max(0, order.length - 1)).fill(0);
+  // Per RIGHT column: the min span each message ending there needs (its left
+  // column + badge width), applied when the right column is placed (its left
+  // column is already final). Keyed by the right end so adjacent AND multi-span
+  // messages are handled by the same rule.
+  const spanNeed: Array<Array<{ from: number; width: number }>> = order.map(() => []);
   const selfReach: number[] = new Array(order.length).fill(0);
   for (const m of messages) {
     const a = colOf.get(m.from) as number;
@@ -119,9 +125,10 @@ export function layoutSequence(
       // Loop bulges SELF_LOOP right of the lifeline; its label badge sits just
       // past the loop. Reserve that whole reach past the lifeline center.
       selfReach[a] = Math.max(selfReach[a] as number, SELF_LOOP + bw);
-    } else if (Math.abs(a - b) === 1) {
+    } else if (bw > 0) {
       const lo = Math.min(a, b);
-      pairStraightBadge[lo] = Math.max(pairStraightBadge[lo] as number, bw);
+      const hi = Math.max(a, b);
+      (spanNeed[hi] as Array<{ from: number; width: number }>).push({ from: lo, width: bw });
     }
   }
   const colX: number[] = [];
@@ -133,15 +140,20 @@ export function layoutSequence(
     }
     const prevCenter = colX[i - 1] as number;
     const prevHalf = (headerSize[i - 1] as { w: number }).w / 2;
-    // Center-to-center distance: the base clear gap, OR wide enough for a
-    // straight label centered between the pair, OR the prev column's self-loop
-    // reach plus this box's half so the loop+label clears it.
-    const need = Math.max(
+    // Base spacing off the previous column: the clear gap, or the previous
+    // column's self-loop reach + this box's half so its loop+label clears here.
+    let center = prevCenter + Math.max(
       prevHalf + Math.max(columnGap, half),
-      pairStraightBadge[i - 1] as number,
       prevHalf + (selfReach[i - 1] as number) + half,
     );
-    colX[i] = prevCenter + need;
+    // Then push right until every message ending at column i has its full span
+    // (colX[i] - colX[from]) at least its badge width, so the centered label sits
+    // within its own two lifelines. `colX[from]` is already final (from < i).
+    for (const s of spanNeed[i] as Array<{ from: number; width: number }>) {
+      const required = (colX[s.from] as number) + s.width;
+      if (center < required) center = required;
+    }
+    colX[i] = center;
   }
 
   // ── 2. Header nodes (a participant box per column) ────────────────────────
@@ -206,14 +218,15 @@ export function layoutSequence(
     if (ev.type === "msg") {
       const m = ev.m;
       const isSelf = m.from === m.to;
-      // A message label sits ABOVE its arrow. A multi-line (`<br/>`) label's badge
-      // is taller, so when half of it would reach past the clean space above the
-      // arrow (`rowGap / 2`), lower the arrow — and grow the band by the same
-      // amount — so the stacked label always fits without overrunning the event
-      // above it. Single-line labels give `extraLift === 0`: spacing unchanged.
+      // A message label sits ABOVE its arrow. Reserve the FULL extra height a
+      // multi-line (`<br/>`) badge adds over a single line: lower the arrow by
+      // exactly that much AND grow the band by the same amount. The label's TOP
+      // edge then lands at the SAME offset above the band a single-line badge
+      // would — never reaching further up into the previous event (or the header
+      // for the first message). Single-line labels give `extraLift === 0`:
+      // spacing unchanged. (`badgeHeight >= BADGE_H`, so `extraLift >= 0`.)
       const labelH = m.label !== undefined ? measurePlainMultiline(m.label).height : 0;
-      const lift = badgeHeight(labelH) / 2 + LABEL_ABOVE_GAP;
-      const extraLift = Math.max(0, lift - rowGap / 2);
+      const extraLift = Math.max(0, badgeHeight(labelH) - BADGE_H);
       const y = cursorY + rowGap / 2 + extraLift;
       if (isSelf) {
         edges.push(selfMessage(m, xOf(m.from), y, rowGap, edgeStyle, SELF_LOOP, track));
