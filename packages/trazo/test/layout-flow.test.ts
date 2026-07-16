@@ -745,6 +745,38 @@ describe("layoutFlow() — subgraphs", () => {
       expect(n.y + n.h! / 2).toBeLessThanOrEqual(box.y + box.h + 0.5);
     }
   });
+
+  it("keeps the cluster spine straight while external feeders route in", () => {
+    // A vertical intra-cluster chain (top→mid→bot) fed by TWO external nodes into
+    // the middle member. The feeders' routing dummies share the top member's rank
+    // and would otherwise drag the spine into a staircase (each member on its own
+    // column). The cluster member must win its aligned slot: top/mid/bot stay in
+    // one straight column and the feeders bend to route in.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "top", label: "Top", group: "C" },
+        { id: "mid", label: "Mid", group: "C" },
+        { id: "bot", label: "Bot", group: "C" },
+        { id: "f1", label: "Feeder one" },
+        { id: "f2", label: "Feeder two" },
+      ],
+      edges: [
+        { from: "top", to: "mid" },
+        { from: "mid", to: "bot" },
+        { from: "f1", to: "mid" },
+        { from: "f2", to: "mid" },
+      ],
+      groups: [{ id: "C", label: "Cluster" }],
+    });
+    const top = g.nodes.find((n) => n.id === "top")!;
+    const mid = g.nodes.find((n) => n.id === "mid")!;
+    const bot = g.nodes.find((n) => n.id === "bot")!;
+    // All three members share one vertical column (a straight spine, not a stair).
+    expect(Math.abs(top.x - mid.x)).toBeLessThan(1);
+    expect(Math.abs(bot.x - mid.x)).toBeLessThan(1);
+  });
 });
 
 // ── reversed (start) arrows ──────────────────────────────────────────────────

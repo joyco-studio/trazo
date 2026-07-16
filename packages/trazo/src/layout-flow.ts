@@ -77,6 +77,13 @@ const DEFAULTS = {
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
 const ORDERING_SWEEPS = 4;
 
+// Cross-axis alignment weight of a real node relative to a routing dummy (=1) in
+// the PAVA. High enough that a real node reliably wins its aligned slot against
+// same-rank dummies (a cluster member keeps its spine; the dummy corridor yields
+// to the side), while dummy-only conflict blocks still average normally so long
+// edges keep straightening among themselves.
+const REAL_ALIGN_WEIGHT = 1000;
+
 /**
  * A point `stub` px outward from `anchor` along the perpendicular of its face,
  * so an edge leaves/enters the node at 90° before turning. The outward direction
@@ -602,6 +609,20 @@ export function layoutFlow(
     const boundary = hasGroups && a.group !== b.group ? groupBoundaryGap : 0;
     return halfA + a.loopPad + nodeGap + boundary + halfB;
   };
+  // A cluster member aligns to its SAME-GROUP neighbors when it has any, so the
+  // intra-cluster spine (e.g. top→mid→bot) stays a straight column and the
+  // external feeders bend to route in — instead of an external edge's routing
+  // dummy sharing the rank and dragging the member off its cluster-mates'
+  // column (Mermaid keeps the cluster spine straight). Falls back to the full
+  // neighbor set for ungrouped nodes and for members with no same-group
+  // neighbor on this side. Deterministic: a filter over the same ordered list.
+  const desiredCross = (v: Vertex, ids: NodeId[]): number | undefined => {
+    if (v.group !== undefined && ids.length > 0) {
+      const sameGroup = ids.filter((id) => (vById.get(id) as Vertex).group === v.group);
+      if (sameGroup.length > 0) return medianCross(sameGroup);
+    }
+    return medianCross(ids);
+  };
   const alignLayer = (layer: Vertex[], neighbors: Map<NodeId, NodeId[]>): void => {
     const n = layer.length;
     if (n === 0) return;
@@ -610,25 +631,32 @@ export function layoutFlow(
       offsets[i] =
         (offsets[i - 1] as number) + minSep(layer[i - 1] as Vertex, layer[i] as Vertex);
     }
-    // PAVA over desired shifts (desired center minus the node's offset).
-    const blocks: { sum: number; count: number; end: number }[] = [];
+    // Weighted PAVA over desired shifts (desired center minus the node's offset).
+    // Real nodes carry far more weight than routing dummies, so when a real node
+    // and a dummy land in the same conflict block the block settles on the real
+    // node's target and the dummy yields to the side — the real node wins its
+    // aligned slot (e.g. a cluster member stays on its spine while an external
+    // edge's corridor dummy is pushed aside), instead of the two averaging into
+    // a half-off position. Deterministic: fixed weights, same block merge order.
+    const blocks: { sum: number; weight: number; end: number }[] = [];
     for (let i = 0; i < n; i++) {
       const v = layer[i] as Vertex;
-      const desired = medianCross(neighbors.get(v.id) as NodeId[]) ?? crossOf(v);
-      let sum = desired - (offsets[i] as number);
-      let count = 1;
+      const desired = desiredCross(v, neighbors.get(v.id) as NodeId[]) ?? crossOf(v);
+      const w = v.isDummy ? 1 : REAL_ALIGN_WEIGHT;
+      let sum = w * (desired - (offsets[i] as number));
+      let weight = w;
       while (blocks.length > 0) {
-        const prev = blocks[blocks.length - 1] as { sum: number; count: number; end: number };
-        if (prev.sum / prev.count < sum / count) break;
+        const prev = blocks[blocks.length - 1] as { sum: number; weight: number; end: number };
+        if (prev.sum / prev.weight < sum / weight) break;
         blocks.pop();
         sum += prev.sum;
-        count += prev.count;
+        weight += prev.weight;
       }
-      blocks.push({ sum, count, end: i });
+      blocks.push({ sum, weight, end: i });
     }
     let i = 0;
     for (const block of blocks) {
-      const shift = block.sum / block.count;
+      const shift = block.sum / block.weight;
       for (; i <= block.end; i++) {
         setCross(layer[i] as Vertex, shift + (offsets[i] as number));
       }
