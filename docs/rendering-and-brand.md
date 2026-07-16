@@ -92,6 +92,23 @@ Palettes (in `graph.tsx`):
   neutral `accent` color — so an untouched diagram is unchanged and a themed
   neutral (JOYCO's black) never renders the arrows invisible. Emitted by
   `layout-sequence.ts`; block cells already carry `role-*` per cell.
+- **Subgraph backgrounds** (flow) — a subgraph declared with a trailing `:role`
+  (`subgraph G ["Label"] :success`) washes its container in that role's color at
+  a **low opacity** (`GROUP_FILL_OPACITY = 0.14`) and draws the border in the
+  **same color at full opacity**, so the box reads as a distinct tinted region
+  while member nodes, edges and the canvas texture stay legible through the wash.
+  A subgraph with no `:role` keeps the default transparent fill + neutral gray
+  outline, so existing diagrams are unchanged. The role is threaded from the DSL
+  onto `FlowGroup.role` → `PositionedGroup.role` and painted in `renderGroup`.
+  **Decision — the tint is coupled to the role token, not a separate surface
+  slot:** the fill is `ROLE_VARS[role]` with `fill-opacity`, so overriding
+  `--trazo-success` recolors success *nodes* and success *group washes* together.
+  If a group surface ever needs to be decoupled from node roles, that is an
+  additive change (`fill = var(--trazo-group-<role>, <current>)`) — no migration.
+  **Learning:** this is the renderer's **first translucent fill** — every other
+  color resolves to an *opaque* `--trazo-*` var, so a tint had to come from
+  `fill-opacity` rather than a `color-mix()`/alpha token (deliberately avoided
+  introducing the codebase's first `color-mix` for a single wash).
 - **Label color** — `LANE_FG_VARS` / `ROLE_FG_VARS` pair each fill with a
   readable text color (its own `-foreground` slot → shadcn `*-foreground` token
   → WCAG-picked black/white hex matching that slot's fallback fill). Keeps labels
