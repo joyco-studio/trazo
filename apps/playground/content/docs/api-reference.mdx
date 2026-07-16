@@ -96,7 +96,7 @@ interface CommitGraph {
 
 ```ts
 type NodeShape    = "dot" | "box" | "stadium" | "diamond" | "cylinder";
-type SemanticRole = "primary" | "success" | "error" | "warning" | "streamed" | "neutral";
+type SemanticRole = "primary" | "success" | "error" | "warning" | "info" | "neutral";
 type FlowDirection = "TD" | "LR";
 
 interface FlowNode {
@@ -297,7 +297,7 @@ To theme the graph, set the **`--trazo-*`** variables on any ancestor element. Y
 --trazo-success:   /* → --chart-2    */
 --trazo-error:     /* → --destructive */
 --trazo-warning:   /* → --chart-4    */
---trazo-streamed:  /* → --chart-3    */
+--trazo-info:      /* → --chart-3    */
 --trazo-neutral:   /* → --muted-foreground */
 /* Label text on each role box — a -foreground variant of each */
 --trazo-primary-foreground: /* … --success-foreground, --error-foreground, … */
@@ -346,7 +346,7 @@ To theme the graph, set the **`--trazo-*`** variables on any ancestor element. Y
     "--trazo-success":     "#22c55e",
     "--trazo-error":       "#ef4444",
     "--trazo-warning":     "#f59e0b",
-    "--trazo-streamed":    "#a855f7",
+    "--trazo-info":        "#a855f7",
     "--trazo-lane-1":      "#3b82f6",
     "--trazo-lane-2":      "#22c55e",
     "--trazo-lane-3":      "#f59e0b",

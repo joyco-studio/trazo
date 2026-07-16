@@ -134,9 +134,6 @@ const ROLE_VARS: Record<SemanticRole, string> = {
   warning: themed("warning", "chart-4", "#e6a700"),
   error: themed("error", "destructive", "#e5484d"),
   info: themed("info", "chart-3", "#2dd4bf"),
-  // Deprecated alias — resolves to the SAME slot as `info`, so theming
-  // `--trazo-info` recolors legacy `:streamed` nodes too.
-  streamed: themed("info", "chart-3", "#2dd4bf"),
 };
 
 /**
@@ -155,7 +152,6 @@ const ROLE_FG_VARS: Record<SemanticRole, string> = {
   warning: themed("warning-foreground", "chart-4-foreground", "#0a0a0a"),
   error: themed("error-foreground", "destructive-foreground", "#ffffff"),
   info: themed("info-foreground", "chart-3-foreground", "#0a0a0a"),
-  streamed: themed("info-foreground", "chart-3-foreground", "#0a0a0a"),
 };
 
 function roleColor(tokenKey: string): string {

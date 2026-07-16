@@ -43,7 +43,7 @@ subgraph Build ["Build time"]
 A["Compile"] --> B["Bundle"]
 end
 subgraph Request ["Request time"]
-C["Render"] --> D["Stream"]:streamed
+C["Render"] --> D["Stream"]:info
 end
 B --> C
 ```

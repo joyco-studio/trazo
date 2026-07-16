@@ -69,11 +69,11 @@ Append `:role` after a node declaration to color it semantically:
 
 ```
 B["slow call"]:warning
-E["streamed"]:streamed
+E["info"]:info
 X["failed"]:error
 ```
 
-Valid roles: `primary` · `success` · `error` · `warning` · `streamed` · `neutral`
+Valid roles: `primary` · `success` · `error` · `warning` · `info` · `neutral`
 (default). The role only needs to appear on the **first** declaration of the id.
 
 ## Edges
@@ -126,7 +126,7 @@ This produces: `Start → decision`, the decision fanning out to `Great!` and
 flow TD
 A(["Request arrives"]):primary ==> B["getCart() started"]:warning
 A ==> C["getFlags() started"]:warning
-A --> D["Render shell immediately"]:streamed
+A --> D["Render shell immediately"]:info
 B ==> E["Stream data as promises settle"]:success
 C --> E
 D --> E
@@ -188,7 +188,7 @@ commits there, returns to `main`, and merges the branch back in.
 | Branch | — | `branch name` / `checkout name` |
 | Join | fan-in: multiple `--> E` | `merge name : message` |
 | Shapes | `[box]` `([stadium])` `{diamond}` `[(cylinder)]` | commits are squares |
-| Color | `:primary :success :error :warning :streamed :neutral` | auto per lane/branch |
+| Color | `:primary :success :error :warning :info :neutral` | auto per lane/branch |
 
 **Common mistakes to avoid**
 

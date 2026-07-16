@@ -11,7 +11,7 @@ server and the client.
 ```
 flow TD                                    commit : init repo
 A(["Request"]):primary --> B["work"]       branch feature
-A --> C["render shell"]:streamed           commit : sketch solver
+A --> C["render shell"]:info               commit : sketch solver
 B --> D["stream"]:success                      checkout main
 C --> D                                     merge feature : land it
 ```
