@@ -62,6 +62,7 @@ import {
   wrapLabel,
   type AnchorFace,
 } from "./geometry.js";
+import { assignCross } from "./bk-align.js";
 
 const DEFAULTS = {
   direction: "TD" as FlowDirection,
@@ -76,13 +77,6 @@ const DEFAULTS = {
 
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
 const ORDERING_SWEEPS = 4;
-
-// Cross-axis alignment weight of a real node relative to a routing dummy (=1) in
-// the PAVA. High enough that a real node reliably wins its aligned slot against
-// same-rank dummies (a cluster member keeps its spine; the dummy corridor yields
-// to the side), while dummy-only conflict blocks still average normally so long
-// edges keep straightening among themselves.
-const REAL_ALIGN_WEIGHT = 1000;
 
 /**
  * A point `stub` px outward from `anchor` along the perpendicular of its face,
@@ -572,120 +566,65 @@ export function layoutFlow(
       prevGroup = v.group;
       prevSeen = true;
     }
-    const layerCrossEnd = cursor - nodeGap + padding;
-    if (layerCrossEnd > crossMax) crossMax = layerCrossEnd;
   }
 
-  // ── Cross-axis refinement: center nodes over their neighbors ──────────
-  // The initial pack is left-aligned; mermaid-style readability wants every
-  // node centered relative to what it connects to (a root centered over its
-  // fan-out, chains perfectly straight). Alternating median-alignment sweeps
-  // (down: toward up-neighbors; up: toward down-neighbors) move each node to
-  // its desired cross position, and each layer is then re-solved with PAVA
-  // (pool-adjacent-violators): expressing positions as shift + cumulative
-  // min-separation offsets turns "keep order + never overlap" into "shifts
-  // must be non-decreasing", whose least-squares fit is the classic isotonic
-  // regression — blocks of conflicting nodes settle at the mean of their
-  // desired shifts. Deterministic: fixed sweep count, input-order neighbor
-  // lists, stable block merging. Dummy nodes participate, so long edges
-  // straighten too. (Subsumes the old lone-node chain straightening.)
+  // ── Cross-axis coordinate assignment: Brandes–Köpf block alignment ────
+  // The initial pack above is left-aligned; readability wants every co-aligned
+  // run (a chain, a long-edge dummy chain, a cluster spine) to share ONE cross
+  // coordinate so its connecting edge draws straight. Brandes–Köpf achieves this
+  // in a single deterministic pass by grouping such nodes into vertical blocks
+  // and placing each block once — no iterative averaging, so no residual
+  // per-node drift (the failure mode of the old bounded PAVA sweeps). It is the
+  // method dagre/Mermaid use; see docs/coordinate-assignment.md.
   const crossOf = (v: Vertex): number => (direction === "TD" ? v.center.x : v.center.y);
   const setCross = (v: Vertex, c: number): void => {
     if (direction === "TD") v.center.x = c;
     else v.center.y = c;
   };
-  const medianCross = (ids: NodeId[]): number | undefined => {
-    if (ids.length === 0) return undefined;
-    const xs = ids.map((id) => crossOf(vById.get(id) as Vertex)).sort((a, b) => a - b);
-    return xs.length % 2 === 1
-      ? (xs[(xs.length - 1) / 2] as number)
-      : ((xs[xs.length / 2 - 1] as number) + (xs[xs.length / 2] as number)) / 2;
-  };
-  // Minimum center-to-center separation between layer neighbors — the same
-  // rule the initial pack used (halves + loop corridor + gap + group boundary).
+  // Minimum center-to-center separation between two layer neighbors (`a` left of
+  // `b`): half-widths + self-loop corridor + gap + any group-boundary breathing
+  // room. Size-aware, so wide and narrow siblings never overlap and abutting
+  // subgraph boxes stay clear.
   const minSep = (a: Vertex, b: Vertex): number => {
     const halfA = (direction === "TD" ? a.w : a.h) / 2;
     const halfB = (direction === "TD" ? b.w : b.h) / 2;
     const boundary = hasGroups && a.group !== b.group ? groupBoundaryGap : 0;
     return halfA + a.loopPad + nodeGap + boundary + halfB;
   };
-  // A cluster member aligns to its SAME-GROUP neighbors when it has any, so the
-  // intra-cluster spine (e.g. top→mid→bot) stays a straight column and the
-  // external feeders bend to route in — instead of an external edge's routing
-  // dummy sharing the rank and dragging the member off its cluster-mates'
-  // column (Mermaid keeps the cluster spine straight). The anchor set spans BOTH
-  // directions (up + down): a spine endpoint has an intra-cluster neighbor on
-  // only one side, so a one-sided (per-sweep) filter would fall back to the
-  // external median on the other pass and let the endpoint drift off the column.
-  // Precomputed once; a fixed function of the neighbor lists → deterministic.
-  const sameGroupAnchors = new Map<NodeId, NodeId[]>();
+
+  // Proper adjacency for BK: adjacent-rank segments only. A forward edge's
+  // expanded path visits consecutive ranks (dummies fill any gap); each segment
+  // links an upper (lower-rank) vertex to a lower (higher-rank) one. Back-edges
+  // and same-rank edges are skipped — they route laterally and never pin a
+  // column. Segment order follows input edge order → deterministic.
+  const bkUp = new Map<NodeId, NodeId[]>();
+  const bkDown = new Map<NodeId, NodeId[]>();
   for (const v of vById.values()) {
-    if (v.group === undefined) continue;
-    const anchors: NodeId[] = [];
-    for (const id of upNeighbors.get(v.id) as NodeId[]) {
-      if ((vById.get(id) as Vertex).group === v.group) anchors.push(id);
-    }
-    for (const id of downNeighbors.get(v.id) as NodeId[]) {
-      if ((vById.get(id) as Vertex).group === v.group) anchors.push(id);
-    }
-    if (anchors.length > 0) sameGroupAnchors.set(v.id, anchors);
+    bkUp.set(v.id, []);
+    bkDown.set(v.id, []);
   }
-  // Grouped members with any same-group neighbor align to that spine (both
-  // sides) regardless of sweep direction; everything else uses the swept side's
-  // neighbors. Falls back to the full set for ungrouped nodes and isolated
-  // members (no same-group neighbor at all).
-  const desiredCross = (v: Vertex, ids: NodeId[]): number | undefined => {
-    const anchors = v.group !== undefined ? sameGroupAnchors.get(v.id) : undefined;
-    if (anchors !== undefined) return medianCross(anchors);
-    return medianCross(ids);
-  };
-  const alignLayer = (layer: Vertex[], neighbors: Map<NodeId, NodeId[]>): void => {
-    const n = layer.length;
-    if (n === 0) return;
-    const offsets: number[] = [0];
-    for (let i = 1; i < n; i++) {
-      offsets[i] =
-        (offsets[i - 1] as number) + minSep(layer[i - 1] as Vertex, layer[i] as Vertex);
+  for (const e of edges) {
+    if ((rank.get(e.from) as number) >= (rank.get(e.to) as number)) continue;
+    const path = expandedPath(e, dummyChain.get(e) as NodeId[], rank);
+    for (let i = 1; i < path.length; i++) {
+      const upper = path[i - 1] as NodeId;
+      const lower = path[i] as NodeId;
+      (bkDown.get(upper) as NodeId[]).push(lower);
+      (bkUp.get(lower) as NodeId[]).push(upper);
     }
-    // Weighted PAVA over desired shifts (desired center minus the node's offset).
-    // Real nodes carry far more weight than routing dummies, so when a real node
-    // and a dummy land in the same conflict block the block settles on the real
-    // node's target and the dummy yields to the side — the real node wins its
-    // aligned slot (e.g. a cluster member stays on its spine while an external
-    // edge's corridor dummy is pushed aside), instead of the two averaging into
-    // a half-off position. Deterministic: fixed weights, same block merge order.
-    const blocks: { sum: number; weight: number; end: number }[] = [];
-    for (let i = 0; i < n; i++) {
-      const v = layer[i] as Vertex;
-      const desired = desiredCross(v, neighbors.get(v.id) as NodeId[]) ?? crossOf(v);
-      const w = v.isDummy ? 1 : REAL_ALIGN_WEIGHT;
-      let sum = w * (desired - (offsets[i] as number));
-      let weight = w;
-      while (blocks.length > 0) {
-        const prev = blocks[blocks.length - 1] as { sum: number; weight: number; end: number };
-        if (prev.sum / prev.weight < sum / weight) break;
-        blocks.pop();
-        sum += prev.sum;
-        weight += prev.weight;
-      }
-      blocks.push({ sum, weight, end: i });
-    }
-    let i = 0;
-    for (const block of blocks) {
-      const shift = block.sum / block.weight;
-      for (; i <= block.end; i++) {
-        setCross(layer[i] as Vertex, shift + (offsets[i] as number));
-      }
-    }
-  };
-  const REFINE_SWEEPS = 2;
-  for (let sweep = 0; sweep < REFINE_SWEEPS; sweep++) {
-    for (let r = 1; r < layers.length; r++) {
-      alignLayer(layers[r] as Vertex[], upNeighbors);
-    }
-    for (let r = layers.length - 2; r >= 0; r--) {
-      alignLayer(layers[r] as Vertex[], downNeighbors);
-    }
+  }
+
+  {
+    const cross = assignCross({
+      layers: layers.map((layer) => layer.map((v) => v.id)),
+      up: bkUp,
+      down: bkDown,
+      isDummy: (id) => (vById.get(id) as Vertex).isDummy,
+      group: (id) => (vById.get(id) as Vertex).group,
+      sep: (leftId, rightId) =>
+        minSep(vById.get(leftId) as Vertex, vById.get(rightId) as Vertex),
+    });
+    for (const v of vById.values()) setCross(v, cross.get(v.id) as number);
   }
 
   // ── Cluster-rank even spacing ─────────────────────────────────────────
