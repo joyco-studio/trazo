@@ -725,6 +725,7 @@ export function layoutFlow(
         pg.label = g.label;
         pg.labelWidth = labelWidth;
       }
+      if (g.role !== undefined) pg.role = g.role;
       out.push(pg);
       // Grow the viewBox to contain the box (leads keep the near edges ≥ 0).
       if (box.x + box.w + padding > width) width = box.x + box.w + padding;

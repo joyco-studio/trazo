@@ -283,6 +283,12 @@ const MUTED_FG = themed("muted-foreground", "muted-foreground", "#a1a1a1");
 const MUTED = themed("muted", "muted", "#1c1c1c");
 /** Subgraph container stroke — a light, on-brand gray outline. */
 const GROUP_STROKE = MUTED_FG;
+/**
+ * Opacity of a role-tinted subgraph fill. Low enough that member nodes, edges
+ * and the canvas texture read clearly through the wash; the border keeps the
+ * role color at full opacity so the group still reads as a distinct region.
+ */
+const GROUP_FILL_OPACITY = 0.14;
 /** Canvas backdrop fill for themes with `background: "solid" | "texture"`. */
 const CANVAS = themed("canvas", "background", "#0a0a0a");
 /** Hatch line color for the `"texture"` background — a subtle border-ish line. */
@@ -415,6 +421,10 @@ function renderGroup(
   // A note is a flat filled panel (no border, no radius), with its text centered;
   // a subgraph container is an outlined rounded box with a top-left title.
   const textX = isNote ? group.x + group.w / 2 : titleX;
+  // A role'd subgraph washes its box in the role color at low opacity and draws
+  // the border in that same color at full opacity; unset falls back to the
+  // default transparent fill + neutral gray outline. Notes are unaffected.
+  const roleTint = !isNote && group.role !== undefined ? ROLE_VARS[group.role] : undefined;
   return (
     <g key={group.id} data-slot={isNote ? "note" : "group"} className={groupClass}>
       <rect
@@ -422,8 +432,9 @@ function renderGroup(
         y={group.y}
         width={group.w}
         height={group.h}
-        fill={isNote ? MUTED : "none"}
-        stroke={isNote ? "none" : GROUP_STROKE}
+        fill={isNote ? MUTED : (roleTint ?? "none")}
+        fillOpacity={roleTint !== undefined ? GROUP_FILL_OPACITY : undefined}
+        stroke={isNote ? "none" : (roleTint ?? GROUP_STROKE)}
         strokeWidth={isNote ? 0 : 1.5}
       />
       {group.label !== undefined ? (
