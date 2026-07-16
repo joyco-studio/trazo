@@ -61,6 +61,19 @@ describe("layoutSequence()", () => {
     expect(sync.dashed).toBeUndefined();
   });
 
+  it("tints a message with its source participant's role, else neutral accent", () => {
+    // C has role `primary`, S has none. A message adopts its SENDER's role color
+    // when that sender is explicitly roled; a message from an unroled sender
+    // keeps the neutral `accent` edge color.
+    const g = layoutSequence(fixture);
+    const fromRoled = g.edges.find((e) => e.from === "C" && e.to === "S")!;
+    expect(fromRoled.color).toBe("role-primary");
+    const fromUnroled = g.edges.find((e) => e.from === "S" && e.to === "C")!;
+    expect(fromUnroled.color).toBe("accent");
+    const self = g.edges.find((e) => e.from === "S" && e.to === "S")!;
+    expect(self.color).toBe("accent");
+  });
+
   it("a self-message loops (bulges right of its lifeline)", () => {
     const g = layoutSequence(fixture);
     const self = g.edges.find((e) => e.from === "S" && e.to === "S")!;
