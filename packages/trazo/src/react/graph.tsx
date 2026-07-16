@@ -395,8 +395,11 @@ function renderMultilineText(text: string, x: number, y: number): JSX.Element {
 
 /**
  * Render a subgraph container / note box: an outlined (group) or filled (note)
- * rounded rect with an optional title in its reserved top strip. Drawn BEFORE
- * nodes and edges so they paint on top of the container. Pure.
+ * rounded rect with an optional title in its reserved top strip. Paint order
+ * splits by variant: subgraph containers ("group") draw BEFORE nodes and edges
+ * so those paint on top of the container, while sequence notes draw AFTER the
+ * lifelines and edges so the opaque note panel covers the dashed lifeline and
+ * any message strokes running behind it. Pure.
  */
 function renderGroup(
   group: PositionedGroup,
@@ -690,11 +693,13 @@ export function Graph(props: GraphProps): JSX.Element {
         </defs>
       ) : null}
 
-      {graph.groups && graph.groups.length > 0 ? (
+      {graph.groups && graph.groups.some((g) => g.variant !== "note") ? (
         <g data-slot="groups">
-          {graph.groups.map((group) =>
-            renderGroup(group, classNames?.group, classNames?.groupLabel, paint.uppercase),
-          )}
+          {graph.groups
+            .filter((group) => group.variant !== "note")
+            .map((group) =>
+              renderGroup(group, classNames?.group, classNames?.groupLabel, paint.uppercase),
+            )}
         </g>
       ) : null}
 
@@ -837,6 +842,16 @@ export function Graph(props: GraphProps): JSX.Element {
           );
         })}
       </g>
+
+      {graph.groups && graph.groups.some((g) => g.variant === "note") ? (
+        <g data-slot="notes">
+          {graph.groups
+            .filter((group) => group.variant === "note")
+            .map((group) =>
+              renderGroup(group, classNames?.group, classNames?.groupLabel, paint.uppercase),
+            )}
+        </g>
+      ) : null}
 
       {graph.edges.some(
         (e) => e.label !== undefined && e.labelPoint !== undefined,
