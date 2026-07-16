@@ -58,7 +58,7 @@ root via `className="[--trazo-success:green]"`, or anywhere above the graph —
 with **no inline style and no knowledge of which shadcn token a slot maps to**.
 The slots are trazo's own stable vocabulary: `--trazo-lane-1…6`,
 `--trazo-primary`, `--trazo-success`, `--trazo-error`, `--trazo-warning`,
-`--trazo-streamed`, `--trazo-neutral`, plus a `-foreground` variant of each for
+`--trazo-info`, `--trazo-neutral`, plus a `-foreground` variant of each for
 label text, and `--trazo-bg` / `--trazo-accent` / `--trazo-muted` for surfaces.
 
 **Layer 2 — the stock shadcn token (the default brand match).** The renderer
@@ -80,7 +80,7 @@ Palettes (in `graph.tsx`):
 - **Lanes** (git) — `LANE_VARS`, **6 distinct slots** `lane-1…6` (defaulting to
   `primary` then `chart-1…5`); `laneIndex` cycles mod 6 for a clean loop.
 - **Roles** (flow) — `ROLE_VARS`: `primary→primary`, `success→chart-2`,
-  `error→destructive`, `warning→chart-4`, `streamed→chart-3`,
+  `error→destructive`, `warning→chart-4`, `info→chart-3`,
   `neutral→muted-foreground`.
 - **Accent** — `"accent"` key → a neutral light gray, the default flow edge
   color. Its own `--trazo-edge` slot (→ `muted-foreground`), deliberately NOT
@@ -143,10 +143,8 @@ theme editor edits). A theme has two halves, resolved at a single point each:
   are intentionally unset — a JOYCO app's own shadcn tokens already carry the
   brand.
 - Semantic roles now include `secondary`, `ghost`, `muted`, `info` (each with a
-  `-foreground` slot). `streamed` is a deprecated alias resolving to the `info`
-  slot, so theming `--trazo-info` recolors legacy `:streamed` nodes too. The
-  keyword list is exported as `SEMANTIC_ROLES` (single source for the DSL
-  parsers).
+  `-foreground` slot). The keyword list is exported as `SEMANTIC_ROLES` (single
+  source for the DSL parsers).
 
 ## Label casing (`textCase`)
 

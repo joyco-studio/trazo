@@ -34,7 +34,7 @@ flow TD
 
 A(["Request arrives"]):primary --> B["getCart() started"]:warning
 A --> C["getFlags() started"]:warning
-A --> D["Render shell immediately"]:streamed
+A --> D["Render shell immediately"]:info
 B ==> E["Stream data as promises settle"]:success
 C --> E
 D --> E

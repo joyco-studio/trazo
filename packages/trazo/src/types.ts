@@ -107,9 +107,6 @@ export type NodeShape = "dot" | "box" | "stadium" | "diamond" | "cylinder";
 /**
  * Semantic role of a flow node — maps to a theme color token in the renderer,
  * so the engine never emits a literal color (same discipline as git lanes).
- *
- * `streamed` is a deprecated alias of `info`: it stays in the union so existing
- * inputs keep parsing, but the renderer resolves it to the `--trazo-info` slot.
  */
 export type SemanticRole =
   | "primary"
@@ -120,8 +117,7 @@ export type SemanticRole =
   | "success"
   | "warning"
   | "error"
-  | "info"
-  | "streamed";
+  | "info";
 
 /**
  * Every accepted role keyword, in one place so the flow/block/sequence DSL
@@ -137,7 +133,6 @@ export const SEMANTIC_ROLES: readonly SemanticRole[] = [
   "warning",
   "error",
   "info",
-  "streamed",
 ];
 
 /** Layout flow direction: top-down or left-right. */

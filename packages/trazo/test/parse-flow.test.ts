@@ -104,7 +104,6 @@ describe("parseFlow — nodes", () => {
       "warning",
       "error",
       "info",
-      "streamed",
     ]) {
       expect(node(ok(`A:${role}`), "A").role).toBe(role);
     }
