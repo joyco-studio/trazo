@@ -44,6 +44,7 @@ import type {
   SemanticRole,
 } from "./types.js";
 import {
+  BADGE_H,
   badgeHeight,
   badgeWidth,
   edgeLabelPoint,
@@ -201,6 +202,78 @@ export function layoutFlow(
 
   // ── 1. Rank assignment (longest-path via Kahn, cycle-safe) ────────────
   const rank = assignRanks(graph.nodes, edges, indexOf, inAdj, outAdj);
+
+  // ── 1b. Cluster cohesion: pull an edge-less group member into its band ──
+  // A grouped node with NO edges is a rank-0 source by longest-path, which can
+  // strand it far from its edge-connected cluster-mates — e.g. a bare node in a
+  // right-side subgraph dragged back to the left source rank, stretching the
+  // cluster box across a foreign subgraph (the two boxes then overlap). Re-rank
+  // each such isolated member to its cluster's ANCHOR rank (the lowest rank held
+  // by an edge-connected member of the same group), so the cluster stays a
+  // compact, contiguous band instead of spanning the whole chart. Members that
+  // carry edges are untouched (their rank is load-bearing). Deterministic: a
+  // fixed function of ranks + input membership.
+  if ((graph.groups?.length ?? 0) > 0) {
+    const isolated = (id: NodeId): boolean =>
+      (outAdj.get(id) as NodeId[]).length === 0 && (inAdj.get(id) as NodeId[]).length === 0;
+    const anchorRank = new Map<string, number>();
+    for (const n of graph.nodes) {
+      if (n.group === undefined || isolated(n.id)) continue;
+      const r = rank.get(n.id) as number;
+      const prev = anchorRank.get(n.group);
+      if (prev === undefined || r < prev) anchorRank.set(n.group, r);
+    }
+    for (const n of graph.nodes) {
+      if (n.group === undefined || !isolated(n.id)) continue;
+      const anchor = anchorRank.get(n.group);
+      if (anchor !== undefined) rank.set(n.id, anchor);
+    }
+
+    // ── 1c. Lift external predecessors ABOVE a self-contained cluster ─────
+    // When an UNGROUPED node feeds INTO a subgraph and shares the subgraph's top
+    // rank, longest-path drops it beside the top members — inside the container
+    // box, reading as part of the cluster (Mermaid instead stacks such feeders
+    // ABOVE the box, pointing down in). Push the whole cluster DOWN so its top
+    // rank clears every external predecessor. Guarded to a "downward-closed"
+    // cluster — one whose members only send edges to OTHER members — so the shift
+    // can't strand an external successor at a now-higher rank (no rank cascade).
+    // Deterministic: groups processed in declared order; ranks are integers.
+    const memberOf = new Map<string, NodeId[]>();
+    for (const n of graph.nodes) {
+      if (n.group === undefined) continue;
+      const list = memberOf.get(n.group);
+      if (list) list.push(n.id);
+      else memberOf.set(n.group, [n.id]);
+    }
+    for (const g of graph.groups as FlowGroup[]) {
+      const members = memberOf.get(g.id);
+      if (!members || members.length === 0) continue;
+      const inGroup = new Set(members);
+      // Skip unless every out-edge stays inside the cluster (no downward exit).
+      let downwardClosed = true;
+      for (const m of members) {
+        for (const succ of outAdj.get(m) as NodeId[]) {
+          if (!inGroup.has(succ)) {
+            downwardClosed = false;
+            break;
+          }
+        }
+        if (!downwardClosed) break;
+      }
+      if (!downwardClosed) continue;
+      let topRank = Infinity;
+      for (const m of members) topRank = Math.min(topRank, rank.get(m) as number);
+      // Highest rank held by an external node that feeds a member.
+      let maxExtPred = -Infinity;
+      for (const m of members) {
+        for (const pred of inAdj.get(m) as NodeId[]) {
+          if (!inGroup.has(pred)) maxExtPred = Math.max(maxExtPred, rank.get(pred) as number);
+        }
+      }
+      const delta = maxExtPred === -Infinity ? 0 : maxExtPred + 1 - topRank;
+      if (delta > 0) for (const m of members) rank.set(m, (rank.get(m) as number) + delta);
+    }
+  }
 
   // ── Build real vertices ───────────────────────────────────────────────
   const vById = new Map<NodeId, Vertex>();
@@ -400,12 +473,40 @@ export function layoutFlow(
   // no inter-rank widening is needed. KNOWN LIMITATION: a spanning label wider
   // than the rank spacing can still graze an endpoint's box; that case is
   // inherent (no on-line placement clears a badge wider than the node spacing).
+  // A "parallel pair": two nodes on ADJACENT ranks with edges in BOTH directions
+  // (a↔b), each the SOLE real node on its rank. That's a 1↔1 sync relationship
+  // (e.g. commit / scroll-deltas between two threads) — Mermaid draws it as two
+  // parallel lines with both labels centered BETWEEN the boxes. Both edges route
+  // straight through the shared inter-rank gap (see edge routing below), offset to
+  // opposite sides of centre, instead of arcing the reverse edge out on a lateral
+  // corridor (which strands its label at the far edge). The "sole on rank" guard
+  // keeps genuine branch/merge loops — a retry edge back to a decision that fans
+  // out, so its target rank has siblings — on the lateral arc. Deterministic.
+  const edgeDirs = new Set<string>();
+  for (const e of edges) edgeDirs.add(`${e.from} ${e.to}`);
+  const realPerRank: number[] = layers.map(
+    (layer) => layer.filter((v) => !v.isDummy).length,
+  );
+  const isParallelPair = (fromV: Vertex, toV: Vertex, e: FlowEdge): boolean =>
+    Math.abs(fromV.rank - toV.rank) === 1 &&
+    edgeDirs.has(`${e.to} ${e.from}`) &&
+    (realPerRank[fromV.rank] as number) === 1 &&
+    (realPerRank[toV.rank] as number) === 1;
+
   const labelGapAfter: number[] = new Array(layers.length).fill(0);
   for (const e of edges) {
     if (e.label === undefined) continue;
     const fromV = vById.get(e.from) as Vertex;
     const toV = vById.get(e.to) as Vertex;
-    if (toV.rank !== fromV.rank + 1) continue;
+    // A label sits in the inter-rank gap when its edge is a forward adjacent edge
+    // OR a parallel-pair REVERSE edge (which routes back through the SAME gap). In
+    // both cases reserve room at the LOWER rank's boundary so the widest of the
+    // pair's two labels fits — otherwise a labeled reverse edge (or the wider of
+    // the two) is drawn UNDER the node boxes.
+    const forwardAdjacent = toV.rank === fromV.rank + 1;
+    const parallelReverse = fromV.rank === toV.rank + 1 && isParallelPair(fromV, toV, e);
+    if (!forwardAdjacent && !parallelReverse) continue;
+    const gapRank = Math.min(fromV.rank, toV.rank);
     // Edge labels render verbatim (no inline-code chips), so measure them plain —
     // backticks are ordinary glyphs, not consumed delimiters. In TD the badge's
     // HEIGHT lies on the main axis (and grows with a multi-line label), in LR its
@@ -414,7 +515,7 @@ export function layoutFlow(
     const labelMainExtent =
       direction === "TD" ? badgeHeight(measured.height) : badgeWidth(measured.width);
     const need = labelMainExtent + LABEL_GAP * 2;
-    if (need > (labelGapAfter[fromV.rank] as number)) labelGapAfter[fromV.rank] = need;
+    if (need > (labelGapAfter[gapRank] as number)) labelGapAfter[gapRank] = need;
   }
 
   // Main-axis origin per rank: padding + Σ(prev thickness + per-boundary gap) +
@@ -602,6 +703,16 @@ export function layoutFlow(
       // renderer places the title uniformly (top-left of the box).
       box.y -= GROUP_TITLE_H;
       box.h += GROUP_TITLE_H;
+      // A subgraph box narrower than its own title clips the label (the title
+      // renders left-aligned at `box.x + GROUP_PAD`). Widen the box to the RIGHT
+      // so it's at least as wide as the title needs — GROUP_PAD on each side of
+      // the measured label — keeping members left-aligned and growing the canvas
+      // via the viewBox check below. Mirrors the sequence note box's title fit.
+      const labelWidth = g.label !== undefined ? measureMultiline(g.label).width : 0;
+      if (labelWidth > 0) {
+        const titleNeed = labelWidth + GROUP_PAD * 2;
+        if (box.w < titleNeed) box.w = titleNeed;
+      }
       const pg: PositionedGroup = {
         id: g.id,
         x: box.x,
@@ -612,7 +723,7 @@ export function layoutFlow(
       };
       if (g.label !== undefined) {
         pg.label = g.label;
-        pg.labelWidth = measureMultiline(g.label).width;
+        pg.labelWidth = labelWidth;
       }
       out.push(pg);
       // Grow the viewBox to contain the box (leads keep the near edges ≥ 0).
@@ -653,6 +764,7 @@ export function layoutFlow(
   let routeMaxY = 0;
   let routeMinX = 0;
   let routeMinY = 0;
+
   // Waypoints per edge, parallel to `positionedEdges`. Path strings are built
   // AFTER the label-bounds normalization below, which may shift every point.
   const edgePoints: Point[][] = [];
@@ -672,11 +784,18 @@ export function layoutFlow(
     //    loop back to a decision.
     //  - same-rank: route along the cross axis between the two sides.
     const isBackEdge = fromV.rank > toV.rank;
+    const parallel = isParallelPair(fromV, toV, e);
     let exitFace: AnchorFace;
     let entryFace: AnchorFace;
     if (fromV.rank < toV.rank) {
       exitFace = "forward";
       entryFace = "backward";
+    } else if (isBackEdge && parallel) {
+      // Parallel pair: send the reverse edge back through the SAME gap as its
+      // forward twin (leave the lower-rank-facing side, enter the twin's
+      // gap-facing side), offset below centre — not out on a lateral corridor.
+      exitFace = "backward";
+      entryFace = "forward";
     } else if (isBackEdge) {
       // Exit and re-enter on the same lateral side (the side the source sits on,
       // so the loop bulges outward away from the column's center).
@@ -693,8 +812,30 @@ export function layoutFlow(
 
     // With an edgeGap the path starts/ends a few px OFF the face, so the line
     // (and the arrow tip, which sits at the path end) never touches the box.
-    const exitAnchor = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
-    const entryAnchor = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+    let exitAnchor = faceAnchor(fromV.center, fromV.w, fromV.h, fromV.shape, direction, exitFace);
+    let entryAnchor = faceAnchor(toV.center, toV.w, toV.h, toV.shape, direction, entryFace);
+    // Parallel pair: slide BOTH anchors off the face centre along the cross axis
+    // — the low→high (forward) twin toward cross-start, the high→low (reverse)
+    // toward cross-end — so the two lines run parallel with a clear gap and each
+    // label centres on its own line, stacked between the boxes (Mermaid parity).
+    // The offset is half the label-badge height (so the two centred labels clear
+    // each other), clamped to stay on the node face.
+    if (parallel) {
+      const minHalf = Math.min(
+        direction === "TD" ? fromV.w : fromV.h,
+        direction === "TD" ? toV.w : toV.h,
+      ) / 2;
+      const halfOff = Math.min(BADGE_H / 2 + 2, Math.max(0, minHalf - 4));
+      const d = (fromV.rank < toV.rank ? -1 : 1) * halfOff;
+      exitAnchor =
+        direction === "TD"
+          ? { x: exitAnchor.x + d, y: exitAnchor.y }
+          : { x: exitAnchor.x, y: exitAnchor.y + d };
+      entryAnchor =
+        direction === "TD"
+          ? { x: entryAnchor.x + d, y: entryAnchor.y }
+          : { x: entryAnchor.x, y: entryAnchor.y + d };
+    }
     const exit = edgeGap > 0 ? stubPoint(exitAnchor, exitFace, direction, edgeGap) : exitAnchor;
     const entry = edgeGap > 0 ? stubPoint(entryAnchor, entryFace, direction, edgeGap) : entryAnchor;
 
@@ -730,9 +871,11 @@ export function layoutFlow(
     // parallel corridor, so it never overlaps the forward edge between the same
     // pair. The corridor must clear EVERY node in the ranks it travels past
     // (a wide box on an intermediate rank would otherwise be sliced), so it
-    // offsets from the outermost cross extent across the spanned rank range.
+    // offsets from the outermost cross extent across the spanned rank range. A
+    // parallel-pair reverse edge skips this — it already runs straight through
+    // the gap, offset from its forward twin.
     const backDetour: Point[] = [];
-    if (isBackEdge) {
+    if (isBackEdge && !parallel) {
       const goingEnd = exitFace === "cross-end";
       const clearance = nodeGap;
       const rLo = Math.min(fromV.rank, toV.rank);

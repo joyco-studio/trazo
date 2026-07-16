@@ -661,6 +661,194 @@ describe("layoutFlow() — subgraphs", () => {
     const e = layoutFlow(graph).edges.find((x) => x.from === "a")!;
     expect(badgeHeight(e.labelHeight ?? 0)).toBeCloseTo(BADGE_H, 3);
   });
+
+  it("widens a group box narrower than its own title so the title isn't clipped", () => {
+    // A one-node group whose title is far wider than the node: the box must be
+    // at least the title width (+ padding on each side), so the left-aligned
+    // title fits inside instead of overflowing the box / viewBox.
+    const g = layoutFlow({
+      kind: "flow",
+      nodes: [{ id: "x", label: "X", group: "G" }],
+      edges: [],
+      groups: [{ id: "G", label: "A Very Long Subgraph Title Here" }],
+    });
+    const box = g.groups!.find((gp) => gp.id === "G")!;
+    expect(box.labelWidth).toBeGreaterThan(0);
+    // Title + a GROUP_PAD (16) gutter on each side must fit within the box.
+    expect(box.w).toBeGreaterThanOrEqual(box.labelWidth! + 16 * 2 - 0.5);
+    // And the box stays within the viewBox.
+    expect(box.x + box.w).toBeLessThanOrEqual(g.width + 0.5);
+  });
+
+  it("pulls an edge-less group member into its cluster's rank band", () => {
+    // `dom` has no edges, so longest-path would strand it at rank 0 (left in LR),
+    // stretching the `page` box across the `window` box. Cluster cohesion re-ranks
+    // it to sit with its edge-connected cluster-mate `canvas` (rank 1), so the two
+    // subgraph boxes end up side by side and DON'T overlap.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "LR",
+      nodes: [
+        { id: "view", label: "Viewport", group: "window" },
+        { id: "canvas", label: "Canvas", group: "page" },
+        { id: "dom", label: "DOM", group: "page" },
+      ],
+      edges: [{ from: "view", to: "canvas" }],
+      groups: [
+        { id: "window", label: "Window" },
+        { id: "page", label: "Page" },
+      ],
+    });
+    const win = g.groups!.find((gp) => gp.id === "window")!;
+    const page = g.groups!.find((gp) => gp.id === "page")!;
+    // Boxes are disjoint on one axis (side by side in x).
+    const disjoint =
+      win.x + win.w <= page.x + 0.5 ||
+      page.x + page.w <= win.x + 0.5 ||
+      win.y + win.h <= page.y + 0.5 ||
+      page.y + page.h <= win.y + 0.5;
+    expect(disjoint).toBe(true);
+    // `dom` sits inside its own box (not stranded far left inside `window`).
+    const dom = g.nodes.find((n) => n.id === "dom")!;
+    expect(dom.x - dom.w! / 2).toBeGreaterThanOrEqual(page.x - 0.5);
+    expect(dom.x + dom.w! / 2).toBeLessThanOrEqual(page.x + page.w + 0.5);
+  });
+
+  it("lifts an external predecessor ABOVE a self-contained cluster (no overlap)", () => {
+    // `ext` feeds a node inside a downward-closed cluster and would otherwise
+    // share the cluster's top rank (landing inside the box). It must sit ABOVE
+    // the box instead, clear of it.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "top", label: "Top", group: "C" },
+        { id: "mid", label: "Mid", group: "C" },
+        { id: "bot", label: "Bot", group: "C" },
+        { id: "ext", label: "External feeder" },
+      ],
+      edges: [
+        { from: "top", to: "mid" },
+        { from: "mid", to: "bot" },
+        { from: "ext", to: "mid" },
+      ],
+      groups: [{ id: "C", label: "Cluster" }],
+    });
+    const box = g.groups!.find((gp) => gp.id === "C")!;
+    const ext = g.nodes.find((n) => n.id === "ext")!;
+    // `ext` is entirely above the cluster box (its bottom edge clears the box top).
+    expect(ext.y + ext.h! / 2).toBeLessThanOrEqual(box.y + 0.5);
+    // The three cluster members are inside the box.
+    for (const id of ["top", "mid", "bot"]) {
+      const n = g.nodes.find((m) => m.id === id)!;
+      expect(n.y - n.h! / 2).toBeGreaterThanOrEqual(box.y - 0.5);
+      expect(n.y + n.h! / 2).toBeLessThanOrEqual(box.y + box.h + 0.5);
+    }
+  });
+});
+
+// ── reversed (start) arrows ──────────────────────────────────────────────────
+
+describe("layoutFlow() — reversed arrows", () => {
+  it("carries a start arrowhead through to the positioned edge", () => {
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "LR",
+      nodes: [{ id: "main", label: "main" }, { id: "child", label: "child" }],
+      edges: [{ from: "main", to: "child", arrow: "start", label: "base of" }],
+    });
+    // main stays the source (leftmost); the head is emitted at the source end.
+    const main = g.nodes.find((n) => n.id === "main")!;
+    const child = g.nodes.find((n) => n.id === "child")!;
+    expect(main.x).toBeLessThan(child.x);
+    expect(g.edges[0]?.arrowHead).toBe("start");
+  });
+});
+
+// ── parallel bidirectional pairs ─────────────────────────────────────────────
+
+describe("layoutFlow() — parallel bidirectional pairs", () => {
+  it("routes a 1↔1 pair as two parallel lines with both labels centered", () => {
+    // A↔B, each the sole node on its rank: Mermaid draws two parallel lines with
+    // both labels stacked BETWEEN the boxes. The reverse edge must run through the
+    // gap (offset from its twin), NOT dip out on a lateral corridor.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "LR",
+      nodes: [{ id: "A", label: "A" }, { id: "B", label: "B" }],
+      edges: [
+        { from: "A", to: "B", label: "commit" },
+        { from: "B", to: "A", label: "scroll deltas" },
+      ],
+    });
+    const fwd = g.edges.find((e) => e.from === "A" && e.to === "B")!;
+    const rev = g.edges.find((e) => e.from === "B" && e.to === "A")!;
+    // Both labels share the gap-centre main-axis coordinate (LR → x), offset on
+    // the cross axis (y) so they stack.
+    expect(Math.abs(fwd.labelPoint!.x - rev.labelPoint!.x)).toBeLessThan(0.5);
+    expect(Math.abs(fwd.labelPoint!.y - rev.labelPoint!.y)).toBeGreaterThan(4);
+    // The reverse edge stays within the boxes' vertical band — no lateral dip.
+    const A = g.nodes.find((n) => n.id === "A")!;
+    const revYs = rev.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number).filter((_, i) => i % 2 === 1);
+    expect(Math.max(...revYs)).toBeLessThanOrEqual(A.y + A.h! / 2 + 0.5);
+  });
+
+  it("reserves the inter-node gap for the WIDER of the pair's two labels", () => {
+    // The reverse label is wider than the forward one (or the forward is absent):
+    // the gap must widen to the LARGER label so BOTH badges sit within it, never
+    // clipped under the node boxes. (Only forward labels used to reserve the gap.)
+    for (const edges of [
+      // reverse-only:
+      [{ from: "A", to: "B" }, { from: "B", to: "A", label: "commit periodic sync" }],
+      // both, reverse wider:
+      [
+        { from: "A", to: "B", label: "sarasa" },
+        { from: "B", to: "A", label: "commit periodic sync" },
+      ],
+    ] as const) {
+      const g = layoutFlow({
+        kind: "flow",
+        direction: "LR",
+        nodes: [{ id: "A", label: "Request arrives" }, { id: "B", label: "getCart() started" }],
+        edges: [...edges],
+      });
+      const A = g.nodes.find((n) => n.id === "A")!;
+      const B = g.nodes.find((n) => n.id === "B")!;
+      const gapL = A.x + A.w! / 2;
+      const gapR = B.x - B.w! / 2;
+      for (const e of g.edges) {
+        if (e.labelPoint === undefined) continue;
+        const half = badgeWidth(e.labelWidth ?? 0) / 2;
+        expect(e.labelPoint.x - half).toBeGreaterThanOrEqual(gapL - 0.5);
+        expect(e.labelPoint.x + half).toBeLessThanOrEqual(gapR + 0.5);
+      }
+    }
+  });
+
+  it("keeps a retry loop into a fanned-out decision on the lateral arc", () => {
+    // B(decision) → {C, D}, D → B. D's rank has a sibling (C), so the pair is NOT
+    // sole-on-rank: the back-edge keeps its outward lateral corridor (loop look).
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "B", label: "Decide", shape: "diamond" },
+        { id: "C", label: "C" },
+        { id: "D", label: "D" },
+      ],
+      edges: [
+        { from: "B", to: "C" },
+        { from: "B", to: "D" },
+        { from: "D", to: "B" },
+      ],
+    });
+    const B = g.nodes.find((n) => n.id === "B")!;
+    const D = g.nodes.find((n) => n.id === "D")!;
+    const back = g.edges.find((e) => e.from === "D" && e.to === "B")!;
+    const xs = back.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number).filter((_, i) => i % 2 === 0);
+    // The corridor bulges right, past both boxes' right faces.
+    expect(Math.max(...xs)).toBeGreaterThan(Math.max(B.x + B.w! / 2, D.x + D.w! / 2));
+  });
 });
 
 // ── notes (annotations) ─────────────────────────────────────────────────────

@@ -132,6 +132,18 @@ describe("parseFlow — edges", () => {
     expect(g.edges[0]?.label).toBe("yes");
   });
 
+  it("strips surrounding quotes from an edge label (like node labels)", () => {
+    expect(ok('A ===|"base of"| B').edges[0]?.label).toBe("base of");
+    expect(ok("A -->|'yes'| B").edges[0]?.label).toBe("yes");
+    // A bare (unquoted) label is unchanged.
+    expect(ok("A -->|base of| B").edges[0]?.label).toBe("base of");
+  });
+
+  it("keeps an inner pipe inside a quoted edge label", () => {
+    // The quotes let the inner `|` through, then are stripped from the result.
+    expect(ok('A -->|"a | b"| B').edges[0]?.label).toBe("a | b");
+  });
+
   it("errors on unclosed pipe label", () => {
     const e = err("A -->|unclosed B");
     expect(e.message).toMatch(/closing/i);
@@ -181,9 +193,13 @@ describe("parseFlow — multi-line labels", () => {
   });
 
   it("converts \\n inside an edge label", () => {
-    // Pipe labels are not quote-stripped (quotes are literal by design), so use
-    // a bare label here.
     expect(ok("A -->|first\\nsecond| B").edges[0]?.label).toBe("first\nsecond");
+  });
+
+  it("converts <br/> inside a quoted edge label (multi-line wrap)", () => {
+    expect(ok('A -->|"first line<br/>second line"| B').edges[0]?.label).toBe(
+      "first line\nsecond line",
+    );
   });
 
   it("leaves a single-line label unchanged", () => {
@@ -225,11 +241,23 @@ describe("parseFlow — arrow tokens", () => {
     expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "both", colored: true });
   });
 
-  it("longest-match: <--> is not read as -->", () => {
+  it("<-- is a reversed arrow (arrow: start), still from → to for layout", () => {
+    const g = ok("A <-- B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "start" });
+    expect(g.edges[0]?.colored).toBeUndefined();
+  });
+
+  it("<== is a reversed arrow AND colored", () => {
+    const g = ok("A <== B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "start", colored: true });
+  });
+
+  it("longest-match: <--> is not read as <-- or -->", () => {
     const g = ok("A <--> B");
     expect(g.edges).toHaveLength(1);
-    expect(node(g, "A").id).toBe("A");
-    expect(g.edges[0]?.to).toBe("B");
+    expect(g.edges[0]).toMatchObject({ from: "A", to: "B", arrow: "both" });
+    // And <== is not read as <-- + stray =
+    expect(ok("A <==> B").edges[0]?.arrow).toBe("both");
   });
 
   it("every arrow token supports an edge label", () => {

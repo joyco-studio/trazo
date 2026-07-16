@@ -7,6 +7,9 @@
  *   flow TD | flow LR          set the layout direction (default: TD).
  *   <node> --> <node>          neutral directed edge (accent color).
  *   <node> ==> <node>          colored directed edge (source node's role color).
+ *   <node> <-- <node>          reversed arrow: head at the SOURCE (`from ← to`),
+ *                              still `from → to` for layout (a "based on" edge).
+ *   <node> <== <node>          reversed colored arrow.
  *   <node> --- <node>          undirected edge (no arrowhead, neutral).
  *   <node> === <node>          undirected colored edge.
  *   <node> <--> <node>         bidirectional edge (arrowhead at both ends).
@@ -86,12 +89,17 @@ function indexOutsideQuotes(s: string, needle: string): number {
 
 /**
  * Arrow tokens, longest first so a longer token is preferred when several match
- * at the same position (`<-->` before `-->`, `---`/`===` before `-->`/`==>`).
- * `colored` selects the source-role color; `arrow` selects which ends get a head.
+ * at the same position (`<-->` before `<--`/`-->`, `---`/`===` before
+ * `-->`/`==>`). `colored` selects the source-role color; `arrow` selects which
+ * ends get a head. `<--`/`<==` are REVERSED arrows: the edge still flows
+ * `from → to` for layout, but the head points back at the source (`from ← to`),
+ * for "based on" / child→parent relations that read right-to-left.
  */
 const ARROW_TOKENS: ReadonlyArray<{ token: string; colored: boolean; arrow: ArrowEnds }> = [
   { token: "<==>", colored: true, arrow: "both" },
   { token: "<-->", colored: false, arrow: "both" },
+  { token: "<==", colored: true, arrow: "start" },
+  { token: "<--", colored: false, arrow: "start" },
   { token: "-->", colored: false, arrow: "end" },
   { token: "==>", colored: true, arrow: "end" },
   { token: "---", colored: false, arrow: "none" },
@@ -383,7 +391,16 @@ export function parseFlow(source: string): FlowParseResult {
         const closeOffset = indexOutsideQuotes(afterArrow.slice(1), "|");
         if (closeOffset === -1) return fail(lineNumber, `edge label is missing a closing "|"`);
         const close = closeOffset + 1;
-        const lbl = afterArrow.slice(1, close).trim();
+        // Strip a single pair of surrounding quotes, mirroring node labels
+        // (`parseNodeRef`) — otherwise `|"base of"|` renders the quotes literally.
+        // The quotes still let an inner `|` through (`indexOutsideQuotes` above),
+        // so `|"a | b"|` yields `a | b`; bare `|base of|` is unchanged.
+        let lbl = afterArrow.slice(1, close).trim();
+        if (lbl.startsWith('"') && lbl.endsWith('"') && lbl.length >= 2) {
+          lbl = lbl.slice(1, -1).replace(/\\"/g, '"');
+        } else if (lbl.startsWith("'") && lbl.endsWith("'") && lbl.length >= 2) {
+          lbl = lbl.slice(1, -1);
+        }
         if (lbl) edgeLabel = normalizeBreaks(lbl);
         afterArrow = afterArrow.slice(close + 1).trimStart();
       }

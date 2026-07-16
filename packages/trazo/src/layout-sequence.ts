@@ -36,6 +36,7 @@ import type {
 } from "./types.js";
 import {
   BADGE_H,
+  badgeHeight,
   badgeWidth,
   curveBetween,
   GROUP_PAD,
@@ -90,23 +91,69 @@ export function layoutSequence(
     (m) => colOf.has(m.from) && colOf.has(m.to),
   );
 
-  // ── 1. Column x: place headers left→right so adjacent boxes clear ─────────
+  // Self-loop bulge width (px) — the horizontal reach of the squared loop drawn
+  // in `selfMessage`. Declared here so column spacing can reserve room for a
+  // self-message's loop + label before the next column.
+  const SELF_LOOP = 28;
+
+  // ── 1. Column x: place headers left→right, spaced so message LABELS FIT ────
+  // A fixed `columnGap` packs the lifelines tight to the left, so every message
+  // label wider than the gap overhangs both lifelines and the whole diagram
+  // reads as leaning left. Mermaid instead spreads the columns to fit the traffic
+  // between them; mirror that. For each straight message reserve enough that its
+  // centered label badge fits WITHIN its OWN span — not just adjacent pairs: a
+  // wide A→C badge is centered on the full A–C span, so if that span is narrower
+  // than the badge it crosses the outer lifelines (and its left edge can leave
+  // the viewBox, which `track` only guards on the right). A self-message instead
+  // reserves its loop + right-of-loop label reach so it clears the next column.
   const headerSize = order.map((id) => {
     const p = partById.get(id) as SequenceParticipant;
     return sizeShape("box", p.label ?? id);
   });
-  const colX: number[] = [];
-  {
-    let prevRight = padding;
-    for (let i = 0; i < order.length; i++) {
-      const w = (headerSize[i] as { w: number }).w;
-      const half = w / 2;
-      // Center sits a clear gap past the previous box's right edge (and at least
-      // half its own width past the padding for the first column).
-      const center = i === 0 ? padding + half : Math.max(prevRight + columnGap, prevRight + half);
-      colX[i] = center;
-      prevRight = center + half;
+  // Per RIGHT column: the min span each message ending there needs (its left
+  // column + badge width), applied when the right column is placed (its left
+  // column is already final). Keyed by the right end so adjacent AND multi-span
+  // messages are handled by the same rule.
+  const spanNeed: Array<Array<{ from: number; width: number }>> = order.map(() => []);
+  const selfReach: number[] = new Array(order.length).fill(0);
+  for (const m of messages) {
+    const a = colOf.get(m.from) as number;
+    const b = colOf.get(m.to) as number;
+    // Messages render verbatim (no inline-code chips) — measure plain.
+    const bw = m.label !== undefined ? badgeWidth(measurePlainMultiline(m.label).width) : 0;
+    if (a === b) {
+      // Loop bulges SELF_LOOP right of the lifeline; its label badge sits just
+      // past the loop. Reserve that whole reach past the lifeline center.
+      selfReach[a] = Math.max(selfReach[a] as number, SELF_LOOP + bw);
+    } else if (bw > 0) {
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      (spanNeed[hi] as Array<{ from: number; width: number }>).push({ from: lo, width: bw });
     }
+  }
+  const colX: number[] = [];
+  for (let i = 0; i < order.length; i++) {
+    const half = (headerSize[i] as { w: number }).w / 2;
+    if (i === 0) {
+      colX[i] = padding + half;
+      continue;
+    }
+    const prevCenter = colX[i - 1] as number;
+    const prevHalf = (headerSize[i - 1] as { w: number }).w / 2;
+    // Base spacing off the previous column: the clear gap, or the previous
+    // column's self-loop reach + this box's half so its loop+label clears here.
+    let center = prevCenter + Math.max(
+      prevHalf + Math.max(columnGap, half),
+      prevHalf + (selfReach[i - 1] as number) + half,
+    );
+    // Then push right until every message ending at column i has its full span
+    // (colX[i] - colX[from]) at least its badge width, so the centered label sits
+    // within its own two lifelines. `colX[from]` is already final (from < i).
+    for (const s of spanNeed[i] as Array<{ from: number; width: number }>) {
+      const required = (colX[s.from] as number) + s.width;
+      if (center < required) center = required;
+    }
+    colX[i] = center;
   }
 
   // ── 2. Header nodes (a participant box per column) ────────────────────────
@@ -154,7 +201,6 @@ export function layoutSequence(
   events.sort((a, b) => a.key - b.key);
 
   const xOf = (id: NodeId): number => colX[colOf.get(id) as number] as number;
-  const SELF_LOOP = 28;
   // Track horizontal extent (self-loops, wide label badges, notes) for the viewBox.
   let maxX = colX.length > 0 ? (colX[colX.length - 1] as number) : padding;
   const track = (x: number): void => {
@@ -172,13 +218,22 @@ export function layoutSequence(
     if (ev.type === "msg") {
       const m = ev.m;
       const isSelf = m.from === m.to;
-      const y = cursorY + rowGap / 2;
+      // A message label sits ABOVE its arrow. Reserve the FULL extra height a
+      // multi-line (`<br/>`) badge adds over a single line: lower the arrow by
+      // exactly that much AND grow the band by the same amount. The label's TOP
+      // edge then lands at the SAME offset above the band a single-line badge
+      // would — never reaching further up into the previous event (or the header
+      // for the first message). Single-line labels give `extraLift === 0`:
+      // spacing unchanged. (`badgeHeight >= BADGE_H`, so `extraLift >= 0`.)
+      const labelH = m.label !== undefined ? measurePlainMultiline(m.label).height : 0;
+      const extraLift = Math.max(0, badgeHeight(labelH) - BADGE_H);
+      const y = cursorY + rowGap / 2 + extraLift;
       if (isSelf) {
         edges.push(selfMessage(m, xOf(m.from), y, rowGap, edgeStyle, SELF_LOOP, track));
-        cursorY += rowGap * 1.4; // reserve room for the loop's downward leg
+        cursorY += rowGap * 1.4 + extraLift; // reserve room for the loop's downward leg
       } else {
         edges.push(straightMessage(m, xOf(m.from), xOf(m.to), y, edgeStyle, track));
-        cursorY += rowGap;
+        cursorY += rowGap + extraLift;
       }
     } else {
       const note = ev.n;
@@ -280,14 +335,18 @@ function straightMessage(
     // Widest line, so a multi-line message label sizes its badge correctly.
     // Messages render verbatim as edge labels, so measure plain (backticks
     // literal, not inline-code chips).
-    const labelWidth = measurePlainMultiline(m.label).width;
-    edge.labelWidth = labelWidth;
+    const label = measurePlainMultiline(m.label);
+    edge.labelWidth = label.width;
+    // labelHeight drives the renderer's multi-line badge; a `<br/>` message
+    // stacks its rows and grows the chip via `badgeHeight`.
+    edge.labelHeight = label.height;
     // Sit the label ABOVE the arrow (not on top of it, which would hide a long
-    // horizontal message line). Centered on the message span.
+    // horizontal message line). Centered on the message span. A `<br/>` label's
+    // badge is taller, so offset by HALF the real (multi-line) badge height.
     const mid = (fromX + toX) / 2;
-    edge.labelPoint = { x: mid, y: y - BADGE_H / 2 - LABEL_ABOVE_GAP };
+    edge.labelPoint = { x: mid, y: y - badgeHeight(label.height) / 2 - LABEL_ABOVE_GAP };
     // Reserve the badge's right edge so a wide label isn't cropped by the viewBox.
-    track(mid + badgeWidth(labelWidth) / 2);
+    track(mid + badgeWidth(label.width) / 2);
   }
   return edge;
 }
@@ -323,13 +382,16 @@ function selfMessage(
     edge.label = m.label;
     // Messages render verbatim as edge labels, so measure plain (backticks
     // literal, not inline-code chips).
-    const labelWidth = measurePlainMultiline(m.label).width;
-    edge.labelWidth = labelWidth;
+    const label = measurePlainMultiline(m.label);
+    edge.labelWidth = label.width;
+    // labelHeight drives the renderer's multi-line badge (stacked `<br/>` rows).
+    edge.labelHeight = label.height;
     // Label ABOVE the loop (between the lifeline and the loop's top), so it never
     // sits on the loop arrow. Anchored just right of the lifeline so it clears it.
-    const lx = x + loop / 2 + badgeWidth(labelWidth) / 2;
-    edge.labelPoint = { x: lx, y: y - BADGE_H / 2 - LABEL_ABOVE_GAP };
-    track(lx + badgeWidth(labelWidth) / 2);
+    // A `<br/>` label's badge is taller — offset by half its real height.
+    const lx = x + loop / 2 + badgeWidth(label.width) / 2;
+    edge.labelPoint = { x: lx, y: y - badgeHeight(label.height) / 2 - LABEL_ABOVE_GAP };
+    track(lx + badgeWidth(label.width) / 2);
   }
   return edge;
 }
