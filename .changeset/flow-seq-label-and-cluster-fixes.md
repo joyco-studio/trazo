@@ -25,7 +25,9 @@ messages and adds the rest.)
   the shared gap with both labels centered BETWEEN the boxes (Mermaid parity),
   instead of arcing the reverse edge out on a lateral corridor that stranded its
   label at the far edge. A back-edge into a fanned-out decision (its target rank
-  has siblings) keeps the lateral loop arc.
+  has siblings) keeps the lateral loop arc. The inter-node gap reserves room for
+  the WIDER of the pair's two labels (a labeled reverse edge widens the gap too),
+  so neither badge is drawn clipped under the node boxes.
 - **Subgraph containment.** Two Sugiyama-cluster bugs are fixed: (1) an edge-less
   group member no longer strands at the rank-0 source column — it's pulled into
   its cluster's rank band, so two subgraphs lay out side by side instead of one

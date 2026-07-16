@@ -793,6 +793,38 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
     expect(Math.max(...revYs)).toBeLessThanOrEqual(A.y + A.h! / 2 + 0.5);
   });
 
+  it("reserves the inter-node gap for the WIDER of the pair's two labels", () => {
+    // The reverse label is wider than the forward one (or the forward is absent):
+    // the gap must widen to the LARGER label so BOTH badges sit within it, never
+    // clipped under the node boxes. (Only forward labels used to reserve the gap.)
+    for (const edges of [
+      // reverse-only:
+      [{ from: "A", to: "B" }, { from: "B", to: "A", label: "commit periodic sync" }],
+      // both, reverse wider:
+      [
+        { from: "A", to: "B", label: "sarasa" },
+        { from: "B", to: "A", label: "commit periodic sync" },
+      ],
+    ] as const) {
+      const g = layoutFlow({
+        kind: "flow",
+        direction: "LR",
+        nodes: [{ id: "A", label: "Request arrives" }, { id: "B", label: "getCart() started" }],
+        edges: [...edges],
+      });
+      const A = g.nodes.find((n) => n.id === "A")!;
+      const B = g.nodes.find((n) => n.id === "B")!;
+      const gapL = A.x + A.w! / 2;
+      const gapR = B.x - B.w! / 2;
+      for (const e of g.edges) {
+        if (e.labelPoint === undefined) continue;
+        const half = badgeWidth(e.labelWidth ?? 0) / 2;
+        expect(e.labelPoint.x - half).toBeGreaterThanOrEqual(gapL - 0.5);
+        expect(e.labelPoint.x + half).toBeLessThanOrEqual(gapR + 0.5);
+      }
+    }
+  });
+
   it("keeps a retry loop into a fanned-out decision on the lateral arc", () => {
     // B(decision) → {C, D}, D → B. D's rank has a sibling (C), so the pair is NOT
     // sole-on-rank: the back-edge keeps its outward lateral corridor (loop look).

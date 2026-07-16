@@ -473,12 +473,40 @@ export function layoutFlow(
   // no inter-rank widening is needed. KNOWN LIMITATION: a spanning label wider
   // than the rank spacing can still graze an endpoint's box; that case is
   // inherent (no on-line placement clears a badge wider than the node spacing).
+  // A "parallel pair": two nodes on ADJACENT ranks with edges in BOTH directions
+  // (a↔b), each the SOLE real node on its rank. That's a 1↔1 sync relationship
+  // (e.g. commit / scroll-deltas between two threads) — Mermaid draws it as two
+  // parallel lines with both labels centered BETWEEN the boxes. Both edges route
+  // straight through the shared inter-rank gap (see edge routing below), offset to
+  // opposite sides of centre, instead of arcing the reverse edge out on a lateral
+  // corridor (which strands its label at the far edge). The "sole on rank" guard
+  // keeps genuine branch/merge loops — a retry edge back to a decision that fans
+  // out, so its target rank has siblings — on the lateral arc. Deterministic.
+  const edgeDirs = new Set<string>();
+  for (const e of edges) edgeDirs.add(`${e.from} ${e.to}`);
+  const realPerRank: number[] = layers.map(
+    (layer) => layer.filter((v) => !v.isDummy).length,
+  );
+  const isParallelPair = (fromV: Vertex, toV: Vertex, e: FlowEdge): boolean =>
+    Math.abs(fromV.rank - toV.rank) === 1 &&
+    edgeDirs.has(`${e.to} ${e.from}`) &&
+    (realPerRank[fromV.rank] as number) === 1 &&
+    (realPerRank[toV.rank] as number) === 1;
+
   const labelGapAfter: number[] = new Array(layers.length).fill(0);
   for (const e of edges) {
     if (e.label === undefined) continue;
     const fromV = vById.get(e.from) as Vertex;
     const toV = vById.get(e.to) as Vertex;
-    if (toV.rank !== fromV.rank + 1) continue;
+    // A label sits in the inter-rank gap when its edge is a forward adjacent edge
+    // OR a parallel-pair REVERSE edge (which routes back through the SAME gap). In
+    // both cases reserve room at the LOWER rank's boundary so the widest of the
+    // pair's two labels fits — otherwise a labeled reverse edge (or the wider of
+    // the two) is drawn UNDER the node boxes.
+    const forwardAdjacent = toV.rank === fromV.rank + 1;
+    const parallelReverse = fromV.rank === toV.rank + 1 && isParallelPair(fromV, toV, e);
+    if (!forwardAdjacent && !parallelReverse) continue;
+    const gapRank = Math.min(fromV.rank, toV.rank);
     // Edge labels render verbatim (no inline-code chips), so measure them plain —
     // backticks are ordinary glyphs, not consumed delimiters. In TD the badge's
     // HEIGHT lies on the main axis (and grows with a multi-line label), in LR its
@@ -487,7 +515,7 @@ export function layoutFlow(
     const labelMainExtent =
       direction === "TD" ? badgeHeight(measured.height) : badgeWidth(measured.width);
     const need = labelMainExtent + LABEL_GAP * 2;
-    if (need > (labelGapAfter[fromV.rank] as number)) labelGapAfter[fromV.rank] = need;
+    if (need > (labelGapAfter[gapRank] as number)) labelGapAfter[gapRank] = need;
   }
 
   // Main-axis origin per rank: padding + Σ(prev thickness + per-boundary gap) +
@@ -736,27 +764,6 @@ export function layoutFlow(
   let routeMaxY = 0;
   let routeMinX = 0;
   let routeMinY = 0;
-
-  // A "parallel pair": two nodes on ADJACENT ranks with edges in BOTH directions
-  // (a↔b), each the SOLE real node on its rank. That's a 1↔1 sync relationship
-  // (e.g. commit / scroll-deltas between two threads) — Mermaid draws it as two
-  // parallel lines with both labels centered BETWEEN the boxes. Route both edges
-  // straight through the shared inter-rank gap, offset to opposite sides of
-  // centre, instead of arcing the reverse edge out on a lateral corridor (which
-  // strands its label at the far edge). The "sole on rank" guard keeps genuine
-  // branch/merge loops — a retry edge back to a decision that fans out, so its
-  // target rank has siblings — on the lateral arc, where the outward bulge reads
-  // as a loop and clears the crowded gap. Deterministic: input edge order.
-  const edgeDirs = new Set<string>();
-  for (const e of edges) edgeDirs.add(`${e.from} ${e.to}`);
-  const realPerRank: number[] = layers.map(
-    (layer) => layer.filter((v) => !v.isDummy).length,
-  );
-  const isParallelPair = (fromV: Vertex, toV: Vertex, e: FlowEdge): boolean =>
-    Math.abs(fromV.rank - toV.rank) === 1 &&
-    edgeDirs.has(`${e.to} ${e.from}`) &&
-    (realPerRank[fromV.rank] as number) === 1 &&
-    (realPerRank[toV.rank] as number) === 1;
 
   // Waypoints per edge, parallel to `positionedEdges`. Path strings are built
   // AFTER the label-bounds normalization below, which may shift every point.
