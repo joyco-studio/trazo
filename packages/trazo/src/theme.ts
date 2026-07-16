@@ -204,8 +204,14 @@ export function contrastForeground(fill: string): string | undefined {
   return lightness >= CONTRAST_L_THRESHOLD ? CONTRAST_DARK : CONTRAST_LIGHT;
 }
 
-/** Every slot whose label text reads a `<slot>-foreground` pair. */
-const FOREGROUND_PAIRED_SLOTS: readonly (TrazoColorSlot | "accent")[] = [
+/**
+ * Every slot whose label text reads a `<slot>-foreground` pair. `code` is
+ * included so that overriding ONLY the chip background (to restore a boxed
+ * chip) still derives a readable text color by the fill's lightness — without
+ * it, `code-foreground` would fall through to `inherit` (the node's own
+ * foreground), which can be unreadable on a code box of a clashing lightness.
+ */
+const FOREGROUND_PAIRED_SLOTS: readonly (TrazoColorSlot | "accent" | "code")[] = [
   "primary",
   "secondary",
   "ghost",
@@ -222,6 +228,7 @@ const FOREGROUND_PAIRED_SLOTS: readonly (TrazoColorSlot | "accent")[] = [
   "lane-5",
   "lane-6",
   "accent",
+  "code",
 ];
 
 /** Map the theme's lanes mode onto the engine's edge style. */

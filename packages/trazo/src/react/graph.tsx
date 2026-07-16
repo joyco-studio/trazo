@@ -239,10 +239,26 @@ function labelStyleFor(uppercase: boolean): CSSProperties {
  */
 const CODE_CHIP_H = 18;
 const CODE_CHIP_R = 3;
-/** Inline-code chip fill — its own `--trazo-code` slot, defaulting to `muted`. */
-const CODE_BG = themed("code", "muted", "#2a2a2a");
-/** Inline-code text — `--trazo-code-foreground`, defaulting to the page foreground. */
-const CODE_FG = themed("code-foreground", "foreground", "#ededed");
+/**
+ * Inline-code chip fill — its own `--trazo-code` slot, defaulting to
+ * `transparent` (no visible box). Set the `code` theme token / `--trazo-code`
+ * CSS var to draw a filled chip.
+ */
+const CODE_BG = "var(--trazo-code, transparent)";
+/**
+ * Inline-code text color — `--trazo-code-foreground`, defaulting to `inherit`
+ * so the code run takes its parent label's per-node role foreground. A `var()`
+ * *fallback* is a raw token stream, so `inherit` substitutes literally into
+ * `fill: inherit`, which inherits the surrounding `<text>` fill; and because
+ * `fill` is an inherited property, even a browser that rejects that fallback
+ * lands on the same parent color. Set the `code-foreground` theme token to pin
+ * a distinct chip text color.
+ *
+ * DO NOT "fix" the `inherit` fallback back into a global chain like
+ * `var(--color-foreground, …)`: that resolves to the PAGE foreground, silently
+ * reverting the per-node color this default exists to provide.
+ */
+const CODE_FG = "var(--trazo-code-foreground, inherit)";
 /**
  * Style for a code `<tspan>`: opt OUT of the label's uppercase + tracking so
  * code stays case-sensitive and monospaced-tight regardless of the theme casing.
