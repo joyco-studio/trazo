@@ -16,7 +16,7 @@ export const SEED_SEQUENCE = `# playground — sequence mode
 # Note over A : text        Note over A,B : spanning note
 sequence
 participant S ["Server"]:primary
-participant C ["Client"]
+participant C ["Client"]:info
 
 S ->> S : Start getCart()
 S ->> S : Start getFlags()
@@ -32,12 +32,12 @@ Note over S,C : Fast TTFB, progressive render
 
 /** Default block-grid program: a page-layout wireframe with column spans. */
 export const SEED_BLOCK = `# playground — block mode
-# columns N sets the grid width; ":N" after a cell is its column span
+# columns N sets the grid width; ":role" tints a cell, ":N" is its column span
 block
 columns 3
 
-Nav["Navigation"] :3
-Side["Sidebar"]
-Main["Content"] :2
-Footer["Footer"] :3
+Nav["Navigation"]:primary :3
+Side["Sidebar"]:info
+Main["Content"]:success :2
+Footer["Footer"]:warning :3
 `;

@@ -201,6 +201,15 @@ export function layoutSequence(
   events.sort((a, b) => a.key - b.key);
 
   const xOf = (id: NodeId): number => colX[colOf.get(id) as number] as number;
+  // A message adopts its SOURCE participant's role color when that participant
+  // has an EXPLICIT role — mirroring a flow `==>` edge tinting to its source
+  // node's role. A sender left at the default (no `:role`) keeps the neutral
+  // `accent` edge color, so an untouched diagram is unchanged and a themed
+  // neutral (e.g. JOYCO's black) never turns the arrows invisible on the canvas.
+  const messageColor = (fromId: NodeId): string => {
+    const role = partById.get(fromId)?.role;
+    return role !== undefined ? roleColorKey(role) : "accent";
+  };
   // Track horizontal extent (self-loops, wide label badges, notes) for the viewBox.
   let maxX = colX.length > 0 ? (colX[colX.length - 1] as number) : padding;
   const track = (x: number): void => {
@@ -228,11 +237,12 @@ export function layoutSequence(
       const labelH = m.label !== undefined ? measurePlainMultiline(m.label).height : 0;
       const extraLift = Math.max(0, badgeHeight(labelH) - BADGE_H);
       const y = cursorY + rowGap / 2 + extraLift;
+      const color = messageColor(m.from);
       if (isSelf) {
-        edges.push(selfMessage(m, xOf(m.from), y, rowGap, edgeStyle, SELF_LOOP, track));
+        edges.push(selfMessage(m, xOf(m.from), y, rowGap, edgeStyle, SELF_LOOP, color, track));
         cursorY += rowGap * 1.4 + extraLift; // reserve room for the loop's downward leg
       } else {
-        edges.push(straightMessage(m, xOf(m.from), xOf(m.to), y, edgeStyle, track));
+        edges.push(straightMessage(m, xOf(m.from), xOf(m.to), y, edgeStyle, color, track));
         cursorY += rowGap + extraLift;
       }
     } else {
@@ -317,6 +327,7 @@ function straightMessage(
   toX: number,
   y: number,
   edgeStyle: SequenceLayoutOptions["edgeStyle"],
+  color: string,
   track: (x: number) => void,
 ): PositionedEdge {
   const from = { x: fromX, y };
@@ -326,7 +337,7 @@ function straightMessage(
     to: m.to,
     path: curveBetween(from, to, edgeStyle),
     kind: "message",
-    color: "accent",
+    color,
     arrowHead: "end",
   };
   if (m.kind === "async") edge.dashed = true;
@@ -359,6 +370,7 @@ function selfMessage(
   rowGap: number,
   edgeStyle: SequenceLayoutOptions["edgeStyle"],
   loop: number,
+  color: string,
   track: (x: number) => void,
 ): PositionedEdge {
   const drop = rowGap * 0.6;
@@ -374,7 +386,7 @@ function selfMessage(
     to: m.to,
     path: pathThrough(points, edgeStyle),
     kind: "message",
-    color: "accent",
+    color,
     arrowHead: "end",
   };
   if (m.kind === "async") edge.dashed = true;

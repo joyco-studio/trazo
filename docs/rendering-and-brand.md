@@ -86,6 +86,12 @@ Palettes (in `graph.tsx`):
   color. Its own `--trazo-edge` slot (→ `muted-foreground`), deliberately NOT
   the `neutral` role slot: a theme that paints neutral node boxes (JOYCO uses
   black) must not drag every default edge along with them.
+- **Sequence messages** adopt their **source participant's role** color (the
+  `role-*` palette), the same way a flow `==>` edge tints to its source node's
+  role. A message from a participant left at the default (no `:role`) keeps the
+  neutral `accent` color — so an untouched diagram is unchanged and a themed
+  neutral (JOYCO's black) never renders the arrows invisible. Emitted by
+  `layout-sequence.ts`; block cells already carry `role-*` per cell.
 - **Label color** — `LANE_FG_VARS` / `ROLE_FG_VARS` pair each fill with a
   readable text color (its own `-foreground` slot → shadcn `*-foreground` token
   → WCAG-picked black/white hex matching that slot's fallback fill). Keeps labels
