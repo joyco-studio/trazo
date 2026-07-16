@@ -51,6 +51,24 @@ describe("<Graph> inline code", () => {
     expect(html).toContain("here");
   });
 
+  it("defaults to a transparent chip and inherits the node foreground", () => {
+    const html = render(g);
+    // No override: the chip rect is transparent (no visible box) and the code
+    // tspan omits an explicit color so it inherits the parent label's per-node
+    // role foreground.
+    expect(html).toContain("var(--trazo-code, transparent)");
+    expect(html).toContain("var(--trazo-code-foreground, inherit)");
+  });
+
+  it("draws a distinct boxed chip when code tokens are overridden", () => {
+    const html = render(g, {
+      tokens: { code: "#123456", "code-foreground": "#abcdef" },
+    });
+    // The override flows through the `--trazo-code*` vars on the <svg> root.
+    expect(html).toContain("--trazo-code:#123456");
+    expect(html).toContain("--trazo-code-foreground:#abcdef");
+  });
+
   it("does not emit a code chip for a plain label", () => {
     const plain: FlowGraph = {
       kind: "flow",
