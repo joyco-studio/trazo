@@ -808,6 +808,42 @@ describe("layoutFlow() — subgraphs", () => {
     expect(Math.abs(top.x - mid.x)).toBeLessThan(1);
     expect(Math.abs(bot.x - mid.x)).toBeLessThan(1);
   });
+
+  it("spaces a cluster row evenly around a fed member (symmetry)", () => {
+    // Three same-width siblings in a subgraph, no edges between them; two
+    // external nodes feed the MIDDLE one. The fed member is pulled to its
+    // feeders' median, but its isolated flankers must follow so the row stays
+    // evenly spaced (equal gaps, member centered) instead of lopsided.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        // l and r share a label so their widths are identical — then equal side
+        // gaps AND a centered middle must both hold.
+        { id: "l", label: "Padding region", group: "C" },
+        { id: "m", label: "Viewport", group: "C" },
+        { id: "r", label: "Padding region", group: "C" },
+        { id: "f1", label: "Feeder one" },
+        { id: "f2", label: "Feeder two" },
+      ],
+      edges: [
+        { from: "f1", to: "m" },
+        { from: "f2", to: "m" },
+      ],
+      groups: [{ id: "C", label: "Cluster" }],
+    });
+    const l = g.nodes.find((n) => n.id === "l")!;
+    const m = g.nodes.find((n) => n.id === "m")!;
+    const r = g.nodes.find((n) => n.id === "r")!;
+    // The three sit in one row; the middle is centered between its flankers…
+    expect(Math.abs(l.y - m.y)).toBeLessThan(1);
+    expect(Math.abs(r.y - m.y)).toBeLessThan(1);
+    expect(Math.abs((l.x + r.x) / 2 - m.x)).toBeLessThan(1);
+    // …and the gaps on each side of the middle are equal (l and r same width).
+    const gapL = m.x - m.w! / 2 - (l.x + l.w! / 2);
+    const gapR = r.x - r.w! / 2 - (m.x + m.w! / 2);
+    expect(Math.abs(gapL - gapR)).toBeLessThan(1);
+  });
 });
 
 // ── reversed (start) arrows ──────────────────────────────────────────────────
