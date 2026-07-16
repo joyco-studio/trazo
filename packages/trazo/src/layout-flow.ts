@@ -613,14 +613,30 @@ export function layoutFlow(
   // intra-cluster spine (e.g. top→mid→bot) stays a straight column and the
   // external feeders bend to route in — instead of an external edge's routing
   // dummy sharing the rank and dragging the member off its cluster-mates'
-  // column (Mermaid keeps the cluster spine straight). Falls back to the full
-  // neighbor set for ungrouped nodes and for members with no same-group
-  // neighbor on this side. Deterministic: a filter over the same ordered list.
-  const desiredCross = (v: Vertex, ids: NodeId[]): number | undefined => {
-    if (v.group !== undefined && ids.length > 0) {
-      const sameGroup = ids.filter((id) => (vById.get(id) as Vertex).group === v.group);
-      if (sameGroup.length > 0) return medianCross(sameGroup);
+  // column (Mermaid keeps the cluster spine straight). The anchor set spans BOTH
+  // directions (up + down): a spine endpoint has an intra-cluster neighbor on
+  // only one side, so a one-sided (per-sweep) filter would fall back to the
+  // external median on the other pass and let the endpoint drift off the column.
+  // Precomputed once; a fixed function of the neighbor lists → deterministic.
+  const sameGroupAnchors = new Map<NodeId, NodeId[]>();
+  for (const v of vById.values()) {
+    if (v.group === undefined) continue;
+    const anchors: NodeId[] = [];
+    for (const id of upNeighbors.get(v.id) as NodeId[]) {
+      if ((vById.get(id) as Vertex).group === v.group) anchors.push(id);
     }
+    for (const id of downNeighbors.get(v.id) as NodeId[]) {
+      if ((vById.get(id) as Vertex).group === v.group) anchors.push(id);
+    }
+    if (anchors.length > 0) sameGroupAnchors.set(v.id, anchors);
+  }
+  // Grouped members with any same-group neighbor align to that spine (both
+  // sides) regardless of sweep direction; everything else uses the swept side's
+  // neighbors. Falls back to the full set for ungrouped nodes and isolated
+  // members (no same-group neighbor at all).
+  const desiredCross = (v: Vertex, ids: NodeId[]): number | undefined => {
+    const anchors = v.group !== undefined ? sameGroupAnchors.get(v.id) : undefined;
+    if (anchors !== undefined) return medianCross(anchors);
     return medianCross(ids);
   };
   const alignLayer = (layer: Vertex[], neighbors: Map<NodeId, NodeId[]>): void => {

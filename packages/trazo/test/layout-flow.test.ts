@@ -777,6 +777,37 @@ describe("layoutFlow() — subgraphs", () => {
     expect(Math.abs(top.x - mid.x)).toBeLessThan(1);
     expect(Math.abs(bot.x - mid.x)).toBeLessThan(1);
   });
+
+  it("keeps the spine straight when externals connect at the cluster ENDS", () => {
+    // A spine endpoint has an intra-cluster neighbor on only ONE side (top → down
+    // to mid; bot ← up from mid). With externals attached on the OTHER side (into
+    // top, out of bot), a per-sweep same-group filter would fall back to the
+    // external median on the endpoint's outward pass and drift it off the column.
+    // The both-sides anchor must hold top/mid/bot on one straight spine.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "top", label: "Top", group: "C" },
+        { id: "mid", label: "Mid", group: "C" },
+        { id: "bot", label: "Bot", group: "C" },
+        { id: "eTop", label: "Feeds the top member" },
+        { id: "eBot", label: "Fed by the bottom member" },
+      ],
+      edges: [
+        { from: "top", to: "mid" },
+        { from: "mid", to: "bot" },
+        { from: "eTop", to: "top" },
+        { from: "bot", to: "eBot" },
+      ],
+      groups: [{ id: "C", label: "Cluster" }],
+    });
+    const top = g.nodes.find((n) => n.id === "top")!;
+    const mid = g.nodes.find((n) => n.id === "mid")!;
+    const bot = g.nodes.find((n) => n.id === "bot")!;
+    expect(Math.abs(top.x - mid.x)).toBeLessThan(1);
+    expect(Math.abs(bot.x - mid.x)).toBeLessThan(1);
+  });
 });
 
 // ── reversed (start) arrows ──────────────────────────────────────────────────
