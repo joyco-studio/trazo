@@ -391,6 +391,22 @@ describe("parseFlow — subgraphs", () => {
   it("emits no groups key when there are none", () => {
     expect(ok("A --> B").groups).toBeUndefined();
   });
+
+  it("tints a labeled subgraph with a trailing :role", () => {
+    const g = ok('subgraph G ["Build"] :success\nA\nend');
+    expect(g.groups).toEqual([{ id: "G", label: "Build", role: "success" }]);
+  });
+
+  it("tints a bare subgraph with a trailing :role", () => {
+    expect(ok("subgraph G :error\nA\nend").groups).toEqual([{ id: "G", role: "error" }]);
+  });
+
+  it("leaves a bogus :role token in the title untouched", () => {
+    // `:nope` is not a role, so it is not peeled — it becomes part of the title.
+    const g = ok("subgraph G :nope\nA\nend");
+    expect(g.groups?.[0]?.role).toBeUndefined();
+    expect(g.groups?.[0]?.label).toBe(":nope");
+  });
 });
 
 // ── notes (annotations) ─────────────────────────────────────────────────────

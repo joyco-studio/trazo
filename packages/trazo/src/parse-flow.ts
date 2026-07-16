@@ -17,6 +17,9 @@
  *   <node> -->|label| <node>   edge with a label (works with every arrow above).
  *   <node>                     bare node declaration.
  *   subgraph G ["Label"]       open a cluster; nodes declared until `end` join it.
+ *                              An optional trailing `:role` tints the container
+ *                              background (role color at low opacity); unset
+ *                              keeps the default transparent box.
  *   end                        close the current cluster.
  *   note <id> <side> "<text>"  a margin annotation on <id>, one of the four
  *                              sides above|below|left|right, with a leader arrow
@@ -325,7 +328,16 @@ export function parseFlow(source: string): FlowParseResult {
         return fail(lineNumber, `nested subgraphs are not supported`);
       }
       const groupId = subgraphMatch[1]!;
-      const rest = (subgraphMatch[2] ?? "").trim();
+      let rest = (subgraphMatch[2] ?? "").trim();
+      // Peel an optional trailing `:role` tint off the header (mirrors node/note
+      // `:role` suffixes). Only a valid role keyword is consumed; anything else
+      // is left for the title parse below.
+      let groupRole: SemanticRole | undefined;
+      const roleAtEnd = /\s*:([a-z]+)\s*$/.exec(rest);
+      if (roleAtEnd && ROLES.has(roleAtEnd[1] ?? "")) {
+        groupRole = roleAtEnd[1] as SemanticRole;
+        rest = rest.slice(0, roleAtEnd.index).trim();
+      }
       let groupLabel: string | undefined;
       if (rest !== "") {
         // Title is an optional `["Label"]` / `[Label]` / bare quoted string.
@@ -342,6 +354,7 @@ export function parseFlow(source: string): FlowParseResult {
       }
       const group: FlowGroup = { id: groupId };
       if (groupLabel !== undefined) group.label = groupLabel;
+      if (groupRole !== undefined) group.role = groupRole;
       // First declaration of a group id wins its label.
       if (!groups.has(groupId)) groups.set(groupId, group);
       currentGroup = groupId;

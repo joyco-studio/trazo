@@ -59,6 +59,8 @@ flow TD | flow LR             set layout direction (top-down / left-right). Defa
 <node>                        declare a node on its own line (also auto-declared
                               the first time it appears in an edge).
 subgraph G ["Label"] … end    group the nodes declared until `end` in a container.
+                              An optional trailing `:role` (after the label) tints
+                              the container background — see Subgraphs below.
 note <id> <side> "<text>"     a margin annotation on <id> (above|below|left|right),
                               with a leader arrow pointing at that face.
 ```
@@ -88,6 +90,29 @@ B ==> E["Stream data as promises settle"]:success
 C --> E
 D --> E
 ```
+
+## Subgraphs (`subgraph … end`)
+
+`subgraph <id> ["Label"] … end` wraps every node declared between the header and
+`end` in a labeled container. Subgraphs are **single-level** (no nesting) and a
+node belongs to **at most one** group (the first that declares it wins).
+
+The header takes an optional trailing `:role`, mirroring the node/note suffix:
+
+```
+subgraph build ["Build"] :success    tinted container (role wash + matching border)
+subgraph deploy :error                 tint a bare, unlabeled container
+subgraph plain ["Plain"]               default: transparent box, neutral outline
+```
+
+The role must be one of the semantic keywords
+(`primary|secondary|ghost|muted|neutral|success|warning|error|info`). It fills
+the box with that role's color at a low opacity and paints the border in the
+same color at full opacity, so the group reads as a tinted region without
+obscuring its members. A non-role token (e.g. `:nope`) is **not** peeled — it
+falls through and becomes part of the title. Like colors elsewhere, the tint
+resolves through the `--trazo-<role>` token chain, so it follows the active
+theme (see [rendering-and-brand.md](./rendering-and-brand.md)).
 
 ## Annotations (`note`)
 

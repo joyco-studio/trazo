@@ -157,6 +157,12 @@ export interface FlowNode {
 export interface FlowGroup {
   id: NodeId;
   label?: string;
+  /**
+   * Optional semantic tint for the container. When set, the renderer fills the
+   * subgraph box with this role's color at a low opacity and matches the border
+   * to it; unset keeps the default transparent box with a neutral outline.
+   */
+  role?: SemanticRole;
 }
 
 /** A directed edge in a flow graph, from one node to another. */
@@ -468,6 +474,12 @@ export interface PositionedGroup {
   labelWidth?: number;
   /** Container kind. Default "group" (flow subgraph); "note" for sequence notes. */
   variant?: "group" | "note";
+  /**
+   * Optional semantic tint (flow subgraph containers only). Carried from
+   * {@link FlowGroup.role}; the renderer fills the box with this role's color at
+   * a low opacity and matches the border to it.
+   */
+  role?: SemanticRole;
 }
 
 /**

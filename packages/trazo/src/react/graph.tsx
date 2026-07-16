@@ -279,6 +279,12 @@ const MUTED_FG = themed("muted-foreground", "muted-foreground", "#a1a1a1");
 const MUTED = themed("muted", "muted", "#1c1c1c");
 /** Subgraph container stroke — a light, on-brand gray outline. */
 const GROUP_STROKE = MUTED_FG;
+/**
+ * Opacity of a role-tinted subgraph fill. Low enough that member nodes, edges
+ * and the canvas texture read clearly through the wash; the border keeps the
+ * role color at full opacity so the group still reads as a distinct region.
+ */
+const GROUP_FILL_OPACITY = 0.14;
 /** Canvas backdrop fill for themes with `background: "solid" | "texture"`. */
 const CANVAS = themed("canvas", "background", "#0a0a0a");
 /** Hatch line color for the `"texture"` background — a subtle border-ish line. */
@@ -390,12 +396,33 @@ function renderMultilineText(text: string, x: number, y: number): JSX.Element {
 }
 
 /**
- * Render a subgraph container / note box: an outlined (group) or filled (note)
- * rounded rect with an optional title in its reserved top strip. Paint order
- * splits by variant: subgraph containers ("group") draw BEFORE nodes and edges
- * so those paint on top of the container, while sequence notes draw AFTER the
- * lifelines and edges so the opaque note panel covers the dashed lifeline and
- * any message strokes running behind it. Pure.
+ * Render the low-opacity fill of a role-tinted subgraph — a bare `<rect>` drawn
+ * in the earliest pass, BEHIND lanes, nodes and everything else, so the tint
+ * reads as a wash the rest of the diagram sits on. Roleless (transparent)
+ * subgraphs have no fill and are never passed here. Pure.
+ */
+function renderGroupFill(group: PositionedGroup): JSX.Element {
+  return (
+    <rect
+      key={group.id}
+      data-slot="group-fill"
+      x={group.x}
+      y={group.y}
+      width={group.w}
+      height={group.h}
+      fill={ROLE_VARS[group.role as SemanticRole]}
+      fillOpacity={GROUP_FILL_OPACITY}
+    />
+  );
+}
+
+/**
+ * Render a subgraph container FRAME (border + title) / note box. Paint order
+ * splits by variant: a subgraph's border + title draw AFTER lanes and edges so
+ * connector lanes never cross over the outline or the title (its fill is a
+ * separate earlier pass — see {@link renderGroupFill}); sequence notes draw as
+ * one opaque panel after the lifelines and edges so it covers the dashed
+ * lifeline and any message strokes running behind it. Pure.
  */
 function renderGroup(
   group: PositionedGroup,
@@ -411,6 +438,11 @@ function renderGroup(
   // A note is a flat filled panel (no border, no radius), with its text centered;
   // a subgraph container is an outlined rounded box with a top-left title.
   const textX = isNote ? group.x + group.w / 2 : titleX;
+  // A role'd subgraph draws its border in the role color (unset → neutral gray);
+  // its low-opacity fill is a SEPARATE early pass ({@link renderGroupFill}) so
+  // the border + title here can paint ON TOP of lanes while the fill stays
+  // behind everything. Notes are a single opaque panel, so they keep their fill.
+  const roleTint = !isNote && group.role !== undefined ? ROLE_VARS[group.role] : undefined;
   return (
     <g key={group.id} data-slot={isNote ? "note" : "group"} className={groupClass}>
       <rect
@@ -419,7 +451,7 @@ function renderGroup(
         width={group.w}
         height={group.h}
         fill={isNote ? MUTED : "none"}
-        stroke={isNote ? "none" : GROUP_STROKE}
+        stroke={isNote ? "none" : (roleTint ?? GROUP_STROKE)}
         strokeWidth={isNote ? 0 : 1.5}
       />
       {group.label !== undefined ? (
@@ -689,13 +721,12 @@ export function Graph(props: GraphProps): JSX.Element {
         </defs>
       ) : null}
 
-      {graph.groups && graph.groups.some((g) => g.variant !== "note") ? (
-        <g data-slot="groups">
+      {graph.groups &&
+      graph.groups.some((g) => g.variant !== "note" && g.role !== undefined) ? (
+        <g data-slot="group-fills" aria-hidden="true">
           {graph.groups
-            .filter((group) => group.variant !== "note")
-            .map((group) =>
-              renderGroup(group, classNames?.group, classNames?.groupLabel, paint.uppercase),
-            )}
+            .filter((group) => group.variant !== "note" && group.role !== undefined)
+            .map((group) => renderGroupFill(group))}
         </g>
       ) : null}
 
@@ -838,6 +869,16 @@ export function Graph(props: GraphProps): JSX.Element {
           );
         })}
       </g>
+
+      {graph.groups && graph.groups.some((g) => g.variant !== "note") ? (
+        <g data-slot="groups">
+          {graph.groups
+            .filter((group) => group.variant !== "note")
+            .map((group) =>
+              renderGroup(group, classNames?.group, classNames?.groupLabel, paint.uppercase),
+            )}
+        </g>
+      ) : null}
 
       {graph.groups && graph.groups.some((g) => g.variant === "note") ? (
         <g data-slot="notes">
