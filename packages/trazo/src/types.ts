@@ -396,6 +396,13 @@ export interface PositionedNode {
   shape?: NodeShape;
   /** Flow: semantic role (mirrors the `role-*` color key). */
   role?: SemanticRole;
+  /**
+   * Flow: cluster membership — the id of the {@link PositionedGroup} this node
+   * belongs to (mirrors {@link FlowNode.group}). The renderer uses it to tint a
+   * member node's border to a role'd subgraph's wash, so the chip-lift ring
+   * blends into the tinted backdrop instead of ringing it. Ungrouped → absent.
+   */
+  group?: NodeId;
   /** Flow: full node width (px) for box-like shapes. */
   w?: number;
   /** Flow: full node height (px). */
