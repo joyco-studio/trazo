@@ -1,5 +1,30 @@
 # @joycostudio/trazo
 
+## 0.9.1
+
+### Patch Changes
+
+- eed88ee: Flow cross-axis coordinate assignment now uses **Brandes–Köpf block alignment**
+  in place of the previous bounded iterative PAVA refinement. Co-aligned runs — a
+  node chain, a long-edge dummy chain, or a cluster spine — are grouped into
+  vertical blocks and placed in a single deterministic pass, so they share one
+  cross coordinate and their connecting edges draw as straight lines. This fixes a
+  subtle drift where a chain of differently-sized nodes _inside a subgraph_ landed
+  a few pixels off a common column (the group-aware averaging converged too slowly
+  under the old two-sweep limit), producing visible 45° jogs on edges that should
+  have been dead vertical. Ungrouped chains, fan-out centering, long-edge
+  straightening, cluster-spine straightness, and subgraph box separation are all
+  preserved; the change is layout-only and deterministic. See
+  `docs/coordinate-assignment.md`.
+- 1c526e0: Flow nodes inside a role-tinted subgraph now blend into the tint instead of
+  showing a seam ring. A node's border is painted with the page background so the
+  chip reads as lifted off the lines behind it, but against a subgraph's
+  low-opacity role wash that page-background ring stood out as a mismatched seam.
+  Member nodes now get a decorative border overlay that re-applies the same role
+  wash over just the border band, so the ring resolves to `background + wash` —
+  the exact tinted backdrop — and the seam disappears. Nodes outside a tinted
+  subgraph, git nodes and roleless subgraphs are unchanged.
+
 ## 0.9.0
 
 ### Minor Changes
