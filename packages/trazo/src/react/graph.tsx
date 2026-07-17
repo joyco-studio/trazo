@@ -953,7 +953,7 @@ export function Graph(props: GraphProps): JSX.Element {
             <g key={node.id} data-slot="node-group">
               {renderNodeShape(node, classNames?.node, classNames?.nodeBox, paint)}
               {memberRole !== undefined
-                ? renderNodeBorderTint(node, paint, ROLE_VARS[memberRole])
+                ? renderNodeBorderTint(node, classNames?.nodeBox, paint, ROLE_VARS[memberRole])
                 : null}
               {renderNodeLabel(node, classNames?.label, paint.uppercase)}
             </g>
@@ -1149,6 +1149,7 @@ function renderNodeShape(
  */
 function renderNodeBorderTint(
   node: PositionedNode,
+  boxClass: string | undefined,
   paint: ResolvedThemePaint,
   tint: string,
 ): JSX.Element | null {
@@ -1157,9 +1158,13 @@ function renderNodeBorderTint(
   const h = node.h ?? 0;
   const x = node.x - w / 2;
   const y = node.y - h / 2;
+  // Carry the consumer's `nodeBox` class so any border restyle (width, filter,
+  // opacity) applies to the overlay too — otherwise the fixed-width tint would
+  // misregister on top of a customized solid border.
   const skin = {
     "data-slot": "node-border-tint",
     "aria-hidden": true,
+    className: boxClass,
     fill: "none",
     stroke: tint,
     strokeOpacity: GROUP_FILL_OPACITY,
