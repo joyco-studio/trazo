@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/page";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 
+import { TrazoDiagram } from "@/components/trazo-diagram";
 import { source } from "@/lib/source";
 
 interface Props {
@@ -21,7 +22,7 @@ export default async function Page({ params }: Props) {
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <MDX components={defaultMdxComponents} />
+        <MDX components={{ ...defaultMdxComponents, TrazoDiagram }} />
       </DocsBody>
     </DocsPage>
   );

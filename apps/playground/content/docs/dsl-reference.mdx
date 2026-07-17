@@ -70,7 +70,7 @@ B["one<br>two<br>three"]
 
 Every flow edge is **directed by default** (`-->`/`==>` draw an arrowhead at the target). Use `---` when you want a plain connector with no head, and `<-->` for a two-way relation.
 
-```
+```flow
 flow LR
 A["Request"]  --> B["Handler"]    # arrow:  A ▸ B
 C["Cache"]    --- D["Store"]      # no arrow: plain association
@@ -79,7 +79,7 @@ E["Client"]  <--> F["Server"]     # arrows both ends: two-way sync
 
 The same three forms with a label:
 
-```
+```flow
 flow LR
 A -->|"calls"| B       # labeled directed
 C ---|"relates to"| D  # labeled, no arrow
@@ -90,7 +90,7 @@ E <-->|"syncs"| F      # labeled bidirectional
 
 Wrap a set of nodes in a labeled container box. Nodes declared between `subgraph` and `end` join the group and are kept spatially together:
 
-```
+```flow
 flow TD
 subgraph Build ["Build time"]
   A["Compile"] --> B["Bundle"]
@@ -105,7 +105,7 @@ Subgraphs are **single-level** (no nesting). A node belongs to at most one group
 
 ### Example
 
-```
+```flow
 flow TD
 A(["Request arrives"]):primary ==> B["getCart()"]
 B --> C{Cache?}
@@ -137,7 +137,7 @@ Describes a commit DAG using four statements.
 
 ### Example
 
-```
+```git
 commit a1b2c3 (JOYCO) : Initial commit
 branch feat/checkout
 commit (Elvira) : checkout: scaffold
@@ -190,7 +190,7 @@ A note draws a box spanning from the first to the last participant it covers. No
 
 ### Example
 
-```
+```seq
 sequence
 participant C ["Client"]:primary
 participant S ["Server"]
@@ -206,7 +206,7 @@ C ->> C : hydrate
 
 A 2-D wireframe grid of boxes (no edges) — Mermaid's `block-beta`. Cells flow left→right and wrap to the next row; a cell can span multiple columns.
 
-```
+```block
 block
 columns 2
 Nav["Navigation"] :2

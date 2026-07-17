@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     "react/index": "src/react/index.ts",
     "eslint/index": "src/eslint/index.ts",
+    "remark/index": "src/remark/index.ts",
   },
   format: ["esm"],
   dts: true,

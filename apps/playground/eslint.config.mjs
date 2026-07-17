@@ -1,3 +1,4 @@
+import trazo from '@joycostudio/trazo/eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 import nextVitals from 'eslint-config-next/core-web-vitals'
 import nextTs from 'eslint-config-next/typescript'
@@ -9,12 +10,18 @@ const eslintConfig = defineConfig([
   ...nextTs,
 
   // ── Ignores ──────────────────────────────────────────────
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', '.source/**']),
 
   // ── Import plugin setup ──────────────────────────────────
   {
     plugins: { 'import-x': importX, 'simple-import-sort': simpleImportSort },
   },
+
+  // ── Trazo DSL validation ─────────────────────────────────
+  // Dogfoods the published plugin: any static `flow`/`git`/`seq`/`block` tagged
+  // template or `parseFlow("…literal…")` call authored in app code is parsed at
+  // lint time (0 findings today — the playground parses runtime editor text).
+  trazo.configs.recommended,
 
   // ── Rules ────────────────────────────────────────────────
   {

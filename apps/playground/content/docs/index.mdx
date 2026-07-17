@@ -5,6 +5,18 @@ description: Get up and running with Trazo in minutes.
 
 Trazo is a deterministic code-to-diagram layout engine — flowcharts and git graphs. Pure-TypeScript core with an optional React SVG renderer.
 
+## Live diagram
+
+Fenced `flow`, `git`, `seq`, and `block` blocks in these docs render as real, server-rendered SVG — the same engine you call from code. Write pseudo-code, get a diagram:
+
+```flow
+flow LR
+A(["Request"]):primary ==> B["Process"]
+B --> C(["Done"]):success
+```
+
+The pseudo-code above the diagram is the literal fence authored in this page. It's validated at build time by `@joycostudio/trazo/remark` (a broken diagram fails the build with the offending line) and rendered by the `remarkTrazoDiagram` transform — the MDX counterpart to the `@joycostudio/trazo/eslint` rules that guard `` flow`…` `` templates in TypeScript.
+
 ## Install
 
 ```bash
