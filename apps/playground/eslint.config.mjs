@@ -12,7 +12,15 @@ let trazoConfigs = []
 try {
   const trazo = (await import('@joycostudio/trazo/eslint')).default
   trazoConfigs = [trazo.configs.recommended]
-} catch {
+} catch (error) {
+  // Only tolerate the build artifact being absent (a clean checkout that hasn't
+  // built packages). Re-throw everything else — a syntax error, a missing
+  // dependency, or a throw during init must fail loudly, never silently drop the
+  // DSL rules while lint still reports success.
+  const artifactMissing =
+    (error?.code === 'ERR_MODULE_NOT_FOUND' || error?.code === 'MODULE_NOT_FOUND') &&
+    String(error?.message ?? '').includes('dist/eslint')
+  if (!artifactMissing) throw error
   // eslint-disable-next-line no-console -- surfacing skipped DSL rules at config load
   console.warn(
     '[eslint] @joycostudio/trazo/eslint not built — skipping trazo DSL rules. Run `pnpm --filter @joycostudio/trazo build`.',
