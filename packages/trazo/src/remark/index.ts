@@ -243,21 +243,56 @@ function numberAttr(name: string, n: number): JsxNode {
   };
 }
 
+/** Thrown by {@link metaAttributes} for malformed fence meta (e.g. an unterminated quote). */
+class MetaSyntaxError extends Error {}
+
+const isSpace = (c: string): boolean => c === " " || c === "\t" || c === "\n" || c === "\r";
+const isKeyChar = (c: string): boolean => /[A-Za-z0-9_-]/.test(c);
+
 /**
  * Parse a fence's meta string (the tokens after the language) into JSX
  * attributes: `key="v"` / `key='v'` / `key=v` become string props, bare words
  * become boolean-true props. Keys in `reserved` (the ones the transform sets
  * itself) are skipped so they can't be duplicated.
+ *
+ * A single-pass tokenizer (not a global regex): a `key="…` with no closing quote
+ * is a {@link MetaSyntaxError}, not a silent fallback into stray boolean props.
  */
 function metaAttributes(meta: string | null | undefined, reserved: Set<string>): JsxNode[] {
   if (!meta) return [];
   const attrs: JsxNode[] = [];
-  const re = /([A-Za-z_][\w-]*)(?:=(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(meta)) !== null) {
-    const name = m[1]!;
+  const n = meta.length;
+  let i = 0;
+  while (i < n) {
+    while (i < n && isSpace(meta.charAt(i))) i++;
+    if (i >= n) break;
+
+    const keyStart = i;
+    while (i < n && isKeyChar(meta.charAt(i))) i++;
+    if (i === keyStart) {
+      throw new MetaSyntaxError(`unexpected "${meta.charAt(i)}" in fence meta`);
+    }
+    const name = meta.slice(keyStart, i);
+
+    let value: string | undefined;
+    if (meta.charAt(i) === "=") {
+      i++; // consume '='
+      const quote = meta.charAt(i);
+      if (quote === '"' || quote === "'") {
+        const close = meta.indexOf(quote, i + 1);
+        if (close === -1) {
+          throw new MetaSyntaxError(`unterminated ${quote} quote in meta attribute "${name}"`);
+        }
+        value = meta.slice(i + 1, close);
+        i = close + 1;
+      } else {
+        const valueStart = i;
+        while (i < n && !isSpace(meta.charAt(i))) i++;
+        value = meta.slice(valueStart, i);
+      }
+    }
+
     if (reserved.has(name)) continue;
-    const value = m[2] ?? m[3] ?? m[4];
     attrs.push(value === undefined ? booleanAttr(name) : stringAttr(name, value));
   }
   return attrs;
@@ -273,6 +308,12 @@ function metaAttributes(meta: string | null | undefined, reserved: Set<string>):
 export function remarkTrazoRender(options: RemarkTrazoRenderOptions = {}) {
   const componentName = options.componentName ?? "TrazoDiagram";
   const numbering = options.numberAttr ?? null;
+  // `lang` is set by the transform to the canonical DSL kind — numbering under
+  // that name would append a second, numeric `lang` (`lang={1}`), breaking the
+  // component. Fail fast on the misconfiguration.
+  if (numbering === "lang") {
+    throw new Error('remarkTrazoRender: `numberAttr` cannot be "lang" — it is reserved for the DSL kind.');
+  }
   const passthroughMeta = options.passthroughMeta ?? true;
   const severity = options.severity ?? "error";
   const allowed = options.langs ? new Set(options.langs.map((l) => l.toLowerCase())) : null;
@@ -318,7 +359,22 @@ export function remarkTrazoRender(options: RemarkTrazoRenderOptions = {}) {
         }
 
         const attributes: JsxNode[] = [stringAttr("lang", dsl.kind)];
-        if (passthroughMeta) attributes.push(...metaAttributes(child.meta, reserved));
+        if (passthroughMeta) {
+          try {
+            attributes.push(...metaAttributes(child.meta, reserved));
+          } catch (metaError) {
+            // A meta typo (e.g. an unterminated quote) is a clear error, not a
+            // set of stray boolean props — report it and leave the fence as code.
+            const fenceLine = child.position?.start.line ?? 1;
+            const message = file.message(
+              `trazo ${dsl.label} fence meta: ${(metaError as Error).message}`,
+              { line: fenceLine, column: 1 },
+            ) as VFileMessage & Error;
+            message.fatal = severity === "error";
+            if (severity === "error" && !firstFatal) firstFatal = message;
+            continue;
+          }
+        }
         if (numbering) attributes.push(numberAttr(numbering, ++count));
 
         const element: JsxNode = {

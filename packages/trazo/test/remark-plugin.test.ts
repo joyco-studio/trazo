@@ -194,6 +194,34 @@ describe("remarkTrazoRender", () => {
     expect(file.messages[0].fatal).toBe(false);
   });
 
+  it("rejects `numberAttr: \"lang\"` (reserved for the DSL kind)", () => {
+    expect(() => remarkTrazoRender({ numberAttr: "lang" })).toThrow(/lang/);
+  });
+
+  it("treats an unterminated meta quote as an error, not stray boolean props", () => {
+    const tree = root(metaNode("flow", "flow LR\nA --> B", 'title="Request pipeline', 3));
+    const file = fakeFile();
+    expect(() =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      remarkTrazoRender()(tree as any, file as any),
+    ).toThrow(/fence meta.*unterminated/);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((tree as any).children[0].type).toBe("code"); // not rewritten
+    expect(file.messages[0].place).toMatchObject({ line: 3 });
+  });
+
+  it("warn severity records a meta error without throwing and keeps the fence", () => {
+    const tree = root(metaNode("flow", "flow LR\nA --> B", "title='oops"));
+    const file = fakeFile();
+    expect(() =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      remarkTrazoRender({ severity: "warn" })(tree as any, file as any),
+    ).not.toThrow();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((tree as any).children[0].type).toBe("code");
+    expect(file.messages[0].fatal).toBe(false);
+  });
+
   it("ignores non-trazo langs and langs outside an explicit allow-list", () => {
     const tree = root(metaNode("flow", "flow LR\nA --> B"), metaNode("git", "commit : init"));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
