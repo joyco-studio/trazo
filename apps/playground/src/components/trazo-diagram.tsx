@@ -9,15 +9,16 @@ import {
 import { Graph } from "@joycostudio/trazo/react";
 
 /**
- * Renders a single fenced trazo diagram authored in MDX. The `remarkTrazoDiagram`
- * transform rewrites ```` ```flow ```` / ```git``` / ```seq``` / ```block```
- * fences into `<TrazoDiagram lang source />`, so authors write plain pseudo-code
- * in prose and get a deterministic, server-rendered SVG.
+ * Renders a single fenced trazo diagram authored in MDX. The package's
+ * `remarkTrazoRender` transform rewrites ```` ```flow ```` / ```git``` / ```seq```
+ * / ```block``` fences into `<TrazoDiagram lang index title …>{`<dsl>`}</TrazoDiagram>`,
+ * so the DSL body arrives as `children`, `lang` carries the canonical kind, and
+ * fence meta (`title="…"`) plus the auto `index` arrive as props.
  *
  * Pure and hook-free — runs as a React Server Component, so diagrams ship in the
  * initial HTML with zero client JS. Parse errors are also caught at build time
- * by the `@joycostudio/trazo/remark` validator; the inline fallback below only
- * exists as defense-in-depth (and for the `warn` severity path).
+ * by the transform's own validation; the inline fallback below only exists as
+ * defense-in-depth (and for the `warn` severity path).
  */
 
 type Positioned = { graph: PositionedGraph } | { error: { line: number; message: string } };
@@ -48,25 +49,28 @@ function positionedFor(lang: string, source: string): Positioned {
 }
 
 /**
- * @param lang    One of flow/flowchart/git/seq/sequence/block.
- * @param source  The raw DSL from the fence.
- * @param source-only  When present, the source pseudo-code is shown above the
- *                     rendered SVG — the default in the docs so a grammar
- *                     reference still teaches the syntax that produced the shape.
- *                     Pass `source={false}` (via the transform) to render the
- *                     diagram alone.
+ * @param lang      Canonical DSL kind (flow/git/seq/block) set by the transform.
+ * @param children  The raw DSL body, passed as a string child by the transform.
+ * @param title     Optional fence-meta caption (`title="…"`).
+ * @param index     Optional per-document number stamped by the transform.
+ * @param showSource When true (default), the source pseudo-code is shown above the
+ *                   rendered SVG so a grammar reference still teaches the syntax.
  */
 export function TrazoDiagram({
   lang,
-  source,
+  children,
+  title,
+  index,
   showSource = true,
 }: {
   lang: string;
-  source: string;
+  children: string;
+  title?: string;
+  index?: number;
   showSource?: boolean;
 }) {
-  const trimmed = source.replace(/^\n+|\n+$/g, "");
-  const result = positionedFor(lang.toLowerCase(), trimmed);
+  const source = String(children).replace(/^\n+|\n+$/g, "");
+  const result = positionedFor(lang.toLowerCase(), source);
 
   if ("error" in result) {
     return (
@@ -80,21 +84,34 @@ export function TrazoDiagram({
     );
   }
 
+  const caption =
+    index !== undefined || title ? (
+      <figcaption
+        data-slot="trazo-diagram-caption"
+        className="text-fd-muted-foreground text-sm font-medium"
+      >
+        {index !== undefined ? <span className="tabular-nums">{`Fig. ${index}`}</span> : null}
+        {index !== undefined && title ? " — " : null}
+        {title}
+      </figcaption>
+    ) : null;
+
   return (
     <figure
       data-slot="trazo-diagram"
       className="my-6 flex flex-col gap-3 **:data-[slot=trazo-diagram-source]:m-0"
     >
+      {caption}
       {showSource ? (
         <pre
           data-slot="trazo-diagram-source"
           className="overflow-x-auto rounded-md border bg-fd-secondary/50 p-4 text-sm"
         >
-          <code>{trimmed}</code>
+          <code>{source}</code>
         </pre>
       ) : null}
       <div data-slot="trazo-diagram-render" className="flex justify-center overflow-x-auto">
-        <Graph graph={result.graph} />
+        <Graph graph={result.graph} title={title} />
       </div>
     </figure>
   );
