@@ -1,0 +1,327 @@
+/**
+ * Brandes–Köpf cross-axis coordinate assignment for a layered graph.
+ *
+ * Given a FIXED left-to-right ordering of every layer, this produces one
+ * cross-axis coordinate per vertex so that:
+ *  - the ordering is preserved and no two rank-siblings overlap (a size-aware
+ *    minimum separation `sep` is honoured), and
+ *  - co-aligned nodes share a coordinate, so their connecting edge draws
+ *    straight — chains, long-edge dummy chains, and cluster spines all come out
+ *    vertical *by construction*, not by iterative convergence.
+ *
+ * This is the algorithm dagre (hence Mermaid) uses. It is O(N), non-iterative,
+ * and — given identical inputs (including array order) — deterministic: every
+ * tie-break is a fixed function of layer position, so there is no dependence on
+ * map iteration order, time, or randomness.
+ *
+ * Reference: U. Brandes & B. Köpf, "Fast and Simple Horizontal Coordinate
+ * Assignment", GD 2002; corrected per Brandes, Walter & Zink, arXiv:2008.01252
+ * (2020). Variable node sizes follow the KIELER size-aware extension (GD 2015)
+ * by threading a per-pair `sep` through compaction.
+ *
+ * ── Trazo specifics ──────────────────────────────────────────────────────────
+ *  - `sameGroup`: a grouped vertex aligns only among its same-group neighbours
+ *    when it has any, so a cluster spine stays straight instead of snapping to an
+ *    external edge's routing dummy that happens to share its rank.
+ *  - `sep` is size-aware and carries `loopPad` + group-boundary gaps, so wide and
+ *    narrow nodes, self-loop corridors, and abutting subgraph boxes never collide.
+ */
+
+export interface BkInput {
+  /** Vertex ids per layer, index 0 = topmost, each layer left→right in order. */
+  layers: string[][];
+  /**
+   * PROPER upper-neighbour ids: for a vertex, the ids in the immediately
+   * previous layer it connects to. Must contain only adjacent-layer segments
+   * (back-edges / same-rank edges excluded — they never constrain columns).
+   * Order within a list is irrelevant; it is re-sorted by position internally.
+   */
+  up: Map<string, string[]>;
+  /** PROPER lower-neighbour ids (immediately next layer). Mirror of `up`. */
+  down: Map<string, string[]>;
+  /** True for routing dummies; a dummy-only ("inner") segment wins type-1 conflicts. */
+  isDummy: (id: string) => boolean;
+  /** Group id of a vertex, or undefined when ungrouped. */
+  group: (id: string) => string | undefined;
+  /**
+   * Minimum center-to-center separation when `leftId` sits immediately left of
+   * `rightId` in a layer. Size-aware (half-widths + gap + loop/boundary extras).
+   */
+  sep: (leftId: string, rightId: string) => number;
+}
+
+/** Separator that cannot appear in a node id, used to key a directed segment. */
+const SEG = "\u0000";
+
+/**
+ * Assign a cross coordinate to every vertex. Runs the four Brandes–Köpf passes
+ * (align-up/align-down × leftmost/rightmost) and combines them by per-vertex
+ * median, so nodes centre over their neighbours. Absolute offset is arbitrary
+ * (the caller normalises the leading edge); only relative positions are meaningful.
+ */
+export function assignCross(input: BkInput): Map<string, number> {
+  const { layers, up, down, isDummy, group, sep } = input;
+
+  // Position of each vertex within its layer (original orientation).
+  const pos = new Map<string, number>();
+  for (const layer of layers) layer.forEach((id, i) => pos.set(id, i));
+
+  const conflicted = markType1Conflicts(layers, up, pos, isDummy);
+  const isConf = (u: string, v: string): boolean => conflicted.has(u + SEG + v);
+
+  // Four passes: vertical ∈ {align-up, align-down} × horizontal ∈ {left, right}.
+  // Implemented by flipping the input for the canonical (align-up, leftmost)
+  // solver, then un-flipping the coordinates.
+  const runs: Array<{ xs: Map<string, number>; rightmost: boolean }> = [];
+  for (const alignDown of [false, true]) {
+    for (const rightmost of [false, true]) {
+      // Vertical flip (align-down): reverse layer stacking; the "upper" neighbour
+      // list becomes the original lower-neighbour list.
+      let L = layers;
+      let adj = up;
+      let conf = isConf;
+      if (alignDown) {
+        L = layers.slice().reverse();
+        adj = down;
+        // A segment stored as (originalUpper, originalLower) is, in this flipped
+        // stacking, (lower, upper) — swap the lookup.
+        conf = (u: string, v: string): boolean => isConf(v, u);
+      }
+      // Horizontal flip (rightmost): reverse each layer; the left neighbour in the
+      // flipped layer is the original right neighbour, so swap `sep`'s arguments.
+      let sepF = sep;
+      if (rightmost) {
+        L = L.map((layer) => layer.slice().reverse());
+        sepF = (a: string, b: string): number => sep(b, a);
+      }
+      const xs = canonicalPass(L, adj, conf, group, sepF);
+      // Un-flip horizontally: coordinates were packed leftward on a mirrored axis.
+      if (rightmost) for (const k of xs.keys()) xs.set(k, -(xs.get(k) as number));
+      runs.push({ xs, rightmost });
+    }
+  }
+
+  return balance(runs, layers);
+}
+
+/**
+ * Canonical Brandes–Köpf pass: vertical alignment into blocks (align each vertex
+ * to the median of its upper neighbours, leftmost, skipping type-1-conflicted and
+ * cross-group segments), then a size-aware horizontal compaction. `layers` is
+ * already oriented so that "upper" = previous index and "left" = smaller position.
+ */
+function canonicalPass(
+  layers: string[][],
+  up: Map<string, string[]>,
+  isConf: (u: string, v: string) => boolean,
+  group: (id: string) => string | undefined,
+  sep: (leftId: string, rightId: string) => number,
+): Map<string, number> {
+  const pos = new Map<string, number>();
+  const layerOf = new Map<string, number>();
+  layers.forEach((layer, li) =>
+    layer.forEach((id, i) => {
+      pos.set(id, i);
+      layerOf.set(id, li);
+    }),
+  );
+
+  // root[v] = topmost vertex of v's block; align[v] = next vertex in the block's
+  // cyclic list. A block is a maximal run of vertically-aligned vertices.
+  const root = new Map<string, string>();
+  const align = new Map<string, string>();
+  for (const layer of layers) {
+    for (const v of layer) {
+      root.set(v, v);
+      align.set(v, v);
+    }
+  }
+
+  for (let i = 1; i < layers.length; i++) {
+    const layer = layers[i] as string[];
+    // `r` is the position of the last upper vertex aligned to in this layer; the
+    // leftmost rule requires strictly increasing upper positions across the row.
+    let r = -1;
+    for (const v of layer) {
+      let ns = up.get(v) ?? [];
+      // Same-group filter: a grouped vertex keeps to its spine when it can.
+      const g = group(v);
+      if (g !== undefined) {
+        const sameGroup = ns.filter((u) => group(u) === g);
+        if (sameGroup.length > 0) ns = sameGroup;
+      }
+      if (ns.length === 0) continue;
+      const sorted = ns.slice().sort((a, b) => (pos.get(a) as number) - (pos.get(b) as number));
+      const d = sorted.length;
+      const mLo = Math.floor((d - 1) / 2);
+      const mHi = Math.ceil((d - 1) / 2);
+      for (let m = mLo; m <= mHi; m++) {
+        if (align.get(v) !== v) break; // already aligned this vertex
+        const u = sorted[m] as string;
+        const up_ = pos.get(u) as number;
+        if (!isConf(u, v) && r < up_) {
+          align.set(u, v);
+          root.set(v, root.get(u) as string);
+          align.set(v, root.get(v) as string);
+          r = up_;
+        }
+      }
+    }
+  }
+
+  // Horizontal compaction: place each block, respecting `sep` to its left.
+  const sink = new Map<string, string>();
+  const shift = new Map<string, number>();
+  const x = new Map<string, number>();
+  for (const layer of layers) {
+    for (const v of layer) {
+      sink.set(v, v);
+      shift.set(v, Infinity);
+    }
+  }
+
+  const placeBlock = (v: string): void => {
+    if (x.has(v)) return;
+    x.set(v, 0);
+    let w = v;
+    do {
+      const p = pos.get(w) as number;
+      if (p > 0) {
+        const li = layerOf.get(w) as number;
+        const leftNeighbor = (layers[li] as string[])[p - 1] as string;
+        const u = root.get(leftNeighbor) as string;
+        placeBlock(u);
+        if (sink.get(v) === v) sink.set(v, sink.get(u) as string);
+        const need = sep(leftNeighbor, w);
+        if (sink.get(v) !== sink.get(u)) {
+          const su = sink.get(u) as string;
+          shift.set(su, Math.min(shift.get(su) as number, (x.get(v) as number) - (x.get(u) as number) - need));
+        } else {
+          x.set(v, Math.max(x.get(v) as number, (x.get(u) as number) + need));
+        }
+      }
+      w = align.get(w) as string;
+    } while (w !== v);
+  };
+
+  for (const layer of layers) {
+    for (const v of layer) {
+      if (root.get(v) === v) placeBlock(v);
+    }
+  }
+
+  // Absolute coordinate: block-root x plus the block's class shift.
+  const out = new Map<string, number>();
+  for (const layer of layers) {
+    for (const v of layer) {
+      const rv = root.get(v) as string;
+      let xv = x.get(rv) as number;
+      const s = shift.get(sink.get(rv) as string) as number;
+      if (s < Infinity) xv += s;
+      out.set(v, xv);
+    }
+  }
+  return out;
+}
+
+/**
+ * Mark type-1 conflicts: a non-inner segment that crosses an inner segment. An
+ * inner segment connects two dummies (a long edge's interior); marking the
+ * crossing non-inner segments as ineligible for alignment lets the long edge
+ * claim a straight vertical corridor. Follows the corrected BK formulation.
+ */
+function markType1Conflicts(
+  layers: string[][],
+  up: Map<string, string[]>,
+  pos: Map<string, number>,
+  isDummy: (id: string) => boolean,
+): Set<string> {
+  const conflicts = new Set<string>();
+  // A dummy sits on exactly one edge, so it has a single upper neighbour; when
+  // that neighbour is also a dummy the segment between them is "inner".
+  const innerUpper = (v: string): string | null => {
+    if (!isDummy(v)) return null;
+    const u = (up.get(v) ?? [])[0];
+    return u !== undefined && isDummy(u) ? u : null;
+  };
+
+  for (let i = 1; i < layers.length; i++) {
+    const lower = layers[i] as string[];
+    const upperLen = (layers[i - 1] as string[]).length;
+    let k0 = 0;
+    let scan = 0;
+    for (let l1 = 0; l1 < lower.length; l1++) {
+      const v = lower[l1] as string;
+      const iu = innerUpper(v);
+      if (l1 === lower.length - 1 || iu !== null) {
+        const k1 = iu !== null ? (pos.get(iu) as number) : upperLen - 1;
+        for (; scan <= l1; scan++) {
+          const w = lower[scan] as string;
+          for (const u of up.get(w) ?? []) {
+            const k = pos.get(u) as number;
+            // A segment straying outside the [k0, k1] window crosses the inner
+            // segment; only a non-inner one yields (inner segments never conflict).
+            if ((k < k0 || k > k1) && !(isDummy(u) && isDummy(w))) {
+              conflicts.add(u + SEG + w);
+            }
+          }
+        }
+        k0 = k1;
+      }
+    }
+  }
+  return conflicts;
+}
+
+/**
+ * Combine the four candidate layouts. Each is shifted into a common frame — the
+ * two leftmost-aligned layouts to the narrowest layout's minimum, the two
+ * rightmost-aligned to its maximum — then every vertex takes the average of its
+ * two median candidate coordinates (the balanced BK coordinate).
+ */
+function balance(
+  runs: Array<{ xs: Map<string, number>; rightmost: boolean }>,
+  layers: string[][],
+): Map<string, number> {
+  const ids: string[] = [];
+  for (const layer of layers) for (const id of layer) ids.push(id);
+  if (ids.length === 0) return new Map();
+
+  // Narrowest layout is the alignment reference.
+  let refMin = 0;
+  let refMax = 0;
+  let bestWidth = Infinity;
+  const bounds = runs.map(({ xs }) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const id of ids) {
+      const c = xs.get(id) as number;
+      if (c < lo) lo = c;
+      if (c > hi) hi = c;
+    }
+    return { lo, hi };
+  });
+  bounds.forEach(({ lo, hi }) => {
+    const width = hi - lo;
+    if (width < bestWidth) {
+      bestWidth = width;
+      refMin = lo;
+      refMax = hi;
+    }
+  });
+
+  // Shift each layout to the reference frame by its horizontal alignment side.
+  runs.forEach(({ xs, rightmost }, i) => {
+    const { lo, hi } = bounds[i] as { lo: number; hi: number };
+    const delta = rightmost ? refMax - hi : refMin - lo;
+    for (const id of ids) xs.set(id, (xs.get(id) as number) + delta);
+  });
+
+  const out = new Map<string, number>();
+  for (const id of ids) {
+    const vals = runs.map(({ xs }) => xs.get(id) as number).sort((a, b) => a - b);
+    // Average of the two medians of the four candidates.
+    out.set(id, ((vals[1] as number) + (vals[2] as number)) / 2);
+  }
+  return out;
+}

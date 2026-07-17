@@ -844,6 +844,43 @@ describe("layoutFlow() — subgraphs", () => {
     const gapR = r.x - r.w! / 2 - (m.x + m.w! / 2);
     expect(Math.abs(gapL - gapR)).toBeLessThan(1);
   });
+
+  it("keeps a GROUPED chain of differently-sized nodes on one straight column", () => {
+    // The motivating bug: a vertical intra-cluster chain of nodes with growing
+    // widths drifted a few px off a common column (the group-aware alignment
+    // averaged both neighbours, converging too slowly under the old bounded
+    // sweeps), so every connecting edge showed a 45° jog. Block alignment shares
+    // one cross coordinate across the whole chain, so the spine is dead straight
+    // AND each edge is a strict vertical — regardless of per-node width.
+    const g = layoutFlow({
+      kind: "flow",
+      direction: "TD",
+      nodes: [
+        { id: "s", label: "S", group: "M" },
+        { id: "l", label: "Layout", group: "M" },
+        { id: "pp", label: "Pre-paint stage", group: "M" },
+        { id: "p", label: "Paint (generate display lists)", group: "M" },
+      ],
+      edges: [
+        { from: "s", to: "l" },
+        { from: "l", to: "pp" },
+        { from: "pp", to: "p" },
+      ],
+      groups: [{ id: "M", label: "Main Thread" }],
+    });
+    const x = (id: string) => g.nodes.find((n) => n.id === id)!.x;
+    for (const id of ["l", "pp", "p"]) {
+      expect(Math.abs(x(id) - x("s"))).toBeLessThan(0.5);
+    }
+    // Every connecting edge is a strict vertical: all its x's collapse to one.
+    for (const e of g.edges) {
+      const xs = e.path
+        .match(/-?\d+(?:\.\d+)?/g)!
+        .map(Number)
+        .filter((_, i) => i % 2 === 0);
+      expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(0.5);
+    }
+  });
 });
 
 // ── reversed (start) arrows ──────────────────────────────────────────────────
