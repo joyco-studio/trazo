@@ -857,6 +857,7 @@ export function layoutFlow(
       w: v.w,
       h: v.h,
     };
+    if (v.group !== undefined) node.group = v.group;
     if (v.label !== undefined) {
       // The vertex label is the (possibly auto-wrapped) text the shape was
       // sized against — emit THAT, not the raw input, so the renderer draws

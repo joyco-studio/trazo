@@ -117,6 +117,38 @@ Palettes (in `graph.tsx`):
   color resolves to an *opaque* `--trazo-*` var, so a tint had to come from
   `fill-opacity` rather than a `color-mix()`/alpha token (deliberately avoided
   introducing the codebase's first `color-mix` for a single wash).
+- **Member-node border tint** (flow) — a node's border is the surface color
+  (`BG`) so the chip reads as *lifted* off the lines behind it. But a node inside
+  a **role-tinted** subgraph sits on `background + 0.14·role`, not on plain
+  `background`, so that page-bg ring stands out as a mismatched **seam**. Fix: a
+  member of a role'd subgraph gets a decorative second stroke over its border
+  band — `data-slot="node-border-tint"`, the group's role color at the *same*
+  `GROUP_FILL_OPACITY` (`0.14`), `fill="none"` — drawn right after the solid
+  shape (`renderNodeBorderTint`, `graph.tsx`). The ring then resolves to
+  `background + 0.14·role`, **exactly** the tinted backdrop, and the seam
+  disappears. Membership is explicit: `FlowNode.group` is threaded onto
+  `PositionedNode.group`, and the renderer builds a `groupId → role` map once per
+  render (no geometric containment guessing). Nodes outside a tinted subgraph,
+  git nodes and roleless subgraphs emit no overlay. The overlay reuses the solid
+  shape's *exact* geometry via the shared `diamondVertices` / `cylinderPath`
+  helpers, so the two outlines register pixel-for-pixel.
+  **Why this specific mechanism (vs. reordering z-layers):** the chip-lift needs
+  the ring *over* the edges/lanes, while erasing the seam needs it *under* the
+  group fill — but the fill paints *below* the edges, so no single global paint
+  order satisfies both. Re-tinting only member borders sidesteps the conflict
+  entirely and leaves non-members untouched.
+  **Caveat — the fill-rim tint is imperceptible, not literally zero:** SVG
+  strokes are **center-aligned** (browsers don't support `stroke-alignment`), so
+  a `stroke-width: 2` straddles the geometric edge — 1px outside, 1px *inside*.
+  The overlay's inner 1px therefore lands on the node fill, adding a `0.14` wash
+  to the fill's rim. At that opacity and width it's invisible; making it exactly
+  zero would require painting the *outer* half only (an outward-offset path at
+  half width, or a clip), which isn't worth the complexity.
+  **Coupling to watch:** this equality holds only while the subgraph fill stays a
+  flat `fill-opacity` wash over the same `--trazo-bg`. If the group fill ever
+  moves to `color-mix()` or layers over a non-`bg` surface (e.g. a decoupled
+  `--trazo-group-<role>` slot), the overlay's wash must track that same change or
+  the seam returns.
 - **Label color** — `LANE_FG_VARS` / `ROLE_FG_VARS` pair each fill with a
   readable text color (its own `-foreground` slot → shadcn `*-foreground` token
   → WCAG-picked black/white hex matching that slot's fallback fill). Keeps labels

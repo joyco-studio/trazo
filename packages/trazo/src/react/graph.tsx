@@ -656,6 +656,12 @@ export function Graph(props: GraphProps): JSX.Element {
   const markerTokens = arrowColorTokens(edges);
   // Single resolution point for the theme's paint half (pure — SSR-safe).
   const paint = resolveThemePaint(theme);
+  // Role of each role-tinted subgraph, keyed by id, so a member node's border
+  // can be washed to match the group's backdrop (kills the page-bg seam ring).
+  const groupRole = new Map<string, SemanticRole>();
+  for (const g of graph.groups ?? []) {
+    if (g.variant !== "note" && g.role !== undefined) groupRole.set(g.id, g.role);
+  }
   // Shared label text style (tracking always; uppercase per the theme casing).
   const labelStyle = labelStyleFor(paint.uppercase);
   const rootStyle =
@@ -938,16 +944,21 @@ export function Graph(props: GraphProps): JSX.Element {
       ) : null}
 
       <g data-slot="nodes">
-        {graph.nodes.map((node) =>
-          node.kind === "note" ? (
-            renderAnnotation(node, classNames, paint)
-          ) : (
+        {graph.nodes.map((node) => {
+          if (node.kind === "note") return renderAnnotation(node, classNames, paint);
+          // A member of a role-tinted subgraph gets its border washed to the
+          // group's role, so the chip-lift ring matches the tinted backdrop.
+          const memberRole = node.group !== undefined ? groupRole.get(node.group) : undefined;
+          return (
             <g key={node.id} data-slot="node-group">
               {renderNodeShape(node, classNames?.node, classNames?.nodeBox, paint)}
+              {memberRole !== undefined
+                ? renderNodeBorderTint(node, paint, ROLE_VARS[memberRole])
+                : null}
               {renderNodeLabel(node, classNames?.label, paint.uppercase)}
             </g>
-          ),
-        )}
+          );
+        })}
       </g>
     </svg>
   );
@@ -991,6 +1002,34 @@ function renderAnnotation(
         : null}
     </g>
   );
+}
+
+/** Diamond vertices (top, right, bottom, left) for a flow node, centered on its x/y. */
+function diamondVertices(node: PositionedNode): Array<{ x: number; y: number }> {
+  const w = node.w ?? 0;
+  const h = node.h ?? 0;
+  return [
+    { x: node.x, y: node.y - h / 2 },
+    { x: node.x + w / 2, y: node.y },
+    { x: node.x, y: node.y + h / 2 },
+    { x: node.x - w / 2, y: node.y },
+  ];
+}
+
+/** Elliptical-capped cylinder body path. Origin (x,y), size w×h; `capRy` cap depth. */
+function cylinderPath(x: number, y: number, w: number, h: number): string {
+  const capRy = 6;
+  const left = x;
+  const right = x + w;
+  const top = y + capRy;
+  const bottom = y + h - capRy;
+  return [
+    `M ${left} ${top}`,
+    `C ${left} ${top - capRy * 1.34}, ${right} ${top - capRy * 1.34}, ${right} ${top}`,
+    `L ${right} ${bottom}`,
+    `C ${right} ${bottom + capRy * 1.34}, ${left} ${bottom + capRy * 1.34}, ${left} ${bottom}`,
+    `Z`,
+  ].join(" ");
 }
 
 /**
@@ -1051,14 +1090,7 @@ function renderNodeShape(
   }
 
   if (shape === "diamond") {
-    const cx = node.x;
-    const cy = node.y;
-    const vertices = [
-      { x: cx, y: cy - h / 2 },
-      { x: cx + w / 2, y: cy },
-      { x: cx, y: cy + h / 2 },
-      { x: cx - w / 2, y: cy },
-    ];
+    const vertices = diamondVertices(node);
     // The theme's roundness applies here too. A diamond vertex is far sharper
     // than a box's 90° corner, so the same radius reads weaker — scale it up
     // so it visually matches the boxes (the soft mock's squircle-ish diamond).
@@ -1089,29 +1121,79 @@ function renderNodeShape(
   }
 
   // cylinder: a rounded body with elliptical top and bottom caps.
-  const capRy = 6;
-  const left = x;
-  const right = x + w;
-  const top = y + capRy;
-  const bottom = y + h - capRy;
-  const d = [
-    `M ${left} ${top}`,
-    `C ${left} ${top - capRy * 1.34}, ${right} ${top - capRy * 1.34}, ${right} ${top}`,
-    `L ${right} ${bottom}`,
-    `C ${right} ${bottom + capRy * 1.34}, ${left} ${bottom + capRy * 1.34}, ${left} ${bottom}`,
-    `Z`,
-  ].join(" ");
   return (
     <path
       data-slot="node"
       data-shape="cylinder"
       className={boxClass}
-      d={d}
+      d={cylinderPath(x, y, w, h)}
       fill={fill}
       stroke={BG}
       strokeWidth={paint.borderWidth}
     />
   );
+}
+
+/**
+ * Decorative border overlay for a flow node that sits inside a role-tinted
+ * subgraph. A node's solid border is the page background (`BG`) so the chip
+ * reads as lifted off the lines behind it; but against a subgraph's low-opacity
+ * role wash that page-bg ring shows as a mismatched seam. This overlay re-paints
+ * the SAME role wash (`GROUP_FILL_OPACITY`) over just the border band, so the
+ * ring blends into the tinted backdrop (`BG` + wash) instead of ringing it.
+ *
+ * Geometry mirrors {@link renderNodeShape} exactly (shared `diamondVertices` /
+ * `cylinderPath` helpers), so the outlines register. Drawn right after the solid
+ * shape and under the label. Only flow box-like shapes reach here — git dots are
+ * never grouped, so an unknown/dot shape returns null. Pure.
+ */
+function renderNodeBorderTint(
+  node: PositionedNode,
+  paint: ResolvedThemePaint,
+  tint: string,
+): JSX.Element | null {
+  const shape = node.shape;
+  const w = node.w ?? 0;
+  const h = node.h ?? 0;
+  const x = node.x - w / 2;
+  const y = node.y - h / 2;
+  const skin = {
+    "data-slot": "node-border-tint",
+    "aria-hidden": true,
+    fill: "none",
+    stroke: tint,
+    strokeOpacity: GROUP_FILL_OPACITY,
+    strokeWidth: paint.borderWidth,
+  } as const;
+
+  if (shape === "box" || shape === "stadium") {
+    return (
+      <rect
+        {...skin}
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx={shape === "stadium" ? h / 2 : paint.cornerRadius}
+        ry={shape === "stadium" ? h / 2 : paint.cornerRadius}
+      />
+    );
+  }
+
+  if (shape === "diamond") {
+    const vertices = diamondVertices(node);
+    return paint.cornerRadius > 0 ? (
+      <path {...skin} d={roundedPolygonPath(vertices, paint.cornerRadius * 2)} />
+    ) : (
+      <polygon {...skin} points={vertices.map((p) => `${p.x},${p.y}`).join(" ")} />
+    );
+  }
+
+  if (shape === "cylinder") {
+    return <path {...skin} d={cylinderPath(x, y, w, h)} />;
+  }
+
+  return null;
 }
 
 /**

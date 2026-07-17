@@ -62,6 +62,31 @@ describe("<Graph> subgraph background tint", () => {
   });
 });
 
+describe("<Graph> member-node border tint", () => {
+  it("washes a member node's border with the group role so no seam ring shows", () => {
+    const html = render(tinted);
+    // Each member node emits a decorative tint overlay in the role color…
+    expect(html).toContain('data-slot="node-border-tint"');
+    expect(html).toMatch(/data-slot="node-border-tint"[^>]*stroke="var\(--trazo-success/);
+    // …at the same low wash as the group fill (BG + wash = the tinted backdrop).
+    expect(html).toMatch(/data-slot="node-border-tint"[^>]*stroke-opacity="0.14"/);
+    // The overlay is decorative-only — no fill so the solid node body shows through.
+    expect(html).toMatch(/data-slot="node-border-tint"[^>]*fill="none"/);
+  });
+
+  it("emits no tint overlay for a roleless subgraph's members", () => {
+    expect(render(plain)).not.toContain('data-slot="node-border-tint"');
+  });
+
+  it("paints the tint overlay after the solid node so it lands on the border band", () => {
+    const html = render(tinted);
+    const node = html.indexOf('data-slot="node"');
+    const tint = html.indexOf('data-slot="node-border-tint"');
+    expect(node).toBeGreaterThanOrEqual(0);
+    expect(tint).toBeGreaterThan(node);
+  });
+});
+
 describe("<Graph> subgraph paint order", () => {
   // The whole point of the two-pass split: the tint fill must sit BEHIND the
   // lanes while the border + title sit ON TOP of them, so connector lanes
