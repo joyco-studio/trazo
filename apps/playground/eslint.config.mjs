@@ -4,17 +4,47 @@ import nextTs from 'eslint-config-next/typescript'
 import importX from 'eslint-plugin-import-x'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
 
+// The trazo DSL plugin lives in the workspace package's build output
+// (`dist/eslint`). On a clean checkout that hasn't built packages yet that file
+// is absent, so resolve it lazily and degrade gracefully — linting the app must
+// still run; the DSL rules simply don't apply until the package is built.
+let trazoConfigs = []
+try {
+  const trazo = (await import('@joycostudio/trazo/eslint')).default
+  trazoConfigs = [trazo.configs.recommended]
+} catch (error) {
+  // Only tolerate the build artifact being absent (a clean checkout that hasn't
+  // built packages). Re-throw everything else — a syntax error, a missing
+  // dependency, or a throw during init must fail loudly, never silently drop the
+  // DSL rules while lint still reports success.
+  const artifactMissing =
+    (error?.code === 'ERR_MODULE_NOT_FOUND' || error?.code === 'MODULE_NOT_FOUND') &&
+    String(error?.message ?? '').includes('dist/eslint')
+  if (!artifactMissing) throw error
+  // eslint-disable-next-line no-console -- surfacing skipped DSL rules at config load
+  console.warn(
+    '[eslint] @joycostudio/trazo/eslint not built — skipping trazo DSL rules. Run `pnpm --filter @joycostudio/trazo build`.',
+  )
+}
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
 
   // ── Ignores ──────────────────────────────────────────────
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', '.source/**']),
 
   // ── Import plugin setup ──────────────────────────────────
   {
     plugins: { 'import-x': importX, 'simple-import-sort': simpleImportSort },
   },
+
+  // ── Trazo DSL validation ─────────────────────────────────
+  // Dogfoods the published plugin: any static `flow`/`git`/`seq`/`block` tagged
+  // template or `parseFlow("…literal…")` call authored in app code is parsed at
+  // lint time (0 findings today — the playground parses runtime editor text).
+  // Empty (skipped) when the package hasn't been built; see the guard above.
+  ...trazoConfigs,
 
   // ── Rules ────────────────────────────────────────────────
   {
