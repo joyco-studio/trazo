@@ -63,6 +63,7 @@ type AnyNode = any;
 
 interface RuleContext {
   options: unknown[];
+  sourceCode: { getScope(node: AnyNode): AnyNode };
   report(descriptor: { node: AnyNode; message: string; loc?: Loc }): void;
 }
 
@@ -98,62 +99,71 @@ const BLOCK_DSL: DslSpec = { label: "block DSL", tag: "block", parser: "parseBlo
 /** The package specifiers whose exports we treat as trazo's DSL API. */
 const DEFAULT_MODULES: readonly string[] = ["@joycostudio/trazo"];
 
-// ── Import-binding resolution ─────────────────────────────────────────────────
+// ── Import-binding resolution (scope-aware) ──────────────────────────────────
+// Resolution goes through ESLint's scope analysis rather than a name map, so a
+// local that shadows an import (a `flow` parameter, `const git = …`) is NOT
+// mistaken for the trazo tag, while aliased and namespace imports still resolve
+// to their real export name.
 
-interface TrazoBindings {
-  /** Local name → the trazo export it was imported as (named/aliased). */
-  namedByLocal: Map<string, string>;
-  /** Local names of `import * as ns from "@joycostudio/trazo"`. */
-  namespaces: Set<string>;
-}
-
-/**
- * Scan a Program's top-level imports and collect every local binding that
- * points at one of the trazo `modules`. Runs once per file (in the `Program`
- * visitor) before any usage node is visited, since imports precede usages in
- * source order.
- */
-function collectTrazoBindings(program: AnyNode, modules: readonly string[]): TrazoBindings {
-  const namedByLocal = new Map<string, string>();
-  const namespaces = new Set<string>();
-
-  for (const stmt of program.body ?? []) {
-    if (stmt.type !== "ImportDeclaration") continue;
-    if (typeof stmt.source?.value !== "string") continue;
-    if (!modules.includes(stmt.source.value)) continue;
-
-    for (const spec of stmt.specifiers ?? []) {
-      if (spec.type === "ImportNamespaceSpecifier") {
-        namespaces.add(spec.local.name);
-      } else if (spec.type === "ImportSpecifier") {
-        // `imported` is the export name; `local` is the (possibly aliased) binding.
-        const exported = spec.imported?.name ?? spec.imported?.value;
-        if (typeof exported === "string") namedByLocal.set(spec.local.name, exported);
-      }
-      // ImportDefaultSpecifier is ignored — the DSL API has no default export.
-    }
+/** Walk scopes outward from `scope` to find the variable `name` binds to here. */
+function findVariable(scope: AnyNode, name: string): AnyNode | null {
+  for (let s: AnyNode = scope; s; s = s.upper) {
+    const variable = s.set?.get(name);
+    if (variable) return variable;
   }
-
-  return { namedByLocal, namespaces };
+  return null;
 }
 
 /**
- * Resolve the trazo export name a tag/callee node refers to, or null if it
- * isn't a trazo binding. Handles bare identifiers (`flow`, aliased) and
- * namespace members (`t.flow`).
+ * If `variable` is an import from one of `modules`, describe it: a named import
+ * carries the export it binds; a namespace import binds the whole module object.
+ * Returns null for locals, non-trazo imports, and default imports.
  */
-function resolveTrazoExport(node: AnyNode, bindings: TrazoBindings): string | null {
+function trazoImportOf(
+  variable: AnyNode,
+  modules: readonly string[],
+): { kind: "named"; exported: string } | { kind: "namespace" } | null {
+  const def = variable?.defs?.find((d: AnyNode) => d.type === "ImportBinding");
+  if (!def) return null;
+  const source = def.parent?.source?.value;
+  if (typeof source !== "string" || !modules.includes(source)) return null;
+  if (def.node?.type === "ImportNamespaceSpecifier") return { kind: "namespace" };
+  if (def.node?.type === "ImportSpecifier") {
+    // `imported` is the export name — an Identifier (`.name`) or, for a
+    // string-literal import (`import { "x" as y }`), a Literal (`.value`).
+    const exported = def.node.imported?.name ?? def.node.imported?.value;
+    if (typeof exported === "string") return { kind: "named", exported };
+  }
+  return null;
+}
+
+/** Static string key of a member access — `.parseFlow` or `["parseFlow"]` — or null. */
+function memberKey(node: AnyNode): string | null {
+  if (!node.computed && node.property?.type === "Identifier") return node.property.name;
+  if (node.computed && node.property?.type === "Literal" && typeof node.property.value === "string") {
+    return node.property.value;
+  }
+  return null;
+}
+
+/**
+ * Resolve the trazo export name a tag/callee node refers to, or null if it isn't
+ * a trazo binding in this scope. Handles bare identifiers (named/aliased imports,
+ * respecting shadowing) and namespace members — both `t.parseFlow` and the
+ * equivalent computed `t["parseFlow"]`.
+ */
+function resolveTrazoExport(
+  node: AnyNode,
+  scope: AnyNode,
+  modules: readonly string[],
+): string | null {
   if (node?.type === "Identifier") {
-    return bindings.namedByLocal.get(node.name) ?? null;
+    const info = trazoImportOf(findVariable(scope, node.name), modules);
+    return info?.kind === "named" ? info.exported : null;
   }
-  if (
-    node?.type === "MemberExpression" &&
-    !node.computed &&
-    node.object?.type === "Identifier" &&
-    node.property?.type === "Identifier" &&
-    bindings.namespaces.has(node.object.name)
-  ) {
-    return node.property.name;
+  if (node?.type === "MemberExpression" && node.object?.type === "Identifier") {
+    const info = trazoImportOf(findVariable(scope, node.object.name), modules);
+    return info?.kind === "namespace" ? memberKey(node) : null;
   }
   return null;
 }
@@ -202,8 +212,8 @@ function makeRule(dsl: DslSpec): RuleModule {
     },
     create(context) {
       const options = (context.options[0] ?? {}) as { modules?: string[] };
-      const modules = options.modules ?? DEFAULT_MODULES;
-      let bindings: TrazoBindings = { namedByLocal: new Map(), namespaces: new Set() };
+      // `modules` extends the defaults; it never disables `@joycostudio/trazo`.
+      const modules = [...DEFAULT_MODULES, ...(options.modules ?? [])];
 
       function check(source: string, node: AnyNode, quasiStartLine?: number): void {
         const { error } = dsl.parse(source);
@@ -217,13 +227,10 @@ function makeRule(dsl: DslSpec): RuleModule {
       }
 
       return {
-        Program(node: AnyNode) {
-          bindings = collectTrazoBindings(node, modules);
-        },
-
         // flow`…`  /  git`…`  /  seq`…`  /  block`…`
         TaggedTemplateExpression(node: AnyNode) {
-          if (resolveTrazoExport(node.tag, bindings) !== dsl.tag) return;
+          const scope = context.sourceCode.getScope(node);
+          if (resolveTrazoExport(node.tag, scope, modules) !== dsl.tag) return;
           // Skip templates with interpolated expressions — can't analyse statically.
           if (node.quasi.expressions.length > 0) return;
           const quasi = node.quasi.quasis[0];
@@ -235,7 +242,8 @@ function makeRule(dsl: DslSpec): RuleModule {
 
         // parseFlow("…")  /  parseGit(`…`)  /  parseSequence(…)  /  parseBlock(…)
         CallExpression(node: AnyNode) {
-          if (resolveTrazoExport(node.callee, bindings) !== dsl.parser) return;
+          const scope = context.sourceCode.getScope(node);
+          if (resolveTrazoExport(node.callee, scope, modules) !== dsl.parser) return;
           const arg = node.arguments?.[0];
           if (!arg) return;
 

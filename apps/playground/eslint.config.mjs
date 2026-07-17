@@ -1,9 +1,23 @@
-import trazo from '@joycostudio/trazo/eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 import nextVitals from 'eslint-config-next/core-web-vitals'
 import nextTs from 'eslint-config-next/typescript'
 import importX from 'eslint-plugin-import-x'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
+
+// The trazo DSL plugin lives in the workspace package's build output
+// (`dist/eslint`). On a clean checkout that hasn't built packages yet that file
+// is absent, so resolve it lazily and degrade gracefully — linting the app must
+// still run; the DSL rules simply don't apply until the package is built.
+let trazoConfigs = []
+try {
+  const trazo = (await import('@joycostudio/trazo/eslint')).default
+  trazoConfigs = [trazo.configs.recommended]
+} catch {
+  // eslint-disable-next-line no-console -- surfacing skipped DSL rules at config load
+  console.warn(
+    '[eslint] @joycostudio/trazo/eslint not built — skipping trazo DSL rules. Run `pnpm --filter @joycostudio/trazo build`.',
+  )
+}
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -21,7 +35,8 @@ const eslintConfig = defineConfig([
   // Dogfoods the published plugin: any static `flow`/`git`/`seq`/`block` tagged
   // template or `parseFlow("…literal…")` call authored in app code is parsed at
   // lint time (0 findings today — the playground parses runtime editor text).
-  trazo.configs.recommended,
+  // Empty (skipped) when the package hasn't been built; see the guard above.
+  ...trazoConfigs,
 
   // ── Rules ────────────────────────────────────────────────
   {

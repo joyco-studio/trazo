@@ -30,6 +30,9 @@ ruleTester.run("valid-flow-dsl", plugin.rules["valid-flow-dsl"], {
     { code: `${IMPORT}const x = 1;\nflow\`end \${x}\`;` },
     // parseFlow with a well-formed string argument.
     { code: `${IMPORT}parseFlow("flow LR\\nA --> B");` },
+    // A local that SHADOWS the import is not the trazo tag — no false positive.
+    { code: `${IMPORT}function render(flow) {\n  return flow\`end\`;\n}` },
+    { code: `${IMPORT}function render() {\n  const flow = String.raw;\n  return flow\`end\`;\n}` },
   ],
   invalid: [
     // Malformed flow in a tagged template.
@@ -42,6 +45,9 @@ ruleTester.run("valid-flow-dsl", plugin.rules["valid-flow-dsl"], {
     { code: `${IMPORT}parseFlow("end");`, errors: 1 },
     // Namespace parser call.
     { code: 'import * as t from "@joycostudio/trazo";\nt.parseFlow("end");', errors: 1 },
+    // Computed namespace access resolves to the same export as dot access.
+    { code: 'import * as t from "@joycostudio/trazo";\nt["parseFlow"]("end");', errors: 1 },
+    { code: 'import * as t from "@joycostudio/trazo";\nt["flow"]`end`;', errors: 1 },
     // A custom module specifier via rule options.
     {
       code: 'import { flow } from "#trazo";\nflow`end`;',
