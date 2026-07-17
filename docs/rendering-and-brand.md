@@ -236,3 +236,58 @@ corners stay square. As a path: `M c,0 L W,0 L W,H-c L W-c,H L 0,H L 0,c Z`.
 Colored (`==>`) edges paint **on top of** neutral accent edges. `graph.tsx`
 partitions edges (`orderEdgesByPaint`) into accent-first, colored-last, with
 input order preserved within each group (stable, deterministic).
+
+## Sequence note & lifeline paint order
+
+SVG has no z-index — paint order is document order, so the layer sequence in
+`Graph` (`graph.tsx`) *is* the depth stack. The top-level `<g data-slot>` layers
+relevant to this decision, in paint order (earliest = furthest back):
+
+```
+canvas → group-fills → lifelines → edges → groups → notes → edge-labels → nodes
+```
+
+(Git-only annotation layers — `lane-labels`, `commit-brackets`, `git-notes` —
+slot in between `lifelines` and `edges`; they don't interact with the note split.)
+
+**The problem this order solves.** Sequence **notes** (`note over X`) and flow
+**subgraph containers** are both modeled as `PositionedGroup`s, distinguished only
+by `variant` (`"note"` vs `"group"`) — so a naive single `groups` layer forces
+both to the same depth. But they have **opposite** depth requirements:
+
+- A **subgraph container** is a backdrop region: its tint wash must sit *under*
+  the whole diagram and its border/title must not be crossed by connector lanes.
+- A **sequence note** is an opaque annotation: its filled panel must sit *over*
+  the dashed lifeline (and any message strokes) that would otherwise paint on top
+  of it and show through the note text.
+
+Placing the shared `groups` layer early (the original code) put notes behind the
+lifelines — the reported bug: `note over C` rendered behind the dashed line.
+
+**The decision — split the group render by `variant` into separate passes at
+different depths**, rather than add a z/order field to the positioned types (the
+engine stays a pure geometry contract with no paint hints):
+
+- `data-slot="group-fills"` (`renderGroupFill`, `variant !== "note" && role`) —
+  earliest, behind lanes/nodes, so a `:role` subgraph tint reads as a wash.
+- `data-slot="groups"` (`renderGroup`, `variant !== "note"`) — subgraph **borders
+  + titles**, drawn *after* `edges` so connector lanes never cross the outline.
+- `data-slot="notes"` (`renderGroup`, `variant === "note"`) — sequence notes,
+  drawn *after* both `lifelines` and `edges` so the opaque panel covers them.
+
+Notes and subgraph-borders share `renderGroup`; only the layer they're emitted in
+(the filter on `variant`) decides their depth.
+
+**Decision — notes paint after `edges`, not merely after `lifelines`.** In the
+current layout a note reserves its own timeline row, so message arrows never
+spatially cross it — after-`lifelines` alone would fix the reported symptom. It's
+placed past `edges` for robustness: if the layout ever routes a message behind a
+note, the opaque panel still wins. The cost is that notes would paint over edge
+*strokes* on any future overlap; if notes ever need to sit *below* messages,
+moving the `notes` layer up to just after `lifelines` is a one-line relocation
+with no engine change.
+
+**Why nodes stay last.** Participant-header and flow nodes paint after everything
+so a node box always sits on top of the frames and lines passing behind it (the
+chip-lift look). Subgraph members don't touch their container because `GROUP_PAD`
+insets them.
