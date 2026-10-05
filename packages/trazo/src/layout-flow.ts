@@ -48,7 +48,6 @@ import {
   badgeHeight,
   badgeWidth,
   edgeLabelPoint,
-  expandPath,
   faceAnchor,
   groupBounds,
   GROUP_PAD,
@@ -58,10 +57,12 @@ import {
   measureMultiline,
   measurePlainMultiline,
   pathThrough,
+  renderedPathSegments,
   roleColorKey,
   sizeShape,
   wrapLabel,
   type AnchorFace,
+  type RenderedSegment,
 } from "./geometry.js";
 import { assignCross } from "./bk-align.js";
 
@@ -125,6 +126,65 @@ function segmentHitsBox(a: Point, b: Point, box: Bounds, gap: number): boolean {
     if (enter > leave) return false;
   }
   return true;
+}
+
+function pathHitsBox(path: RenderedSegment[], box: Bounds, gap: number): boolean {
+  return path.some(({ a, b, error }) => segmentHitsBox(a, b, box, gap + error));
+}
+
+function pointSegmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1,
+    ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq,
+  ));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
+
+function closestPointOnPath(point: Point, path: RenderedSegment[]): Point {
+  let closest = point;
+  let best = Infinity;
+  for (const { a, b } of path) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSq = dx * dx + dy * dy;
+    const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1,
+      ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq,
+    ));
+    const candidate = { x: a.x + t * dx, y: a.y + t * dy };
+    const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+    if (distance < best) {
+      best = distance;
+      closest = candidate;
+    }
+  }
+  return closest;
+}
+
+/** Minimum distance between two drawn segments, accounting for a crossing. */
+function segmentDistance(a: Point, b: Point, c: Point, d: Point): number {
+  const cross = (u: Point, v: Point): number => u.x * v.y - u.y * v.x;
+  const r = { x: b.x - a.x, y: b.y - a.y };
+  const s = { x: d.x - c.x, y: d.y - c.y };
+  const denom = cross(r, s);
+  if (Math.abs(denom) > 1e-9) {
+    const delta = { x: c.x - a.x, y: c.y - a.y };
+    const t = cross(delta, s) / denom;
+    const u = cross(delta, r) / denom;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return 0;
+  }
+  return Math.min(
+    pointSegmentDistance(a, c, d), pointSegmentDistance(b, c, d),
+    pointSegmentDistance(c, a, b), pointSegmentDistance(d, a, b),
+  );
+}
+
+function pathsTooClose(a: RenderedSegment[], b: RenderedSegment[], gap: number): boolean {
+  return a.some((first) => b.some((second) =>
+    segmentDistance(first.a, first.b, second.a, second.b) <=
+      gap + first.error + second.error,
+  ));
 }
 
 /**
@@ -524,14 +584,15 @@ export function layoutFlow(
   // than the rank spacing can still graze an endpoint's box; that case is
   // inherent (no on-line placement clears a badge wider than the node spacing).
   // A "parallel pair": two nodes on ADJACENT ranks with edges in BOTH directions
-  // (a↔b), each the SOLE real node on its rank. That's a 1↔1 sync relationship
+  // (a↔b), each the SOLE vertex on its rank. That's a 1↔1 sync relationship
   // (e.g. commit / scroll-deltas between two threads) — Mermaid draws it as two
   // parallel lines with both labels centered BETWEEN the boxes. Both edges route
   // straight through the shared inter-rank gap (see edge routing below), offset to
   // opposite sides of centre, instead of arcing the reverse edge out on a lateral
   // corridor (which strands its label at the far edge). The "sole on rank" guard
   // keeps genuine branch/merge loops — a retry edge back to a decision that fans
-  // out, so its target rank has siblings — on the lateral arc. Deterministic.
+  // out, so its target rank has siblings — on the lateral arc. It also excludes
+  // dummy lanes carrying longer edges through this gap. Deterministic.
   const edgeDirs = new Set<string>();
   for (const e of edges) edgeDirs.add(`${e.from} ${e.to}`);
   const realPerRank: number[] = layers.map(
@@ -541,7 +602,11 @@ export function layoutFlow(
     Math.abs(fromV.rank - toV.rank) === 1 &&
     edgeDirs.has(`${e.to} ${e.from}`) &&
     (realPerRank[fromV.rank] as number) === 1 &&
-    (realPerRank[toV.rank] as number) === 1;
+    (realPerRank[toV.rank] as number) === 1 &&
+    // A dummy lane carries a spanning edge through this same gap. The pair's
+    // outer badges cannot safely straddle that extra route.
+    (layers[fromV.rank] as Vertex[]).length === 1 &&
+    (layers[toV.rank] as Vertex[]).length === 1;
   const parallelOffset = (fromV: Vertex, toV: Vertex): number => {
     const minHalf = Math.min(
       direction === "TD" ? fromV.w : fromV.h,
@@ -1132,13 +1197,12 @@ export function layoutFlow(
   // nodes unless sibling spacing was reserved or this origin shift is needed.
   // Collision handling never changes ranks or reroutes the flow edges.
   const mainAxis = direction === "LR" ? "x" : "y";
-  const flowSegments: Array<[Point, Point]> = [];
-  for (const points of edgePoints) {
-    const expanded = expandPath(points, edgeStyle, mainAxis);
-    for (let i = 1; i < expanded.length; i++) {
-      flowSegments.push([expanded[i - 1] as Point, expanded[i] as Point]);
-    }
-  }
+  const needsClearance = (graph.notes?.length ?? 0) > 0 ||
+    positionedEdges.some((edge) => edge.labelPoint !== undefined);
+  const flowPaths = needsClearance
+    ? edgePoints.map((points) => renderedPathSegments(points, edgeStyle, mainAxis))
+    : [];
+  const flowSegments = flowPaths.flat();
   const noteBoxes: PositionedNode[] = [];
   const movedNoteEdges = new Set<number>();
   if (graph.notes && graph.notes.length > 0) {
@@ -1180,13 +1244,19 @@ export function layoutFlow(
         candidates.add(alongMin - halfAlong - NOTE_CLEARANCE - 1);
         candidates.add(alongMax + halfAlong + NOTE_CLEARANCE + 1);
       };
-      for (const [a, b] of flowSegments) {
+      for (const { a, b, error } of flowSegments) {
+        const alongMin = (vertical ? Math.min(a.x, b.x) : Math.min(a.y, b.y)) - error;
+        const alongMax = (vertical ? Math.max(a.x, b.x) : Math.max(a.y, b.y)) + error;
         addCandidates(
-          vertical ? Math.min(a.x, b.x) : Math.min(a.y, b.y),
-          vertical ? Math.max(a.x, b.x) : Math.max(a.y, b.y),
-          vertical ? Math.min(a.y, b.y) : Math.min(a.x, b.x),
-          vertical ? Math.max(a.y, b.y) : Math.max(a.x, b.x),
+          alongMin,
+          alongMax,
+          (vertical ? Math.min(a.y, b.y) : Math.min(a.x, b.x)) - error,
+          (vertical ? Math.max(a.y, b.y) : Math.max(a.x, b.x)) + error,
         );
+        // A route can cross the leader in the gutter without touching the note
+        // box. Its cross-axis bounds must also seed placement candidates.
+        candidates.add(alongMin - halfAlong - NOTE_CLEARANCE - 1);
+        candidates.add(alongMax + halfAlong + NOTE_CLEARANCE + 1);
       }
       // The target itself defines the requested gutter. In particular,
       // calloutGap: 0 may intentionally put the chip flush against its face.
@@ -1201,20 +1271,6 @@ export function layoutFlow(
           vertical ? box.bottom : box.right,
         );
       }
-      const clear = (along: number): boolean => {
-        const box = vertical
-          ? boxBounds(along, ny, nw, nh)
-          : boxBounds(nx, along, nw, nh);
-        return occupied.every((other) => !boxesOverlap(box, other, NOTE_CLEARANCE)) &&
-          flowSegments.every(([a, b]) => !segmentHitsBox(a, b, box, NOTE_CLEARANCE));
-      };
-      const along = [...candidates].sort((a, b) =>
-        Math.abs(a - initialAlong) - Math.abs(b - initialAlong) || b - a,
-      ).find(clear) ?? initialAlong;
-      if (vertical) nx = along;
-      else ny = along;
-      const moved = Math.abs(along - initialAlong) > 0.001;
-
       // A moved note can still have a straight leader: attach from the near
       // third of its face, directly below/above (or beside) an open target-face
       // point. Only a note too far aside needs a bent leader.
@@ -1224,63 +1280,93 @@ export function layoutFlow(
       const faceMin = targetCenterAlong - targetHalfAlong + faceInset;
       const faceMax = targetCenterAlong + targetHalfAlong - faceInset;
       const clampToFace = (value: number): number => Math.max(faceMin, Math.min(value, faceMax));
-      let targetAlong = moved ? clampToFace(along) : along;
-      let straightLeader = !moved;
-      if (moved) {
-        // Keep the leader tip off any flow arrow already using this face.
-        const used: number[] = [];
-        const faceNormal = vertical
-          ? tv.center.y + sign * targetHalf
-          : tv.center.x + sign * targetHalf;
-        for (let i = 0; i < positionedEdges.length; i++) {
-          const edge = positionedEdges[i] as PositionedEdge;
-          if (edge.kind !== "flow") continue;
-          const points = edgePoints[i] as Point[];
-          const endpoint = edge.to === note.target
-            ? points[points.length - 1]
-            : edge.from === note.target ? points[0] : undefined;
-          if (endpoint === undefined) continue;
-          const normal = vertical ? endpoint.y : endpoint.x;
-          if (Math.abs(normal - faceNormal) < edgeGap + 0.01) {
-            used.push(vertical ? endpoint.x : endpoint.y);
-          }
-        }
-        const openOnFace = (min: number, max: number): number | undefined => {
-          if (min > max) return undefined;
-          const clamp = (value: number): number => Math.max(min, Math.min(value, max));
-          const choices = [clamp(along), min, max];
-          for (const position of used) {
-            choices.push(clamp(position - NOTE_CLEARANCE - 1));
-            choices.push(clamp(position + NOTE_CLEARANCE + 1));
-          }
-          choices.sort((a, b) => Math.abs(a - along) - Math.abs(b - along) || b - a);
-          return choices.find((candidate) =>
-            used.every((position) => Math.abs(candidate - position) > NOTE_CLEARANCE),
-          );
-        };
-        const third = (halfAlong * 2) / 3;
-        const nearSide = along > targetCenterAlong;
-        const thirdMin = nearSide
-          ? along - halfAlong + NOTE_CLEARANCE
-          : along + halfAlong - third;
-        const thirdMax = nearSide
-          ? along - halfAlong + third
-          : along + halfAlong - NOTE_CLEARANCE;
-        const straightPoint = openOnFace(Math.max(faceMin, thirdMin), Math.min(faceMax, thirdMax));
-        if (straightPoint !== undefined) {
-          targetAlong = straightPoint;
-          straightLeader = true;
-        } else {
-          targetAlong = openOnFace(faceMin, faceMax) ?? targetAlong;
+      // Keep the leader tip off any flow arrow already using this face.
+      const used: number[] = [];
+      const faceNormal = vertical
+        ? tv.center.y + sign * targetHalf
+        : tv.center.x + sign * targetHalf;
+      for (let i = 0; i < positionedEdges.length; i++) {
+        const edge = positionedEdges[i] as PositionedEdge;
+        if (edge.kind !== "flow") continue;
+        const points = edgePoints[i] as Point[];
+        const endpoint = edge.to === note.target
+          ? points[points.length - 1]
+          : edge.from === note.target ? points[0] : undefined;
+        if (endpoint === undefined) continue;
+        const normal = vertical ? endpoint.y : endpoint.x;
+        if (Math.abs(normal - faceNormal) < edgeGap + 0.01) {
+          used.push(vertical ? endpoint.x : endpoint.y);
         }
       }
-      const noteFaceAlong = straightLeader ? targetAlong : along;
-      const noteFace: Point = vertical
-        ? { x: noteFaceAlong, y: ny - sign * (nh / 2) }
-        : { x: nx - sign * (nw / 2), y: noteFaceAlong };
-      const targetFace: Point = vertical
-        ? { x: targetAlong, y: tv.center.y + sign * targetHalf }
-        : { x: tv.center.x + sign * targetHalf, y: targetAlong };
+      const buildLeader = (along: number) => {
+        const moved = Math.abs(along - initialAlong) > 0.001;
+        const x = vertical ? along : nx;
+        const y = vertical ? ny : along;
+        let targetAlong = moved ? clampToFace(along) : along;
+        let straightLeader = !moved;
+        if (moved) {
+          const openOnFace = (min: number, max: number): number | undefined => {
+            if (min > max) return undefined;
+            const clamp = (value: number): number => Math.max(min, Math.min(value, max));
+            const choices = [clamp(along), min, max];
+            for (const position of used) {
+              choices.push(clamp(position - NOTE_CLEARANCE - 1));
+              choices.push(clamp(position + NOTE_CLEARANCE + 1));
+            }
+            choices.sort((a, b) => Math.abs(a - along) - Math.abs(b - along) || b - a);
+            return choices.find((candidate) =>
+              used.every((position) => Math.abs(candidate - position) > NOTE_CLEARANCE),
+            );
+          };
+          const third = (halfAlong * 2) / 3;
+          const nearSide = along > targetCenterAlong;
+          const thirdMin = nearSide
+            ? along - halfAlong + NOTE_CLEARANCE
+            : along + halfAlong - third;
+          const thirdMax = nearSide
+            ? along - halfAlong + third
+            : along + halfAlong - NOTE_CLEARANCE;
+          const straightPoint = openOnFace(Math.max(faceMin, thirdMin), Math.min(faceMax, thirdMax));
+          if (straightPoint !== undefined) {
+            targetAlong = straightPoint;
+            straightLeader = true;
+          } else {
+            targetAlong = openOnFace(faceMin, faceMax) ?? targetAlong;
+          }
+        }
+        const noteFaceAlong = straightLeader ? targetAlong : along;
+        const noteFace: Point = vertical
+          ? { x: noteFaceAlong, y: y - sign * (nh / 2) }
+          : { x: x - sign * (nw / 2), y: noteFaceAlong };
+        const targetFace: Point = vertical
+          ? { x: targetAlong, y: tv.center.y + sign * targetHalf }
+          : { x: tv.center.x + sign * targetHalf, y: targetAlong };
+        const mid = vertical
+          ? (noteFace.y + targetFace.y) / 2
+          : (noteFace.x + targetFace.x) / 2;
+        const points: Point[] = moved && !straightLeader
+          ? vertical
+            ? [noteFace, { x, y: mid }, { x: targetAlong, y: mid }, targetFace]
+            : [noteFace, { x: mid, y }, { x: mid, y: targetAlong }, targetFace]
+          : [noteFace, targetFace];
+        return { x, y, moved, straightLeader, points };
+      };
+      const clear = (along: number): boolean => {
+        const proposed = buildLeader(along);
+        const box = boxBounds(proposed.x, proposed.y, nw, nh);
+        if (occupied.some((other) => boxesOverlap(box, other, NOTE_CLEARANCE)) ||
+            flowPaths.some((path) => pathHitsBox(path, box, NOTE_CLEARANCE))) return false;
+        const leaderStyle = proposed.moved && !proposed.straightLeader ? "orthogonal" : edgeStyle;
+        const leader = renderedPathSegments(proposed.points, leaderStyle, mainAxis);
+        return occupied.every((other) => !pathHitsBox(leader, other, NOTE_CLEARANCE / 2)) &&
+          flowPaths.every((path) => !pathsTooClose(leader, path, NOTE_CLEARANCE / 2));
+      };
+      const along = [...candidates].sort((a, b) =>
+        Math.abs(a - initialAlong) - Math.abs(b - initialAlong) || b - a,
+      ).find(clear) ?? initialAlong;
+      const { x, y, moved, straightLeader, points } = buildLeader(along);
+      nx = x;
+      ny = y;
 
       const noteId = `__note_${noteSeed++}`;
       const box: PositionedNode = {
@@ -1301,14 +1387,6 @@ export function layoutFlow(
       nodes.push(box);
       noteBoxes.push(box);
 
-      const mid = vertical
-        ? (noteFace.y + targetFace.y) / 2
-        : (noteFace.x + targetFace.x) / 2;
-      const points: Point[] = moved && !straightLeader
-        ? vertical
-          ? [noteFace, { x: nx, y: mid }, { x: targetAlong, y: mid }, targetFace]
-          : [noteFace, { x: mid, y: ny }, { x: mid, y: targetAlong }, targetFace]
-        : [noteFace, targetFace];
       for (const p of points) {
         if (p.x > routeMaxX) routeMaxX = p.x;
         if (p.y > routeMaxY) routeMaxY = p.y;
@@ -1425,31 +1503,26 @@ export function layoutFlow(
     }
   }
 
-  // A long inline badge can hide a different arrow crossing beneath it. Move
-  // such badges to the nearest clear side of their own route and add a short
-  // leader back to that route. Parallel pairs were handled above. Keep an
-  // inline badge when neither side clears the surrounding boxes and paths.
+  // A badge can hide a different arrow crossing beneath it, including a badge
+  // already displaced for a parallel pair. Move it to a clear side of its own
+  // route with a short connector. Check the connector as well as the badge.
   for (let i = 0; i < positionedEdges.length; i++) {
     const pe = positionedEdges[i] as PositionedEdge;
-    if (pe.labelPoint === undefined || pe.labelAnchor !== undefined) continue;
+    if (pe.labelPoint === undefined) continue;
     const halfW = badgeWidth(pe.labelWidth ?? 0) / 2;
     const halfH = badgeHeight(pe.labelHeight ?? 0) / 2;
     const badgeAt = (point: Point): Bounds => boxBounds(point.x, point.y, halfW * 2, halfH * 2);
     const hitsAnotherRoute = (box: Bounds): boolean => positionedEdges.some((other, j) => {
       if (j === i || other.kind !== "flow") return false;
-      const points = expandPath(edgePoints[j] as Point[], edgeStyle, mainAxis);
-      for (let k = 1; k < points.length; k++) {
-        if (segmentHitsBox(points[k - 1] as Point, points[k] as Point, box, 0)) return true;
-      }
-      return false;
+      return pathHitsBox(flowPaths[j] as RenderedSegment[], box, 1);
     });
     if (!hitsAnotherRoute(badgeAt(pe.labelPoint))) continue;
 
-    const anchor = pe.labelPoint;
-    const ownPath = expandPath(edgePoints[i] as Point[], edgeStyle, mainAxis);
-    const anchorBox = boxBounds(anchor.x, anchor.y, 2, 2);
-    if (!ownPath.some((point, k) => k > 0 &&
-      segmentHitsBox(ownPath[k - 1] as Point, point, anchorBox, 0))) continue;
+    // A Bézier label's waypoint midpoint may lie off the visible spline.
+    // Anchor the displaced badge to the actual rendered route.
+    const anchor = pe.labelAnchor ?? closestPointOnPath(
+      pe.labelPoint, flowPaths[i] as RenderedSegment[],
+    );
     const crossHalf = direction === "TD" ? halfW : halfH;
     const candidates = [-1, 1].map((side) => direction === "TD"
       ? { x: anchor.x + side * (crossHalf + LABEL_GAP), y: anchor.y }
@@ -1460,8 +1533,15 @@ export function layoutFlow(
       if (nodes.some((node) => boxesOverlap(box, boxBounds(node.x, node.y, node.w ?? 0, node.h ?? 0), LABEL_GAP / 2))) {
         return false;
       }
-      return positionedEdges.every((other, j) => j === i || other.labelPoint === undefined ||
-        !boxesOverlap(box, badgeAtOther(other), LABEL_GAP / 2));
+      if (positionedEdges.some((other, j) => j !== i && other.labelPoint !== undefined &&
+          boxesOverlap(box, badgeAtOther(other), LABEL_GAP / 2))) return false;
+      const face: Point = direction === "TD"
+        ? { x: point.x < anchor.x ? box.right : box.left, y: point.y }
+        : { x: point.x, y: point.y < anchor.y ? box.bottom : box.top };
+      const connector: RenderedSegment[] = [{ a: face, b: anchor, error: 0 }];
+      return nodes.every((node) => !pathHitsBox(connector,
+        boxBounds(node.x, node.y, node.w ?? 0, node.h ?? 0), LABEL_GAP / 2)) &&
+        flowPaths.every((path, j) => j === i || !pathsTooClose(connector, path, 1));
     };
     const badgeAtOther = (other: PositionedEdge): Bounds => boxBounds(
       (other.labelPoint as Point).x, (other.labelPoint as Point).y,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { layout, layoutFlow, parseFlow } from "../src/index.js";
-import { badgeWidth, badgeHeight, BADGE_H, measurePlainMultiline } from "../src/geometry.js";
+import { badgeWidth, badgeHeight, BADGE_H, measurePlainMultiline, renderedSvgSegments } from "../src/geometry.js";
 import type { FlowGraph, NodeShape } from "../src/index.js";
 
 const labelBox = (edge: { labelPoint?: { x: number; y: number }; labelWidth?: number; labelHeight?: number }) => {
@@ -11,6 +11,63 @@ const labelBox = (edge: { labelPoint?: { x: number; y: number }; labelWidth?: nu
 };
 const boxesOverlap = (a: ReturnType<typeof labelBox>, b: ReturnType<typeof labelBox>) =>
   a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+/** Independent numerical samples of the emitted SVG, including Bézier spans. */
+const sampleSvg = (path: string): Array<{ x: number; y: number }> => {
+  const out: Array<{ x: number; y: number }> = [];
+  let current = { x: 0, y: 0 };
+  for (const match of path.matchAll(/([MLQC])([^MLQC]*)/g)) {
+    const values = (match[2] as string).trim().split(/[\s,]+/).map(Number);
+    const p = (at: number) => ({ x: values[at]!, y: values[at + 1]! });
+    if (match[1] === "M") {
+      current = p(0);
+      out.push(current);
+      continue;
+    }
+    const start = current;
+    const end = p(match[1] === "C" ? 4 : match[1] === "Q" ? 2 : 0);
+    const control1 = p(0);
+    const control2 = match[1] === "C" ? p(2) : control1;
+    const steps = Math.max(40, Math.ceil(
+      Math.hypot(end.x - start.x, end.y - start.y) +
+      (match[1] === "L" ? 0 : Math.hypot(control1.x - start.x, control1.y - start.y)),
+    ));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const u = 1 - t;
+      out.push(match[1] === "L"
+        ? { x: u * start.x + t * end.x, y: u * start.y + t * end.y }
+        : match[1] === "Q"
+          ? { x: u * u * start.x + 2 * u * t * control1.x + t * t * end.x,
+            y: u * u * start.y + 2 * u * t * control1.y + t * t * end.y }
+          : { x: u ** 3 * start.x + 3 * u * u * t * control1.x + 3 * u * t * t * control2.x + t ** 3 * end.x,
+            y: u ** 3 * start.y + 3 * u * u * t * control1.y + 3 * u * t * t * control2.y + t ** 3 * end.y });
+    }
+    current = end;
+  }
+  return out;
+};
+const samplesHitBox = (path: string, box: ReturnType<typeof labelBox>) =>
+  sampleSvg(path).some((p) => p.x > box.left && p.x < box.right && p.y > box.top && p.y < box.bottom);
+
+describe("rendered path clearance geometry", () => {
+  it("bounds a visibly bowed cubic rather than using its endpoint chord", () => {
+    const path = "M 0 0 C 0 150 150 150 150 0";
+    const segments = renderedSvgSegments(path);
+    expect(segments.length).toBeGreaterThan(1);
+    for (const sample of sampleSvg(path)) {
+      const nearest = Math.min(...segments.map(({ a, b, error }) => {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const t = Math.max(0, Math.min(1,
+          ((sample.x - a.x) * dx + (sample.y - a.y) * dy) / (dx * dx + dy * dy),
+        ));
+        return Math.hypot(sample.x - a.x - t * dx, sample.y - a.y - t * dy) - error;
+      }));
+      expect(nearest).toBeLessThan(0.01);
+    }
+  });
+});
 
 /**
  * Fixture flow: a diamond (fan-out then fan-in) plus a long edge that spans two
@@ -1000,6 +1057,25 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
     }
   });
 
+  it("keeps bidirectional badges clear of a spanning dummy lane", () => {
+    const g = layoutFlow({
+      kind: "flow", direction: "TD",
+      nodes: ["X", "A", "B", "Y"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "X", to: "A" },
+        { from: "A", to: "B", label: "server-side, one integration" },
+        { from: "B", to: "A", label: "markdown index" },
+        { from: "B", to: "Y" },
+        { from: "X", to: "Y" },
+      ],
+    }, { textCase: "none" });
+    const span = g.edges.find((e) => e.from === "X" && e.to === "Y")!;
+    const reverse = g.edges.find((e) => e.from === "B" && e.to === "A")!;
+    expect(reverse.labelAnchor).toBeDefined();
+    expect(samplesHitBox(span.path, labelBox(reverse))).toBe(false);
+    expect(g.edges.find((e) => e.from === "A" && e.to === "B")!.labelAnchor).toBeDefined();
+  });
+
   it("keeps a retry loop into a fanned-out decision on the lateral arc", () => {
     // B(decision) → {C, D}, D → B. D's rank has a sibling (C), so the pair is NOT
     // sole-on-rank: the back-edge keeps its outward lateral corridor (loop look).
@@ -1027,6 +1103,24 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
 });
 
 describe("layoutFlow() — labeled reverse paths", () => {
+  it("moves a badge clear of a rendered Bézier route", () => {
+    const g = layoutFlow({
+      kind: "flow", direction: "TD",
+      nodes: ["A", "B", "C", "D", "E"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "A", to: "B" }, { from: "B", to: "C" },
+        { from: "C", to: "D" }, { from: "A", to: "C" },
+        { from: "A", to: "D" },
+        { from: "E", to: "B", label: "A long label for this relationship" },
+      ],
+    }, { textCase: "none", edgeStyle: "bezier" });
+    const labeled = g.edges.find((e) => e.from === "E" && e.to === "B")!;
+    expect(labeled.labelAnchor).toBeDefined();
+    for (const edge of g.edges.filter((e) => e.kind === "flow" && e !== labeled)) {
+      expect(samplesHitBox(edge.path, labelBox(labeled))).toBe(false);
+    }
+  });
+
   it("keeps the Clerk/Workers diagram's badges clear of one another and of nodes", () => {
     const source = `flow TD
 CLI(["joyco CLI (dev box)"]):primary --> Store
@@ -1078,6 +1172,48 @@ Agents --> Workers`;
 // ── notes (annotations) ─────────────────────────────────────────────────────
 
 describe("layoutFlow() — notes", () => {
+  it("moves a note until its leader clears an unrelated arrow", () => {
+    const graph: FlowGraph = {
+      kind: "flow", direction: "LR",
+      nodes: ["A", "B", "C", "D", "E"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "A", to: "B" }, { from: "B", to: "C" },
+        { from: "C", to: "D" }, { from: "A", to: "C" },
+      ],
+      notes: [{ target: "B", side: "below", label: "A long annotation for this target" }],
+    };
+    const options = { textCase: "none" as const };
+    const g = layoutFlow(graph, options);
+    expect(layoutFlow(graph, options)).toEqual(g);
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    const leader = g.edges.find((e) => e.from === note.id)!;
+    const leaderSamples = sampleSvg(leader.path);
+    for (const edge of g.edges.filter((e) => e.kind === "flow")) {
+      const route = sampleSvg(edge.path);
+      expect(leaderSamples.some((a) => route.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 1))).toBe(false);
+    }
+    expect(note.y).toBeGreaterThan(g.nodes.find((n) => n.id === "B")!.y);
+  });
+
+  it("keeps a note box clear of the visible Bézier spline", () => {
+    const graph: FlowGraph = {
+      kind: "flow", direction: "TD",
+      nodes: ["A", "B", "C", "D", "E"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "A", to: "B" }, { from: "B", to: "C" },
+        { from: "C", to: "D" }, { from: "D", to: "A" },
+      ],
+      notes: [{ target: "A", side: "right", label: "A long annotation for this target" }],
+    };
+    const g = layoutFlow(graph, { textCase: "none", edgeStyle: "bezier" });
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    const box = { left: note.x - note.w! / 2, right: note.x + note.w! / 2,
+      top: note.y - note.h! / 2, bottom: note.y + note.h! / 2 };
+    for (const edge of g.edges.filter((e) => e.kind === "flow")) {
+      expect(samplesHitBox(edge.path, box)).toBe(false);
+    }
+  });
+
   it("moves a note clear of the sequence-frame return arrow and reconnects its leader", () => {
     const source = `flow LR
 demand["Frame is demanded"]:primary

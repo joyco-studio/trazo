@@ -604,6 +604,85 @@ export function pathThrough(
   return d;
 }
 
+/** A line that stays within `error` px of the SVG path it represents. */
+export interface RenderedSegment {
+  a: Point;
+  b: Point;
+  error: number;
+}
+
+/**
+ * Flatten the commands emitted by `pathThrough` for collision checks. Cubic
+ * and quadratic spans are split until their control points are within
+ * `tolerance` of the chord. Bézier convex-hull containment then bounds the
+ * visible curve by that chord plus its recorded error.
+ */
+export function renderedSvgSegments(path: string, tolerance = 0.5): RenderedSegment[] {
+  const result: RenderedSegment[] = [];
+  let current: Point | undefined;
+  const mid = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const distance = (p: Point, a: Point, b: Point): number => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSq = dx * dx + dy * dy;
+    const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1,
+      ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq,
+    ));
+    return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+  };
+  const cubic = (a: Point, c1: Point, c2: Point, b: Point, depth = 0): void => {
+    const error = Math.max(distance(c1, a, b), distance(c2, a, b));
+    if (error <= tolerance || depth === 24) {
+      result.push({ a, b, error });
+      return;
+    }
+    const p01 = mid(a, c1);
+    const p12 = mid(c1, c2);
+    const p23 = mid(c2, b);
+    const p012 = mid(p01, p12);
+    const p123 = mid(p12, p23);
+    const split = mid(p012, p123);
+    cubic(a, p01, p012, split, depth + 1);
+    cubic(split, p123, p23, b, depth + 1);
+  };
+  for (const match of path.matchAll(/([MLQC])([^MLQC]*)/g)) {
+    const op = match[1];
+    const values = (match[2] as string).trim().split(/[\s,]+/).map(Number);
+    const point = (at: number): Point => ({ x: values[at] as number, y: values[at + 1] as number });
+    if (op === "M") {
+      current = point(0);
+    } else if (op === "L") {
+      const end = point(0);
+      result.push({ a: current as Point, b: end, error: 0 });
+      current = end;
+    } else if (op === "Q") {
+      const a = current as Point;
+      const control = point(0);
+      const end = point(2);
+      cubic(a,
+        { x: a.x + (control.x - a.x) * 2 / 3, y: a.y + (control.y - a.y) * 2 / 3 },
+        { x: end.x + (control.x - end.x) * 2 / 3, y: end.y + (control.y - end.y) * 2 / 3 },
+        end);
+      current = end;
+    } else if (op === "C") {
+      const end = point(4);
+      cubic(current as Point, point(0), point(2), end);
+      current = end;
+    }
+  }
+  return result;
+}
+
+/** Flatten the exact SVG path that `pathThrough` will return for these points. */
+export function renderedPathSegments(
+  points: Point[],
+  style: EdgeStyle = "elbow45",
+  mainAxis: MainAxis = "y",
+  tolerance = 0.5,
+): RenderedSegment[] {
+  return renderedSvgSegments(pathThrough(points, style, mainAxis), tolerance);
+}
+
 /** Corner radius (px) for the "rounded" edge style, clamped per corner. */
 const ROUNDED_R = 8;
 
