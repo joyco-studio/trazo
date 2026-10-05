@@ -1202,7 +1202,6 @@ export function layoutFlow(
   const flowPaths = needsClearance
     ? edgePoints.map((points) => renderedPathSegments(points, edgeStyle, mainAxis))
     : [];
-  const flowSegments = flowPaths.flat();
   const noteBoxes: PositionedNode[] = [];
   const movedNoteEdges = new Set<number>();
   if (graph.notes && graph.notes.length > 0) {
@@ -1236,41 +1235,11 @@ export function layoutFlow(
       const halfAlong = (vertical ? nw : nh) / 2;
       const fixedMin = vertical ? ny - nh / 2 : nx - nw / 2;
       const fixedMax = vertical ? ny + nh / 2 : nx + nw / 2;
-      const candidates = new Set<number>([initialAlong]);
-      const addCandidates = (
-        alongMin: number, alongMax: number, otherMin: number, otherMax: number,
-      ): void => {
-        if (otherMax < fixedMin - NOTE_CLEARANCE || otherMin > fixedMax + NOTE_CLEARANCE) return;
-        candidates.add(alongMin - halfAlong - NOTE_CLEARANCE - 1);
-        candidates.add(alongMax + halfAlong + NOTE_CLEARANCE + 1);
-      };
-      for (const { a, b, error } of flowSegments) {
-        const alongMin = (vertical ? Math.min(a.x, b.x) : Math.min(a.y, b.y)) - error;
-        const alongMax = (vertical ? Math.max(a.x, b.x) : Math.max(a.y, b.y)) + error;
-        addCandidates(
-          alongMin,
-          alongMax,
-          (vertical ? Math.min(a.y, b.y) : Math.min(a.x, b.x)) - error,
-          (vertical ? Math.max(a.y, b.y) : Math.max(a.x, b.x)) + error,
-        );
-        // A route can cross the leader in the gutter without touching the note
-        // box. Its cross-axis bounds must also seed placement candidates.
-        candidates.add(alongMin - halfAlong - NOTE_CLEARANCE - 1);
-        candidates.add(alongMax + halfAlong + NOTE_CLEARANCE + 1);
-      }
       // The target itself defines the requested gutter. In particular,
       // calloutGap: 0 may intentionally put the chip flush against its face.
       const occupied = nodes
         .filter((n) => n.id !== note.target)
         .map((n) => boxBounds(n.x, n.y, n.w ?? 0, n.h ?? 0));
-      for (const box of occupied) {
-        addCandidates(
-          vertical ? box.left : box.top,
-          vertical ? box.right : box.bottom,
-          vertical ? box.top : box.left,
-          vertical ? box.bottom : box.right,
-        );
-      }
       // A moved note can still have a straight leader: attach from the near
       // third of its face, directly below/above (or beside) an open target-face
       // point. Only a note too far aside needs a bent leader.
@@ -1351,19 +1320,86 @@ export function layoutFlow(
           : [noteFace, targetFace];
         return { x, y, moved, straightLeader, points };
       };
-      const clear = (along: number): boolean => {
-        const proposed = buildLeader(along);
-        const box = boxBounds(proposed.x, proposed.y, nw, nh);
-        if (occupied.some((other) => boxesOverlap(box, other, NOTE_CLEARANCE)) ||
-            flowPaths.some((path) => pathHitsBox(path, box, NOTE_CLEARANCE))) return false;
-        const leaderStyle = proposed.moved && !proposed.straightLeader ? "orthogonal" : edgeStyle;
-        const leader = renderedPathSegments(proposed.points, leaderStyle, mainAxis);
-        return occupied.every((other) => !pathHitsBox(leader, other, NOTE_CLEARANCE / 2)) &&
-          flowPaths.every((path) => !pathsTooClose(leader, path, NOTE_CLEARANCE / 2));
+      // The note's normal-axis gutter is fixed. An edge elsewhere cannot meet
+      // either the chip or its leader, so omit it before searching sideways.
+      const normalMin = Math.min(fixedMin, faceNormal) - NOTE_CLEARANCE - 1;
+      const normalMax = Math.max(fixedMax, faceNormal) + NOTE_CLEARANCE + 1;
+      const alongBounds = ({ a, b, error }: RenderedSegment): [number, number] =>
+        vertical
+          ? [Math.min(a.x, b.x) - error, Math.max(a.x, b.x) + error]
+          : [Math.min(a.y, b.y) - error, Math.max(a.y, b.y) + error];
+      const crossesGutter = ({ a, b, error }: RenderedSegment): boolean =>
+        vertical
+          ? Math.max(a.y, b.y) + error >= normalMin && Math.min(a.y, b.y) - error <= normalMax
+          : Math.max(a.x, b.x) + error >= normalMin && Math.min(a.x, b.x) - error <= normalMax;
+      const gutterPaths = flowPaths
+        .map((path) => path.filter(crossesGutter))
+        .filter((path) => path.length > 0);
+      const gutterBoxes = occupied.filter((box) => vertical
+        ? box.bottom >= normalMin && box.top <= normalMax
+        : box.right >= normalMin && box.left <= normalMax);
+      let radius = Math.max(32, halfAlong, targetHalfAlong) + NOTE_CLEARANCE;
+      let maxRadius = radius;
+      const includeExtent = (min: number, max: number): void => {
+        maxRadius = Math.max(maxRadius,
+          Math.abs(min - initialAlong) + halfAlong + NOTE_CLEARANCE + 1,
+          Math.abs(max - initialAlong) + halfAlong + NOTE_CLEARANCE + 1);
       };
-      const along = [...candidates].sort((a, b) =>
-        Math.abs(a - initialAlong) - Math.abs(b - initialAlong) || b - a,
-      ).find(clear) ?? initialAlong;
+      for (const path of gutterPaths) {
+        for (const segment of path) includeExtent(...alongBounds(segment));
+      }
+      for (const box of gutterBoxes) includeExtent(
+        vertical ? box.left : box.top,
+        vertical ? box.right : box.bottom,
+      );
+
+      let clearAlong: number | undefined;
+      while (clearAlong === undefined) {
+        // Widen only when every candidate in the current interval is blocked.
+        // This keeps distant routes out of both candidate sorting and the
+        // expensive segment-to-segment checks for nearby placements.
+        const reach = radius + Math.max(halfAlong, targetHalfAlong) + NOTE_CLEARANCE + 1;
+        const searchMin = initialAlong - reach;
+        const searchMax = initialAlong + reach;
+        const localPaths = gutterPaths
+          .map((path) => path.filter((segment) => {
+            const [min, max] = alongBounds(segment);
+            return max >= searchMin && min <= searchMax;
+          }))
+          .filter((path) => path.length > 0);
+        const localBoxes = gutterBoxes.filter((box) => vertical
+          ? box.right >= searchMin && box.left <= searchMax
+          : box.bottom >= searchMin && box.top <= searchMax);
+        const candidates = new Set<number>([initialAlong]);
+        const addCandidates = (min: number, max: number): void => {
+          candidates.add(min - halfAlong - NOTE_CLEARANCE - 1);
+          candidates.add(max + halfAlong + NOTE_CLEARANCE + 1);
+        };
+        for (const path of localPaths) {
+          for (const segment of path) addCandidates(...alongBounds(segment));
+        }
+        for (const box of localBoxes) addCandidates(
+          vertical ? box.left : box.top,
+          vertical ? box.right : box.bottom,
+        );
+        const clear = (along: number): boolean => {
+          const proposed = buildLeader(along);
+          const box = boxBounds(proposed.x, proposed.y, nw, nh);
+          if (localBoxes.some((other) => boxesOverlap(box, other, NOTE_CLEARANCE)) ||
+              localPaths.some((path) => pathHitsBox(path, box, NOTE_CLEARANCE))) return false;
+          const leaderStyle = proposed.moved && !proposed.straightLeader ? "orthogonal" : edgeStyle;
+          const leader = renderedPathSegments(proposed.points, leaderStyle, mainAxis);
+          return localBoxes.every((other) => !pathHitsBox(leader, other, NOTE_CLEARANCE / 2)) &&
+            localPaths.every((path) => !pathsTooClose(leader, path, NOTE_CLEARANCE / 2));
+        };
+        clearAlong = [...candidates]
+          .filter((candidate) => Math.abs(candidate - initialAlong) <= radius)
+          .sort((a, b) => Math.abs(a - initialAlong) - Math.abs(b - initialAlong) || b - a)
+          .find(clear);
+        if (clearAlong !== undefined || radius >= maxRadius) break;
+        radius = Math.min(maxRadius, radius * 2);
+      }
+      const along = clearAlong ?? initialAlong;
       const { x, y, moved, straightLeader, points } = buildLeader(along);
       nx = x;
       ny = y;

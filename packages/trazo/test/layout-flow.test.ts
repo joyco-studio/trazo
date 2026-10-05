@@ -1244,6 +1244,7 @@ note decode below "must finish before reveal"`;
     expect(transferNote.x).toBeCloseTo(node("transfer").x, 5);
     expect(decodeNote.y).toBeGreaterThan(node("decode").y);
     expect(decodeNote.x - decodeNote.w! / 2).toBeGreaterThan(node("decode").x);
+    expect(transferNote.x + transferNote.w! / 2).toBeLessThan(decodeNote.x - decodeNote.w! / 2);
 
     const route = g.edges.find((e) => e.from === "evicted" && e.to === "decode")!;
     const coords = route.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
@@ -1323,6 +1324,24 @@ note blocking below "the page can miss its refresh"`;
     expect(points[0]).toBeCloseTo(points[2]!, 5);
     expect(points[1]).toBeCloseTo(box(note).top, 5);
     expect(points[3]).toBeCloseTo(box(decoded).bottom, 5);
+  });
+
+  it("places an above note over the whole loading flow when requested", () => {
+    const source = `flow LR\nloaded["Loaded<br/>Encoded image bytes"]:info\ndecoded["Decoded<br/>Bitmap ready for display"]:success\npresented["Presented<br/>Frame painted on screen"]:primary\nblocking["Decode at display time<br/>Presentation waits"]:error\nloaded --> decoded\ndecoded --> presented\nloaded --> blocking\nblocking --> presented\nnote loaded below "image.png, image.avif, image.webp"\nnote decoded above "keep the next frames here"\nnote blocking below "the page can miss its refresh"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    const g = layoutFlow(parsed.graph, { textCase: "none", edgeGap: 0 });
+    const note = g.nodes.find((n) => n.label === "keep the next frames here")!;
+    const decoded = g.nodes.find((n) => n.id === "decoded")!;
+    expect(note.x).toBeCloseTo(decoded.x);
+    expect(note.y + note.h! / 2).toBeLessThan(Math.min(
+      ...g.nodes.filter((n) => n.kind !== "note").map((n) => n.y - n.h! / 2),
+    ));
+    const leader = g.edges.find((e) => e.from === note.id && e.to === decoded.id)!;
+    const points = leader.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    expect(points).toHaveLength(4);
+    expect(points[0]).toBeCloseTo(points[2]!);
+    expect(points[3]).toBeCloseTo(decoded.y - decoded.h! / 2);
   });
 
   // The motivating case: a strictly linear pipeline plus one note below `layout`.
