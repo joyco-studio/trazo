@@ -72,6 +72,49 @@ function pointsOf(value: unknown, x: number, y: number, id: string): Point[] {
   });
 }
 
+/** Excalidraw leaves a small visual gap at bound shapes; Trazo connectors meet the border. */
+function rectangleBindingPoint(
+  value: unknown,
+  point: Point,
+  byId: Map<string, Record<string, unknown>>,
+): Point {
+  const binding = record(value);
+  const target = typeof binding?.elementId === "string" ? byId.get(binding.elementId) : undefined;
+  if (target?.type !== "rectangle") return point;
+
+  const id = binding!.elementId as string;
+  const x = number(target.x, "x", id);
+  const y = number(target.y, "y", id);
+  const w = size(target.width, "width", id);
+  const h = size(target.height, "height", id);
+  const fixed = binding?.fixedPoint;
+  if (Array.isArray(fixed) && fixed.length >= 2 &&
+      typeof fixed[0] === "number" && Number.isFinite(fixed[0]) &&
+      typeof fixed[1] === "number" && Number.isFinite(fixed[1])) {
+    const [fx, fy] = fixed as [number, number];
+    const onBorder = Math.min(fx, 1 - fx, fy, 1 - fy) <= 0.001;
+    if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1 && onBorder) {
+      return { x: x + w * fx, y: y + h * fy };
+    }
+  }
+
+  // Older bindings may omit a usable fixed point. Project their saved endpoint
+  // to the closest border, preserving the authored attachment side.
+  const px = Math.max(x, Math.min(x + w, point.x));
+  const py = Math.max(y, Math.min(y + h, point.y));
+  if (point.x < x || point.x > x + w || point.y < y || point.y > y + h) {
+    return { x: px, y: py };
+  }
+  const sides = [
+    { distance: point.x - x, x, y: py },
+    { distance: x + w - point.x, x: x + w, y: py },
+    { distance: point.y - y, x: px, y },
+    { distance: y + h - point.y, x: px, y: y + h },
+  ];
+  const nearest = sides.reduce((best, side) => side.distance < best.distance ? side : best);
+  return { x: nearest.x, y: nearest.y };
+}
+
 type PathArrowHead = Extract<DrawingPrimitive, { kind: "path" }>["arrowHead"];
 
 function arrowHeadOf(element: Record<string, unknown>): PathArrowHead {
@@ -185,10 +228,17 @@ export function importExcalidraw(
         verticalAlign: (verticalAlign as "top" | "middle" | "bottom" | undefined) ?? "top",
       };
     }
+    const points = pointsOf(element.points, x, y, id);
+    points[0] = rectangleBindingPoint(element.startBinding, points[0]!, byId);
+    points[points.length - 1] = rectangleBindingPoint(
+      element.endBinding,
+      points[points.length - 1]!,
+      byId,
+    );
     return {
       kind: "path",
       id,
-      points: pointsOf(element.points, x, y, id),
+      points,
       role: ownRole,
       opacity,
       arrowHead: type === "arrow" ? arrowHeadOf(element) : "none",

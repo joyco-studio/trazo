@@ -69,6 +69,32 @@ describe("importExcalidraw", () => {
     expect(dark).toContain("fill=\"var(--trazo-success-foreground");
   });
 
+  it("places rectangle-bound connector ends on the box border", () => {
+    const drawing = importExcalidraw(source).drawing!;
+    const byId = new Map(drawing.map((element) => [element.id, element]));
+    for (const [pathId, boxId, side] of [
+      ["m-XX5tV6e9k6NwR8vNrpI", "29oXbK89tIH0kde1SdvYk", "bottom"],
+      ["wifTg_mVkNH_JmXXmQjmt", "XY-owaTb42rzjvWB9-1Go", "bottom"],
+      ["dxru3yrHp0UU4wXWX_NIz", "h_fUsRzWupWIAuhdmDdte", "bottom"],
+      ["PFvDmtEd7-1KuB6TgE6rq", "uMzoaBGSggXG-ra_FbSYD", "top"],
+    ] as const) {
+      const path = byId.get(pathId);
+      const box = byId.get(boxId);
+      if (path?.kind !== "path" || box?.kind !== "rectangle") throw new Error("reference binding missing");
+      expect(path.points[0]!.y).toBeCloseTo(side === "bottom" ? box.y + box.h : box.y, 5);
+      expect(path.points[0]!.x).toBeCloseTo(box.x + box.w / 2, 1);
+    }
+
+    const endBound = importExcalidraw({ elements: [
+      { id: "box", type: "rectangle", x: 20, y: 20, width: 100, height: 40 },
+      { id: "arrow", type: "arrow", x: 70, y: 90, points: [[0, 0], [0, -23]],
+        endArrowhead: "arrow", endBinding: { elementId: "box", fixedPoint: [0.5, 1] } },
+    ] }).drawing!;
+    const arrow = endBound[1];
+    if (arrow?.kind !== "path") throw new Error("end-bound arrow missing");
+    expect(arrow.points[1]).toEqual({ x: 74, y: 64 });
+  });
+
   it("accepts parsed JSON and custom role mappings", () => {
     const parsed = JSON.parse(source) as { elements: unknown[] };
     const graph = importExcalidraw(parsed, { roleByColor: { "#2F9E44": "info" } });

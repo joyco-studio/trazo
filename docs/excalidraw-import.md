@@ -1,8 +1,10 @@
 # Importing Excalidraw drawings
 
 `importExcalidraw` converts an Excalidraw JSON drawing into a `PositionedGraph`
-for Trazo's inline React SVG renderer. It preserves the drawing's positions,
-connector points, and paint order. It does not run the flowchart layout engine.
+for Trazo's inline React SVG renderer. It preserves the drawing's positions
+and paint order. Connector endpoints bound to rectangles meet their borders;
+other connector points keep their authored coordinates. It does not run the
+flowchart layout engine.
 
 ```tsx
 import { importExcalidraw, joycoTheme } from "@joycostudio/trazo";
@@ -60,5 +62,7 @@ The color keys are case-insensitive. Nonzero rotation, unsupported live element
 types, invalid geometry, and unsupported text alignment or stroke style throw
 an error naming the element ID. Excalidraw roughness, freehand strokes, images,
 and font sizes are not preserved; this import targets clean explanatory diagrams
-that Trazo can reskin. Connector bindings are treated as their current authored
-points, so later edits to the original drawing require another import.
+that Trazo can reskin. Rectangle bindings use their Excalidraw fixed point, or
+the nearest rectangle border when that point is unavailable. Text bindings
+keep their authored endpoints. Later edits to the original drawing require
+another import.
