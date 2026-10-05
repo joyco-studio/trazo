@@ -200,12 +200,15 @@ export type NoteSide = "above" | "below" | "left" | "right";
  * a leader arrow pointing at the target's near face. Unlike a {@link FlowNode},
  * a note is EXCLUDED from ranking: it never receives a rank, never generates a
  * dummy chain, and can never change which rank a real node lands in. The layout
- * places it in the gutter on `side` of the target after the main layout resolves,
- * centered on the target's cross-axis so its leader is a straight perpendicular
- * arrow (see {@link PositionedNode.kind} and the leader {@link PositionedEdge}).
- * A note that would spill off-canvas shifts the whole graph to stay in frame
- * (a pure translation that keeps it aligned), so real-node coordinates are
- * preserved only when no such shift is needed.
+ * places it in the gutter on `side` of the target after the main layout resolves.
+ * It stays centered with a straight perpendicular leader when that position is
+ * clear. If its box would cover a flow edge or another box, it slides along the
+ * requested side and its leader attaches from an offset point on the note face
+ * to an open point on the target face. The leader stays straight when those
+ * points align, bending only when the note has moved too far for a straight run
+ * (see {@link PositionedNode.kind} and the leader {@link PositionedEdge}).
+ * A note that would spill off-canvas shifts the whole graph to stay in frame,
+ * so real-node coordinates are preserved only when no such shift is needed.
  */
 export interface FlowNote {
   /** Id of the {@link FlowNode} this note hangs off (declared anywhere in the graph). */

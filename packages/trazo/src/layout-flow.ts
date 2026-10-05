@@ -48,6 +48,7 @@ import {
   badgeHeight,
   badgeWidth,
   edgeLabelPoint,
+  expandPath,
   faceAnchor,
   groupBounds,
   GROUP_PAD,
@@ -77,6 +78,54 @@ const DEFAULTS = {
 
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
 const ORDERING_SWEEPS = 4;
+
+/** Breathing room between an annotation and an unrelated edge or box. */
+const NOTE_CLEARANCE = 8;
+/** Minimum cross-axis separation for parallel badges that remain side by side. */
+const PARALLEL_LABEL_CLEARANCE = 4;
+
+interface Bounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function boxBounds(x: number, y: number, w: number, h: number): Bounds {
+  return { left: x - w / 2, top: y - h / 2, right: x + w / 2, bottom: y + h / 2 };
+}
+
+function boxesOverlap(a: Bounds, b: Bounds, gap: number): boolean {
+  return a.left < b.right + gap && a.right > b.left - gap &&
+    a.top < b.bottom + gap && a.bottom > b.top - gap;
+}
+
+/** Liang–Barsky clip: does a straight edge segment enter an inflated box? */
+function segmentHitsBox(a: Point, b: Point, box: Bounds, gap: number): boolean {
+  const left = box.left - gap;
+  const right = box.right + gap;
+  const top = box.top - gap;
+  const bottom = box.bottom + gap;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let enter = 0;
+  let leave = 1;
+  const limits: Array<[number, number]> = [
+    [-dx, a.x - left], [dx, right - a.x],
+    [-dy, a.y - top], [dy, bottom - a.y],
+  ];
+  for (const [p, q] of limits) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) enter = Math.max(enter, t);
+    else leave = Math.min(leave, t);
+    if (enter > leave) return false;
+  }
+  return true;
+}
 
 /**
  * A point `stub` px outward from `anchor` along the perpendicular of its face,
@@ -493,6 +542,13 @@ export function layoutFlow(
     edgeDirs.has(`${e.to} ${e.from}`) &&
     (realPerRank[fromV.rank] as number) === 1 &&
     (realPerRank[toV.rank] as number) === 1;
+  const parallelOffset = (fromV: Vertex, toV: Vertex): number => {
+    const minHalf = Math.min(
+      direction === "TD" ? fromV.w : fromV.h,
+      direction === "TD" ? toV.w : toV.h,
+    ) / 2;
+    return Math.min(BADGE_H / 2 + 2, Math.max(0, minHalf - 4));
+  };
 
   const labelGapAfter: number[] = new Array(layers.length).fill(0);
   for (const e of edges) {
@@ -517,6 +573,52 @@ export function layoutFlow(
       direction === "TD" ? badgeHeight(measured.height) : badgeWidth(measured.width);
     const need = labelMainExtent + LABEL_GAP * 2;
     if (need > (labelGapAfter[gapRank] as number)) labelGapAfter[gapRank] = need;
+  }
+
+  // A labeled 1↔1 pair normally fits by offsetting its two lines across the
+  // flow. In TD, wide badges can overlap despite that offset (and in LR a tall
+  // multiline badge can do the same). Reserve room to stagger only those pairs
+  // along their lines, leaving already-clear pairs at their usual gap center.
+  const pairLabels = new Map<string, FlowEdge[]>();
+  for (const e of edges) {
+    if (e.label === undefined) continue;
+    const fromV = vById.get(e.from) as Vertex;
+    const toV = vById.get(e.to) as Vertex;
+    if (!isParallelPair(fromV, toV, e)) continue;
+    const key = [indexOf.get(e.from), indexOf.get(e.to)].sort((a, b) => (a as number) - (b as number)).join(":");
+    const list = pairLabels.get(key);
+    if (list) list.push(e);
+    else pairLabels.set(key, [e]);
+  }
+  const stackedPairs: Array<{
+    forward: FlowEdge;
+    reverse: FlowEdge;
+    gapRank: number;
+    forwardMain: number;
+    reverseMain: number;
+  }> = [];
+  for (const pair of pairLabels.values()) {
+    if (pair.length !== 2) continue;
+    const forward = pair.find((e) =>
+      (vById.get(e.from) as Vertex).rank < (vById.get(e.to) as Vertex).rank,
+    );
+    const reverse = pair.find((e) => e !== forward);
+    if (forward === undefined || reverse === undefined ||
+        forward.from !== reverse.to || forward.to !== reverse.from) continue;
+    const fromV = vById.get(forward.from) as Vertex;
+    const toV = vById.get(forward.to) as Vertex;
+    const f = measurePlainMultiline(forward.label as string, undefined, textCase);
+    const r = measurePlainMultiline(reverse.label as string, undefined, textCase);
+    const forwardCross = direction === "TD" ? badgeWidth(f.width) : badgeHeight(f.height);
+    const reverseCross = direction === "TD" ? badgeWidth(r.width) : badgeHeight(r.height);
+    const separation = 2 * parallelOffset(fromV, toV);
+    if (separation >= (forwardCross + reverseCross) / 2 + PARALLEL_LABEL_CLEARANCE) continue;
+    const forwardMain = direction === "TD" ? badgeHeight(f.height) : badgeWidth(f.width);
+    const reverseMain = direction === "TD" ? badgeHeight(r.height) : badgeWidth(r.width);
+    const gapRank = fromV.rank;
+    const need = forwardMain + reverseMain + LABEL_GAP * 3;
+    if (need > (labelGapAfter[gapRank] as number)) labelGapAfter[gapRank] = need;
+    stackedPairs.push({ forward, reverse, gapRank, forwardMain, reverseMain });
   }
 
   // Main-axis origin per rank: padding + Σ(prev thickness + per-boundary gap) +
@@ -803,14 +905,10 @@ export function layoutFlow(
     // — the low→high (forward) twin toward cross-start, the high→low (reverse)
     // toward cross-end — so the two lines run parallel with a clear gap and each
     // label centres on its own line, stacked between the boxes (Mermaid parity).
-    // The offset is half the label-badge height (so the two centred labels clear
-    // each other), clamped to stay on the node face.
+    // The base offset fits ordinary single-line badges; wider/taller pairs get
+    // their labels staggered along the routes after edge placement.
     if (parallel) {
-      const minHalf = Math.min(
-        direction === "TD" ? fromV.w : fromV.h,
-        direction === "TD" ? toV.w : toV.h,
-      ) / 2;
-      const halfOff = Math.min(BADGE_H / 2 + 2, Math.max(0, minHalf - 4));
+      const halfOff = parallelOffset(fromV, toV);
       const d = (fromV.rank < toV.rank ? -1 : 1) * halfOff;
       exitAnchor =
         direction === "TD"
@@ -996,25 +1094,29 @@ export function layoutFlow(
   // never change which rank a real node lands in. Placement is a post-pass over
   // the already-resolved real-node centers.
   //
-  // Each note is a filled chip sized like a box node, sitting in the gutter on
-  // its `side`, offset from the target's near face by `calloutGap` and CENTERED
-  // on the target's cross-axis coordinate — so its leader is a straight
-  // PERPENDICULAR arrow (vertical for above/below, horizontal for left/right)
-  // and the chip reads as aligned with its node. Multiple notes on the same side
-  // stack outward (each beyond the previous).
+  // Each note starts centered in the gutter on its requested side. If that box
+  // would cover a routed flow edge, slide it along the target's face to the
+  // nearest clear position. The requested side and the real-node layout stay
+  // fixed. Multiple notes on the same side stack outward as before.
   //
   // The note chip + leader are appended to `nodes`/`positionedEdges`/`edgePoints`
   // BEFORE the label-bounds normalization below, so the same "labels grow the
   // canvas" pass that guards edge labels also grows the viewBox for a note and,
   // when one would spill past the top/left origin, SHIFTS the whole graph to keep
   // it in frame. That shift is a pure translation (relative layout unchanged) and
-  // keeps the note aligned; it's preferred over nudging the note off its target's
-  // axis. So a note never clips, but it is only position-neutral for real nodes
-  // when no such shift is needed (e.g. a below/right note with room, as in the
-  // canonical LR pipeline). No collision routing: a note placed where a real node
-  // already sits (e.g. `below` a mid-pipeline node in TD) may overlap it — put it
-  // on a side with room.
+  // keeps the note on its requested side. A note is only position-neutral for
+  // real nodes when no such shift is needed. Collision handling is limited to
+  // translating notes; it never changes ranks or reroutes the flow edges.
+  const mainAxis = direction === "LR" ? "x" : "y";
+  const flowSegments: Array<[Point, Point]> = [];
+  for (const points of edgePoints) {
+    const expanded = expandPath(points, edgeStyle, mainAxis);
+    for (let i = 1; i < expanded.length; i++) {
+      flowSegments.push([expanded[i - 1] as Point, expanded[i] as Point]);
+    }
+  }
   const noteBoxes: PositionedNode[] = [];
+  const movedNoteEdges = new Set<number>();
   if (graph.notes && graph.notes.length > 0) {
     // Accumulated outward distance already consumed by prior notes on a side,
     // keyed `${target}|${side}`, so stacked notes step past each other.
@@ -1040,24 +1142,121 @@ export function layoutFlow(
       const centerDist = nearFaceDist + noteExtent / 2;
       stackOffset.set(key, consumed + noteExtent + calloutGap);
 
-      // Keep the note CENTERED on the target's cross-axis so the leader stays
-      // perpendicular (a straight vertical arrow for above/below, horizontal for
-      // left/right) and the chip reads as aligned with its node. A note that
-      // would spill past the top/left origin is NOT nudged off this axis — it
-      // folds into the same "labels grow the canvas" normalization below, which
-      // shifts the whole graph so the note is never clipped AND stays aligned.
-      // (Real nodes may translate as a result; alignment + no-clip is preferred.)
-      const nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
-      const ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+      let nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
+      let ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+      const initialAlong = vertical ? nx : ny;
+      const halfAlong = (vertical ? nw : nh) / 2;
+      const fixedMin = vertical ? ny - nh / 2 : nx - nw / 2;
+      const fixedMax = vertical ? ny + nh / 2 : nx + nw / 2;
+      const candidates = new Set<number>([initialAlong]);
+      const addCandidates = (
+        alongMin: number, alongMax: number, otherMin: number, otherMax: number,
+      ): void => {
+        if (otherMax < fixedMin - NOTE_CLEARANCE || otherMin > fixedMax + NOTE_CLEARANCE) return;
+        candidates.add(alongMin - halfAlong - NOTE_CLEARANCE - 1);
+        candidates.add(alongMax + halfAlong + NOTE_CLEARANCE + 1);
+      };
+      for (const [a, b] of flowSegments) {
+        addCandidates(
+          vertical ? Math.min(a.x, b.x) : Math.min(a.y, b.y),
+          vertical ? Math.max(a.x, b.x) : Math.max(a.y, b.y),
+          vertical ? Math.min(a.y, b.y) : Math.min(a.x, b.x),
+          vertical ? Math.max(a.y, b.y) : Math.max(a.x, b.x),
+        );
+      }
+      // The target itself defines the requested gutter. In particular,
+      // calloutGap: 0 may intentionally put the chip flush against its face.
+      const occupied = nodes
+        .filter((n) => n.id !== note.target)
+        .map((n) => boxBounds(n.x, n.y, n.w ?? 0, n.h ?? 0));
+      for (const box of occupied) {
+        addCandidates(
+          vertical ? box.left : box.top,
+          vertical ? box.right : box.bottom,
+          vertical ? box.top : box.left,
+          vertical ? box.bottom : box.right,
+        );
+      }
+      const clear = (along: number): boolean => {
+        const box = vertical
+          ? boxBounds(along, ny, nw, nh)
+          : boxBounds(nx, along, nw, nh);
+        return occupied.every((other) => !boxesOverlap(box, other, NOTE_CLEARANCE)) &&
+          flowSegments.every(([a, b]) => !segmentHitsBox(a, b, box, NOTE_CLEARANCE));
+      };
+      const along = [...candidates].sort((a, b) =>
+        Math.abs(a - initialAlong) - Math.abs(b - initialAlong) || b - a,
+      ).find(clear) ?? initialAlong;
+      if (vertical) nx = along;
+      else ny = along;
+      const moved = Math.abs(along - initialAlong) > 0.001;
 
-      // Leader endpoints: the note's near face → the target's near face. `sign`
-      // aims the segment back at the target; the arrowhead lands on that face.
+      // A moved note can still have a straight leader: attach from the near
+      // third of its face, directly below/above (or beside) an open target-face
+      // point. Only a note too far aside needs a bent leader.
+      const targetCenterAlong = vertical ? tv.center.x : tv.center.y;
+      const targetHalfAlong = (vertical ? tv.w : tv.h) / 2;
+      const faceInset = Math.min(NOTE_CLEARANCE, targetHalfAlong);
+      const faceMin = targetCenterAlong - targetHalfAlong + faceInset;
+      const faceMax = targetCenterAlong + targetHalfAlong - faceInset;
+      const clampToFace = (value: number): number => Math.max(faceMin, Math.min(value, faceMax));
+      let targetAlong = moved ? clampToFace(along) : along;
+      let straightLeader = !moved;
+      if (moved) {
+        // Keep the leader tip off any flow arrow already using this face.
+        const used: number[] = [];
+        const faceNormal = vertical
+          ? tv.center.y + sign * targetHalf
+          : tv.center.x + sign * targetHalf;
+        for (let i = 0; i < positionedEdges.length; i++) {
+          const edge = positionedEdges[i] as PositionedEdge;
+          if (edge.kind !== "flow") continue;
+          const points = edgePoints[i] as Point[];
+          const endpoint = edge.to === note.target
+            ? points[points.length - 1]
+            : edge.from === note.target ? points[0] : undefined;
+          if (endpoint === undefined) continue;
+          const normal = vertical ? endpoint.y : endpoint.x;
+          if (Math.abs(normal - faceNormal) < edgeGap + 0.01) {
+            used.push(vertical ? endpoint.x : endpoint.y);
+          }
+        }
+        const openOnFace = (min: number, max: number): number | undefined => {
+          if (min > max) return undefined;
+          const clamp = (value: number): number => Math.max(min, Math.min(value, max));
+          const choices = [clamp(along), min, max];
+          for (const position of used) {
+            choices.push(clamp(position - NOTE_CLEARANCE - 1));
+            choices.push(clamp(position + NOTE_CLEARANCE + 1));
+          }
+          choices.sort((a, b) => Math.abs(a - along) - Math.abs(b - along) || b - a);
+          return choices.find((candidate) =>
+            used.every((position) => Math.abs(candidate - position) > NOTE_CLEARANCE),
+          );
+        };
+        const third = (halfAlong * 2) / 3;
+        const nearSide = along > targetCenterAlong;
+        const thirdMin = nearSide
+          ? along - halfAlong + NOTE_CLEARANCE
+          : along + halfAlong - third;
+        const thirdMax = nearSide
+          ? along - halfAlong + third
+          : along + halfAlong - NOTE_CLEARANCE;
+        const straightPoint = openOnFace(Math.max(faceMin, thirdMin), Math.min(faceMax, thirdMax));
+        if (straightPoint !== undefined) {
+          targetAlong = straightPoint;
+          straightLeader = true;
+        } else {
+          targetAlong = openOnFace(faceMin, faceMax) ?? targetAlong;
+        }
+      }
+      const noteFaceAlong = straightLeader ? targetAlong : along;
       const noteFace: Point = vertical
-        ? { x: nx, y: ny - sign * (nh / 2) }
-        : { x: nx - sign * (nw / 2), y: ny };
+        ? { x: noteFaceAlong, y: ny - sign * (nh / 2) }
+        : { x: nx - sign * (nw / 2), y: noteFaceAlong };
       const targetFace: Point = vertical
-        ? { x: tv.center.x, y: tv.center.y + sign * targetHalf }
-        : { x: tv.center.x + sign * targetHalf, y: tv.center.y };
+        ? { x: targetAlong, y: tv.center.y + sign * targetHalf }
+        : { x: tv.center.x + sign * targetHalf, y: targetAlong };
 
       const noteId = `__note_${noteSeed++}`;
       const box: PositionedNode = {
@@ -1078,7 +1277,14 @@ export function layoutFlow(
       nodes.push(box);
       noteBoxes.push(box);
 
-      const points: Point[] = [noteFace, targetFace];
+      const mid = vertical
+        ? (noteFace.y + targetFace.y) / 2
+        : (noteFace.x + targetFace.x) / 2;
+      const points: Point[] = moved && !straightLeader
+        ? vertical
+          ? [noteFace, { x: nx, y: mid }, { x: targetAlong, y: mid }, targetFace]
+          : [noteFace, { x: mid, y: ny }, { x: mid, y: targetAlong }, targetFace]
+        : [noteFace, targetFace];
       for (const p of points) {
         if (p.x > routeMaxX) routeMaxX = p.x;
         if (p.y > routeMaxY) routeMaxY = p.y;
@@ -1086,6 +1292,7 @@ export function layoutFlow(
         if (p.y < routeMinY) routeMinY = p.y;
       }
       edgePoints.push(points);
+      if (moved && !straightLeader) movedNoteEdges.add(positionedEdges.length);
       positionedEdges.push({
         from: noteId,
         to: note.target,
@@ -1098,10 +1305,33 @@ export function layoutFlow(
     }
   }
 
+  // Stagger only the parallel pairs whose full badge rectangles would collide.
+  // Their line offsets remain unchanged; each badge stays centered on its own
+  // straight run inside the enlarged inter-rank gap.
+  const stackedPositioned = new Set<PositionedEdge>();
+  for (const pair of stackedPairs) {
+    const forward = positionedEdges[edges.indexOf(pair.forward)] as PositionedEdge;
+    const reverse = positionedEdges[edges.indexOf(pair.reverse)] as PositionedEdge;
+    const gapStart = (rankMainStart[pair.gapRank] as number) + (rankThickness[pair.gapRank] as number);
+    const gapEnd = rankMainStart[pair.gapRank + 1] as number;
+    const content = pair.forwardMain + pair.reverseMain + LABEL_GAP;
+    const firstCenter = (gapStart + gapEnd - content) / 2 + pair.forwardMain / 2;
+    const secondCenter = firstCenter + pair.forwardMain / 2 + LABEL_GAP + pair.reverseMain / 2;
+    if (direction === "TD") {
+      forward.labelPoint = { x: (forward.labelPoint as Point).x, y: firstCenter };
+      reverse.labelPoint = { x: (reverse.labelPoint as Point).x, y: secondCenter };
+    } else {
+      forward.labelPoint = { x: firstCenter, y: (forward.labelPoint as Point).y };
+      reverse.labelPoint = { x: secondCenter, y: (reverse.labelPoint as Point).y };
+    }
+    stackedPositioned.add(forward);
+    stackedPositioned.add(reverse);
+  }
+
   // ── Align sibling edge labels to a shared level ───────────────────────
-  // Labels on edges that fan out from the SAME source land on each edge's own
-  // diagonal, which can sit at different main-axis depths (one high near the
-  // fork, one low near its target box — where it can crowd that box). Snap every
+  // Labels on forward edges that fan out from the SAME source land on each
+  // edge's own diagonal. Those can sit at different main-axis depths: one high
+  // near the fork, one low near its target box. Snap every
   // labeled sibling to the SHALLOWEST of the group's main-axis levels (TD: min y;
   // LR: min x) so a decision's branch labels read as one aligned row, clear of
   // the downstream nodes. Each label keeps its own cross-axis position. Grouped
@@ -1109,8 +1339,11 @@ export function layoutFlow(
   const labeledBySource = new Map<NodeId, PositionedEdge[]>();
   for (const pe of positionedEdges) {
     if (pe.labelPoint === undefined) continue;
-    // Self-loop labels sit on their own corridor, not the fan-out row.
-    if (pe.from === pe.to) continue;
+    // Back-edges and staggered pairs keep the level found on their own route.
+    const fromV = vById.get(pe.from);
+    const toV = vById.get(pe.to);
+    if (fromV === undefined || toV === undefined || fromV.rank >= toV.rank ||
+        stackedPositioned.has(pe)) continue;
     const list = labeledBySource.get(pe.from);
     if (list) list.push(pe);
     else labeledBySource.set(pe.from, [pe]);
@@ -1165,11 +1398,9 @@ export function layoutFlow(
     if (pe.labelPoint.y + halfH > labelMaxY) labelMaxY = pe.labelPoint.y + halfH;
   }
   // Annotation chips ride the same normalization as edge labels: an `above`/
-  // `left` note spilling past the top/left origin drives a shift that translates
-  // the whole graph (so the note stays perfectly aligned with its target AND is
-  // never clipped), while a `below`/`right` note just grows the far canvas. The
-  // note keeps its target's cross-axis coordinate throughout, so its leader
-  // stays a straight perpendicular arrow.
+  // `left` note spilling past the top/left origin shifts the whole graph to
+  // remain visible; a `below`/`right` note can grow the far canvas. A note that
+  // slid along its target's face may extend either side of the canvas.
   for (const nb of noteBoxes) {
     const halfW = (nb.w ?? 0) / 2;
     const halfH = (nb.h ?? 0) / 2;
@@ -1223,9 +1454,10 @@ export function layoutFlow(
   void routeMinY;
 
   // Build the SVG path strings now that every waypoint is final.
-  const mainAxis = direction === "LR" ? "x" : "y";
   positionedEdges.forEach((pe, i) => {
-    pe.path = pathThrough(edgePoints[i] as Point[], edgeStyle, mainAxis);
+    pe.path = pathThrough(
+      edgePoints[i] as Point[], movedNoteEdges.has(i) ? "orthogonal" : edgeStyle, mainAxis,
+    );
   });
 
   const result: PositionedGraph = {
