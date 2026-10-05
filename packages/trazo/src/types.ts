@@ -501,6 +501,8 @@ export type DrawingPrimitive =
       role: SemanticRole;
       opacity: number;
       filled: boolean;
+      /** Authored border style. Omitted custom primitives render solid. */
+      strokeStyle?: "solid" | "dashed" | "dotted";
     }
   | {
       kind: "text";

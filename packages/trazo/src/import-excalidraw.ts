@@ -17,6 +17,8 @@ export interface ExcalidrawImportOptions {
 }
 
 const PADDING = 24;
+/** Bounds the textured renderer's work as well as the SVG's intrinsic size. */
+const MAX_CANVAS_EXTENT = 32_768;
 
 /** Common Excalidraw palette colors used in the reference illustration. */
 const DEFAULT_ROLES: Readonly<Record<string, SemanticRole>> = {
@@ -37,6 +39,11 @@ function number(value: unknown, field: string, id: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`Excalidraw element ${id}: invalid ${field}`);
   }
+  return value;
+}
+
+function computedNumber(value: number, field: string, id: string): number {
+  if (!Number.isFinite(value)) throw new Error(`Excalidraw element ${id}: invalid calculated ${field}`);
   return value;
 }
 
@@ -66,8 +73,8 @@ function pointsOf(value: unknown, x: number, y: number, id: string): Point[] {
       throw new Error(`Excalidraw element ${id}: invalid point ${index}`);
     }
     return {
-      x: x + number(point[0], `point ${index} x`, id),
-      y: y + number(point[1], `point ${index} y`, id),
+      x: computedNumber(x + number(point[0], `point ${index} x`, id), `point ${index} x`, id),
+      y: computedNumber(y + number(point[1], `point ${index} y`, id), `point ${index} y`, id),
     };
   });
 }
@@ -117,9 +124,15 @@ function rectangleBindingPoint(
 
 type PathArrowHead = Extract<DrawingPrimitive, { kind: "path" }>["arrowHead"];
 
-function arrowHeadOf(element: Record<string, unknown>): PathArrowHead {
-  const start = element.startArrowhead != null;
-  const end = element.endArrowhead != null;
+function arrowHeadOf(element: Record<string, unknown>, id: string): PathArrowHead {
+  for (const field of ["startArrowhead", "endArrowhead"] as const) {
+    const value = element[field];
+    if (value != null && value !== "arrow") {
+      throw new Error(`Excalidraw element ${id}: unsupported ${field} ${String(value)}`);
+    }
+  }
+  const start = element.startArrowhead === "arrow";
+  const end = element.endArrowhead === "arrow";
   return start && end ? "both" : start ? "start" : end ? "end" : "none";
 }
 
@@ -184,16 +197,21 @@ export function importExcalidraw(
     const ownRole = roleOf(element.strokeColor);
 
     if (type === "rectangle") {
+      const w = size(element.width, "width", id);
+      const h = size(element.height, "height", id);
+      computedNumber(x + w, "right edge", id);
+      computedNumber(y + h, "bottom edge", id);
       return {
         kind: "rectangle",
         id,
         x,
         y,
-        w: size(element.width, "width", id),
-        h: size(element.height, "height", id),
+        w,
+        h,
         role: ownRole,
         opacity,
         filled: element.backgroundColor !== "transparent",
+        strokeStyle: strokeStyleOf(element.strokeStyle, id),
       };
     }
     if (type === "text") {
@@ -213,13 +231,17 @@ export function importExcalidraw(
       if (verticalAlign !== undefined && verticalAlign !== "top" && verticalAlign !== "middle" && verticalAlign !== "bottom") {
         throw new Error(`Excalidraw element ${id}: unsupported verticalAlign ${String(verticalAlign)}`);
       }
+      const w = size(element.width, "width", id);
+      const h = size(element.height, "height", id);
+      computedNumber(x + w, "right edge", id);
+      computedNumber(y + h, "bottom edge", id);
       return {
         kind: "text",
         id,
         x,
         y,
-        w: size(element.width, "width", id),
-        h: size(element.height, "height", id),
+        w,
+        h,
         text: element.text,
         role,
         onRoleFill,
@@ -241,7 +263,7 @@ export function importExcalidraw(
       points,
       role: ownRole,
       opacity,
-      arrowHead: type === "arrow" ? arrowHeadOf(element) : "none",
+      arrowHead: type === "arrow" ? arrowHeadOf(element, id) : "none",
       strokeStyle: strokeStyleOf(element.strokeStyle, id),
     };
   });
@@ -257,26 +279,44 @@ export function importExcalidraw(
   for (const element of drawing) {
     const points = element.kind === "path"
       ? element.points
-      : [{ x: element.x, y: element.y }, { x: element.x + element.w, y: element.y + element.h }];
+      : [{ x: element.x, y: element.y }, {
+        x: computedNumber(element.x + element.w, "right edge", element.id),
+        y: computedNumber(element.y + element.h, "bottom edge", element.id),
+      }];
     for (const point of points) {
+      computedNumber(point.x, "x coordinate", element.id);
+      computedNumber(point.y, "y coordinate", element.id);
       minX = Math.min(minX, point.x);
       minY = Math.min(minY, point.y);
       maxX = Math.max(maxX, point.x);
       maxY = Math.max(maxY, point.y);
     }
   }
-  const dx = PADDING - minX;
-  const dy = PADDING - minY;
+  const width = maxX - minX + PADDING * 2;
+  const height = maxY - minY + PADDING * 2;
+  if (!Number.isFinite(width) || !Number.isFinite(height) ||
+      width > MAX_CANVAS_EXTENT || height > MAX_CANVAS_EXTENT) {
+    throw new Error(`Excalidraw document: calculated canvas must be finite and at most ${MAX_CANVAS_EXTENT}px per side`);
+  }
+  const dx = computedNumber(PADDING - minX, "horizontal offset", "document");
+  const dy = computedNumber(PADDING - minY, "vertical offset", "document");
   const normalized = drawing.map((element): DrawingPrimitive => element.kind === "path"
-    ? { ...element, points: element.points.map((point) => ({ x: point.x + dx, y: point.y + dy })) }
-    : { ...element, x: element.x + dx, y: element.y + dy });
+    ? { ...element, points: element.points.map((point) => ({
+      x: computedNumber(point.x + dx, "normalized x", element.id),
+      y: computedNumber(point.y + dy, "normalized y", element.id),
+    })) }
+    : {
+      ...element,
+      x: computedNumber(element.x + dx, "normalized x", element.id),
+      y: computedNumber(element.y + dy, "normalized y", element.id),
+    });
 
   return {
     nodes: [],
     edges: [],
     drawing: normalized,
-    width: maxX - minX + PADDING * 2,
-    height: maxY - minY + PADDING * 2,
+    width,
+    height,
     laneCount: 0,
   };
 }

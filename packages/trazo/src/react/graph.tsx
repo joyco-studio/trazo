@@ -5,8 +5,8 @@
  * Lives in a `.tsx` so JSX compiles; the public entry (`react/index.ts`) stays
  * a `.ts` per the frozen contract and simply re-exports `Graph` from here.
  *
- * Purity contract: no hooks, no effects, no event handlers, no browser globals.
- * Pure function of props → identical markup on server and client. Lane color
+ * Render contract: no effects, event handlers, or browser globals. React's
+ * useId gives each SVG its own marker namespace across server and client. Lane color
  * token keys ("lane-N") map to JOYCO theme CSS vars here; the engine never
  * emits literal colors.
  */
@@ -34,6 +34,7 @@ import type { PositionedGroup } from "../types.js";
 // renderer and for resolveThemePaint's auto `--trazo-bg` wiring.
 import { resolveThemePaint, themed } from "../theme.js";
 import type { ResolvedThemePaint } from "../theme.js";
+import { useId } from "react";
 import type { CSSProperties, JSX } from "react";
 
 /**
@@ -490,14 +491,14 @@ function orderEdgesByPaint(edges: PositionedEdge[]): PositionedEdge[] {
  * Arrowheads are SVG `<marker>`s, one per distinct edge color token used by a
  * directed edge. A marker can't inherit its host path's `stroke` across our
  * theme tokens (each token resolves to a different CSS var), so we mint a marker
- * per color with that color baked into its `fill`, and the path references it by
- * a deterministic id derived from the token key. Pure: same edges → same ids.
+ * per color and opacity with that color baked into its `fill`. Each Graph
+ * instance scopes its marker ids so sibling SVGs cannot cross-reference them.
  */
 const ARROW_MARKER_PREFIX = "trazo-arrow";
 
-/** Stable, DOM-id-safe marker id for an edge color token (e.g. "role-success"). */
-function arrowMarkerId(colorToken: string): string {
-  const safe = colorToken.replace(/[^a-zA-Z0-9_-]/g, "_");
+/** DOM-id-safe marker id scoped to one SVG instance, color, and opacity. */
+function arrowMarkerId(instanceId: string, colorToken: string, opacity: number): string {
+  const safe = `${instanceId}-${colorToken}-${opacity}`.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${ARROW_MARKER_PREFIX}-${safe}`;
 }
 
@@ -630,6 +631,7 @@ function insetPathEnds(
 function renderDrawingPrimitive(
   element: DrawingPrimitive,
   paint: ResolvedThemePaint,
+  markerId: (colorToken: string, opacity: number) => string,
 ): JSX.Element {
   const color = nodeColor(`role-${element.role}`);
   if (element.kind === "rectangle") {
@@ -646,6 +648,10 @@ function renderDrawingPrimitive(
         fill={element.filled ? color : "none"}
         stroke={element.filled ? BG : color}
         strokeWidth={paint.borderWidth}
+        strokeDasharray={element.strokeStyle === "dashed"
+          ? EDGE_DASH
+          : element.strokeStyle === "dotted" ? "1 5" : undefined}
+        strokeLinecap={element.strokeStyle === "dotted" ? "round" : undefined}
         opacity={element.opacity}
       />
     );
@@ -690,7 +696,7 @@ function renderDrawingPrimitive(
   const d = insetPathEnds(rawPath, hasEnd ? "end" : "none", hasStart, ARROW_LEN);
   const markerRef = element.arrowHead === "none"
     ? undefined
-    : `url(#${arrowMarkerId(`role-${element.role}`)})`;
+    : `url(#${markerId(`role-${element.role}`, element.opacity)})`;
   return (
     <path
       key={element.id}
@@ -716,6 +722,9 @@ function renderDrawingPrimitive(
  * markup, on server or client.
  */
 export function Graph(props: GraphProps): JSX.Element {
+  const instanceId = useId();
+  const markerId = (colorToken: string, opacity: number) =>
+    arrowMarkerId(instanceId, colorToken, opacity);
   const { graph, className, classNames, title, theme } = props;
   const label = title ?? "Commit graph";
   // When an arrowless connector ends exactly where an ARROWED edge ends (a
@@ -738,11 +747,13 @@ export function Graph(props: GraphProps): JSX.Element {
     return { ...e, arrowHead: "end" as const };
   });
   // Distinct edge colors needing an arrowhead marker — computed once.
-  const markerTokens = arrowColorTokens(edges);
+  const markerSpecs = arrowColorTokens(edges).map((token) => ({ token, opacity: 1 }));
   for (const element of graph.drawing ?? []) {
     if (element.kind !== "path" || element.arrowHead === "none") continue;
     const token = `role-${element.role}`;
-    if (!markerTokens.includes(token)) markerTokens.push(token);
+    if (!markerSpecs.some((spec) => spec.token === token && spec.opacity === element.opacity)) {
+      markerSpecs.push({ token, opacity: element.opacity });
+    }
   }
   // Single resolution point for the theme's paint half (pure — SSR-safe).
   const paint = resolveThemePaint(theme);
@@ -787,9 +798,9 @@ export function Graph(props: GraphProps): JSX.Element {
         </g>
       ) : null}
 
-      {markerTokens.length > 0 ? (
+      {markerSpecs.length > 0 ? (
         <defs>
-          {markerTokens.map((token) => {
+          {markerSpecs.map(({ token, opacity }) => {
             const fill = nodeColor(token);
             // Solid triangle pointing along +x: base at x=0, tip at x=ARROW_LEN.
             // The edge stroke is trimmed back by ARROW_LEN (insetPathEnds), so
@@ -801,8 +812,8 @@ export function Graph(props: GraphProps): JSX.Element {
             const half = ARROW_WID / 2;
             return (
               <marker
-                key={token}
-                id={arrowMarkerId(token)}
+                key={markerId(token, opacity)}
+                id={markerId(token, opacity)}
                 markerWidth={ARROW_LEN}
                 markerHeight={ARROW_WID}
                 refX={0}
@@ -810,7 +821,7 @@ export function Graph(props: GraphProps): JSX.Element {
                 orient="auto-start-reverse"
                 markerUnits="userSpaceOnUse"
               >
-                <path d={`M 0 0 L ${ARROW_LEN} ${half} L 0 ${ARROW_WID} Z`} fill={fill} />
+                <path d={`M 0 0 L ${ARROW_LEN} ${half} L 0 ${ARROW_WID} Z`} fill={fill} opacity={opacity === 1 ? undefined : opacity} />
               </marker>
             );
           })}
@@ -819,7 +830,7 @@ export function Graph(props: GraphProps): JSX.Element {
 
       {graph.drawing && graph.drawing.length > 0 ? (
         <g data-slot="drawing">
-          {graph.drawing.map((element) => renderDrawingPrimitive(element, paint))}
+          {graph.drawing.map((element) => renderDrawingPrimitive(element, paint, markerId))}
         </g>
       ) : null}
 
@@ -938,7 +949,7 @@ export function Graph(props: GraphProps): JSX.Element {
       <g data-slot="edges" aria-hidden="true">
         {orderEdgesByPaint(edges).map((edge, i) => {
           const head = edge.arrowHead;
-          const markerRef = head && head !== "none" ? `url(#${arrowMarkerId(edge.color)})` : undefined;
+          const markerRef = head && head !== "none" ? `url(#${markerId(edge.color, 1)})` : undefined;
           // Pull the stroke back from any arrowed end by the head length so the
           // line ends under the head's base, not its tip — PLUS half the node
           // border, so the tip rests on the border's OUTER edge instead of

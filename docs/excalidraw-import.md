@@ -41,12 +41,15 @@ exported position overlapped `[1] decoded`. All other positions are unchanged.
 
 The importer accepts a parsed document or its JSON string. It supports live
 `rectangle`, `text`, `line`, and `arrow` elements. It ignores deleted elements,
-uses a 24px padded viewBox, and converts element opacity to SVG opacity. Text
+uses a 24px padded viewBox, and converts element opacity to SVG opacity. Imported
+canvases are limited to 32,768px per side so textured rendering stays bounded. Text
 stays editable and accessible inside the SVG. Filled rectangles use Trazo's
 normal role fill and backdrop-colored border; bound text uses the paired role
 foreground. Standalone text and paths use the role color.
 Trazo's theme controls font, case, roundness, border width, and the pattern of
-solid source lines. Explicit Excalidraw dashes and dots stay dashed and dotted.
+solid source lines. Explicit Excalidraw dashes and dots stay dashed and dotted
+on paths and rectangle borders. Imported arrowheads support the standard `arrow`
+shape; other shapes are rejected because Trazo cannot preserve them yet.
 
 The reference palette maps Excalidraw green to `success`, purple to `primary`,
 orange to `warning`, red to `error`, and blue to `info`. Other stroke colors

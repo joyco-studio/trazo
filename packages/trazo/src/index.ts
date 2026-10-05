@@ -24,7 +24,6 @@ import type {
   FlowLayoutOptions,
   LayoutOptions,
   PositionedGraph,
-  DrawingPrimitive,
   SequenceGraph,
   SequenceLayoutOptions,
 } from "./types.js";
@@ -62,6 +61,7 @@ export type {
   EdgeStyle,
   LabelCase,
   PositionedGraph,
+  DrawingPrimitive,
   LayoutOptions,
   GitLayoutOptions,
   GitOrientation,

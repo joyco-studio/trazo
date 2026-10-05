@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { importExcalidraw, joycoTheme } from "../src/index.js";
+import type { DrawingPrimitive } from "../src/index.js";
 import { Graph } from "../src/react/index.js";
 
 const source = readFileSync(new URL("../../../examples/frame-buffer.excalidraw.json", import.meta.url), "utf8");
@@ -45,7 +46,7 @@ describe("importExcalidraw", () => {
     const original = render();
     expect(render()).toBe(original);
     expect(original.match(/data-slot="drawing-(?:rectangle|text|path)"/g)).toHaveLength(25);
-    expect(original).toContain('marker-end="url(#trazo-arrow-role-info)"');
+    expect(original).toMatch(/marker-end="url\(#trazo-arrow-[^" ]*role-info-1\)"/);
     expect(original).toContain("opacity=\"0.5\"");
     expect(original).toContain("this has been");
 
@@ -100,6 +101,65 @@ describe("importExcalidraw", () => {
     const graph = importExcalidraw(parsed, { roleByColor: { "#2F9E44": "info" } });
     expect(graph.drawing?.[0]).toMatchObject({ role: "info" });
     expect(graph.drawing?.[1]).toMatchObject({ role: "info" });
+  });
+
+  it("rejects calculated overflow and impractically large canvases", () => {
+    const box = { id: "large", type: "rectangle", x: 1e308, y: 0, width: 1e308, height: 20 };
+    expect(() => importExcalidraw({ elements: [box] })).toThrow(/large: invalid calculated right edge/);
+    expect(() => importExcalidraw({ elements: [{ ...box, x: 0, width: 32_768 }] }))
+      .toThrow(/calculated canvas must be finite and at most 32768px/);
+    expect(() => importExcalidraw({ elements: [
+      { ...box, id: "left", x: -1e308, width: 1 },
+      { ...box, id: "right", x: 1e308, width: 1 },
+    ] })).toThrow(/calculated canvas must be finite/);
+    expect(() => importExcalidraw({ elements: [
+      { id: "line", type: "line", x: 1e308, y: 0, points: [[0, 0], [1e308, 0]] },
+    ] })).toThrow(/line: invalid calculated point 1 x/);
+  });
+
+  it("rejects arrowhead shapes the renderer cannot preserve", () => {
+    const arrow = { id: "special", type: "arrow", x: 0, y: 0, points: [[0, 0], [20, 0]] };
+    expect(() => importExcalidraw({ elements: [{ ...arrow, startArrowhead: "circle" }] }))
+      .toThrow(/special: unsupported startArrowhead circle/);
+    expect(() => importExcalidraw({ elements: [{ ...arrow, endArrowhead: "bar" }] }))
+      .toThrow(/special: unsupported endArrowhead bar/);
+  });
+
+  it("scopes markers per Graph and matches an imported arrow's opacity", () => {
+    const graph = importExcalidraw({ elements: [
+      { id: "faded", type: "arrow", x: 0, y: 0, points: [[0, 0], [100, 0]],
+        strokeColor: "#1971c2", endArrowhead: "arrow", opacity: 50 },
+    ] });
+    const markup = renderToStaticMarkup(createElement("div", null,
+      createElement(Graph, { graph, theme: { tokens: { info: "#ff0000" } } }),
+      createElement(Graph, { graph, theme: { tokens: { info: "#00ff00" } } }),
+    ));
+    const svgSections = [...markup.matchAll(/<svg\b[\s\S]*?<\/svg>/g)].map((match) => match[0]);
+    expect(svgSections).toHaveLength(2);
+    expect(svgSections[0]).toContain("--trazo-info:#ff0000");
+    expect(svgSections[1]).toContain("--trazo-info:#00ff00");
+    const ids = svgSections.map((svg) => {
+      const id = svg.match(/<marker[^>]*id="([^"]+)"/)?.[1];
+      expect(id).toBeDefined();
+      expect(svg).toContain(`marker-end="url(#${id})"`);
+      expect(svg).toContain('opacity="0.5" marker-end=');
+      expect(svg).toMatch(/<marker[^>]*>[\s\S]*?<path[^>]*opacity="0.5"/);
+      return id;
+    });
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("preserves authored dashed and dotted rectangle borders", () => {
+    const graph = importExcalidraw({ elements: [
+      { id: "dash", type: "rectangle", x: 0, y: 0, width: 20, height: 20, strokeStyle: "dashed" },
+      { id: "dot", type: "rectangle", x: 30, y: 0, width: 20, height: 20, strokeStyle: "dotted" },
+    ] });
+    const rectangles = graph.drawing!.filter((element): element is Extract<DrawingPrimitive, { kind: "rectangle" }> =>
+      element.kind === "rectangle");
+    expect(rectangles.map((rectangle) => rectangle.strokeStyle)).toEqual(["dashed", "dotted"]);
+    const markup = renderToStaticMarkup(createElement(Graph, { graph }));
+    expect(markup).toMatch(/data-slot="drawing-rectangle"[^>]*stroke-dasharray="6 4"/);
+    expect(markup).toMatch(/data-slot="drawing-rectangle"[^>]*stroke-dasharray="1 5"/);
   });
 
   it("names invalid and unsupported live elements", () => {
