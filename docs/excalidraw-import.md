@@ -33,9 +33,9 @@ Pass the hub's selected `TrazoTheme` to `<Graph theme={...}>` when its exact
 palette should be used; the preview for this example uses the playground's
 `JOYCO_PRESET` colors with `textCase: "none"` to preserve code labels.
 
-The tracked example moves the arrow-bound `frame` label beneath its connector;
-its original exported position overlapped `[1] decoded`. All other positions
-are unchanged.
+The tracked example uses the updated source with arrows bound to their boxes.
+It moves the arrow-bound `frame` label beneath its connector because its
+exported position overlapped `[1] decoded`. All other positions are unchanged.
 
 The importer accepts a parsed document or its JSON string. It supports live
 `rectangle`, `text`, `line`, and `arrow` elements. It ignores deleted elements,

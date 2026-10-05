@@ -30,7 +30,7 @@ describe("importExcalidraw", () => {
     const horizontal = drawing.find((element) => element.id === "vyrBKS3GCZ4ItQHoHzEhp");
     expect(horizontal).toMatchObject({ kind: "path", arrowHead: "end", role: "info" });
     if (horizontal?.kind !== "path") throw new Error("reference arrow missing");
-    expect(horizontal.points[1]!.x - horizontal.points[0]!.x).toBeCloseTo(160, 5);
+    expect(horizontal.points[1]!.x - horizontal.points[0]!.x).toBeCloseTo(169.97444404331816, 5);
     expect(horizontal.points[1]!.y).toBeCloseTo(horizontal.points[0]!.y, 5);
     const minX = Math.min(...drawing.flatMap((element) =>
       element.kind === "path" ? element.points.map((point) => point.x) : [element.x]));
