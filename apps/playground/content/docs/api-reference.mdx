@@ -9,6 +9,7 @@ description: Types, functions, and the React component for @joycostudio/trazo.
 import {
   layoutFlow, layoutGit, layoutSequence, layoutBlock, layout,
   flow, git, seq, block, // tagged-template parsers (throw on error)
+  importExcalidraw, // hand-positioned Excalidraw JSON → PositionedGraph
 } from "@joycostudio/trazo";
 import { Graph } from "@joycostudio/trazo/react"; // React is a peer dependency
 ```
@@ -53,6 +54,14 @@ Convenience dispatcher — routes by `input.kind`: `"flow"` → `layoutFlow`, `"
 
 ```ts
 layout(input: CommitGraph | FlowGraph | SequenceGraph | BlockGraph, options?): PositionedGraph
+```
+
+### `importExcalidraw(document, options?)`
+
+Convert a parsed Excalidraw JSON document or JSON string directly to a `PositionedGraph`, preserving element positions and order. Supports rectangles, text, lines, and arrows; deleted elements are ignored. `options.roleByColor` maps case-insensitive source stroke colors to Trazo semantic roles. Unsupported live elements and invalid geometry throw errors with element IDs. Render the result inline with `<Graph />` so theme CSS variables apply.
+
+```ts
+importExcalidraw(document: string | ExcalidrawDocument, options?: ExcalidrawImportOptions): PositionedGraph
 ```
 
 ### Tagged templates

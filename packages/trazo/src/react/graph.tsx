@@ -12,7 +12,7 @@
  */
 
 import type { GraphProps } from "./types.js";
-import type { PositionedEdge, PositionedNode, SemanticRole } from "../types.js";
+import type { DrawingPrimitive, PositionedEdge, PositionedNode, SemanticRole } from "../types.js";
 import {
   NODE_HALF,
   LABEL_GAP,
@@ -626,6 +626,91 @@ function insetPathEnds(
   return cmds.map((c) => `${c.op} ${c.nums.join(" ")}`).join(" ");
 }
 
+/** Paint an imported, hand-positioned element without changing its geometry. */
+function renderDrawingPrimitive(
+  element: DrawingPrimitive,
+  paint: ResolvedThemePaint,
+): JSX.Element {
+  const color = nodeColor(`role-${element.role}`);
+  if (element.kind === "rectangle") {
+    return (
+      <rect
+        key={element.id}
+        data-slot="drawing-rectangle"
+        x={element.x}
+        y={element.y}
+        width={element.w}
+        height={element.h}
+        rx={paint.cornerRadius}
+        ry={paint.cornerRadius}
+        fill={element.filled ? color : "none"}
+        stroke={element.filled ? BG : color}
+        strokeWidth={paint.borderWidth}
+        opacity={element.opacity}
+      />
+    );
+  }
+  if (element.kind === "text") {
+    const lines = labelLines(element.text);
+    const lineHeight = labelLineHeight();
+    const lineCount = lines.length;
+    const x = element.align === "center"
+      ? element.x + element.w / 2
+      : element.align === "right" ? element.x + element.w : element.x;
+    const y = element.verticalAlign === "middle"
+      ? element.y + element.h / 2 - (lineCount - 1) * lineHeight / 2
+      : element.verticalAlign === "bottom"
+        ? element.y + element.h - LABEL_SIZE / 2 - (lineCount - 1) * lineHeight
+        : element.y + LABEL_SIZE / 2;
+    return (
+      <text
+        key={element.id}
+        data-slot="drawing-text"
+        x={x}
+        y={y}
+        textAnchor={element.align === "center" ? "middle" : element.align === "right" ? "end" : "start"}
+        dominantBaseline="central"
+        fill={element.onRoleFill ? nodeForeground(`role-${element.role}`) : color}
+        opacity={element.opacity}
+        fontFamily={LABEL_FONT}
+        fontSize={LABEL_SIZE}
+        style={labelStyleFor(paint.uppercase)}
+      >
+        {lines.map((line, index) => (
+          <tspan key={index} x={x} dy={index === 0 ? 0 : lineHeight}>{line}</tspan>
+        ))}
+      </text>
+    );
+  }
+
+  const points = element.points;
+  const rawPath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const hasEnd = element.arrowHead === "end" || element.arrowHead === "both";
+  const hasStart = element.arrowHead === "start" || element.arrowHead === "both";
+  const d = insetPathEnds(rawPath, hasEnd ? "end" : "none", hasStart, ARROW_LEN);
+  const markerRef = element.arrowHead === "none"
+    ? undefined
+    : `url(#${arrowMarkerId(`role-${element.role}`)})`;
+  return (
+    <path
+      key={element.id}
+      data-slot="drawing-path"
+      d={d}
+      fill="none"
+      stroke={color}
+      strokeWidth={EDGE_WIDTH}
+      strokeLinecap={element.strokeStyle === "dotted" ? "round" : paint.linecap ?? "butt"}
+      strokeLinejoin="miter"
+      strokeDasharray={element.strokeStyle === "dashed"
+        ? EDGE_DASH
+        : element.strokeStyle === "dotted" ? "1 5" : paint.dashArray}
+      opacity={element.opacity}
+      markerStart={hasStart ? markerRef : undefined}
+      markerEnd={hasEnd ? markerRef : undefined}
+    />
+  );
+}
+
 /**
  * Render a `PositionedGraph` as an inline `<svg>`. Pure: same `graph` → same
  * markup, on server or client.
@@ -654,6 +739,11 @@ export function Graph(props: GraphProps): JSX.Element {
   });
   // Distinct edge colors needing an arrowhead marker — computed once.
   const markerTokens = arrowColorTokens(edges);
+  for (const element of graph.drawing ?? []) {
+    if (element.kind !== "path" || element.arrowHead === "none") continue;
+    const token = `role-${element.role}`;
+    if (!markerTokens.includes(token)) markerTokens.push(token);
+  }
   // Single resolution point for the theme's paint half (pure — SSR-safe).
   const paint = resolveThemePaint(theme);
   // Role of each role-tinted subgraph, keyed by id, so a member node's border
@@ -725,6 +815,12 @@ export function Graph(props: GraphProps): JSX.Element {
             );
           })}
         </defs>
+      ) : null}
+
+      {graph.drawing && graph.drawing.length > 0 ? (
+        <g data-slot="drawing">
+          {graph.drawing.map((element) => renderDrawingPrimitive(element, paint))}
+        </g>
       ) : null}
 
       {graph.groups &&

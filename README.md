@@ -41,5 +41,6 @@ The layout functions also work in plain TypeScript without React. In a React app
 - **Deterministic layout:** the same source produces the same positioned graph on the server and client.
 - **CSS-token theming:** `--trazo-*` variables override colors, with shadcn tokens and built-in colors as fallbacks.
 - **Optional integrations:** `@joycostudio/trazo/remark` renders and validates diagram fences in Markdown; `@joycostudio/trazo/eslint` checks diagram templates in TypeScript.
+- **Excalidraw import:** convert positioned rectangles, text, lines, and arrows into an inline, themeable SVG with [`importExcalidraw`](./docs/excalidraw-import.md).
 
 Read the [DSL reference](https://trazo.joyco.studio/docs/dsl-reference) for diagram syntax and the [API reference](https://trazo.joyco.studio/docs/api-reference) for layouts, rendering, and themes. To work on the monorepo, see the [contributor quickstart](https://github.com/joyco-studio/trazo/blob/main/quickstart.md).

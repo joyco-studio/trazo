@@ -489,6 +489,44 @@ export interface PositionedGroup {
   role?: SemanticRole;
 }
 
+/** An authored, absolute-position drawing element. Order is SVG paint order. */
+export type DrawingPrimitive =
+  | {
+      kind: "rectangle";
+      id: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      role: SemanticRole;
+      opacity: number;
+      filled: boolean;
+    }
+  | {
+      kind: "text";
+      id: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      text: string;
+      role: SemanticRole;
+      /** Label inside a filled rectangle: use the role's paired foreground. */
+      onRoleFill: boolean;
+      opacity: number;
+      align: "left" | "center" | "right";
+      verticalAlign: "top" | "middle" | "bottom";
+    }
+  | {
+      kind: "path";
+      id: string;
+      points: Point[];
+      role: SemanticRole;
+      opacity: number;
+      arrowHead: ArrowEnds;
+      strokeStyle: "solid" | "dashed" | "dotted";
+    };
+
 /**
  * The complete layout result. `width`/`height` bound all geometry so a
  * renderer can set the `<svg>` viewBox without scanning nodes. For git,
@@ -501,6 +539,8 @@ export interface PositionedGraph {
   width: number;
   height: number;
   laneCount: number;
+  /** Freeform elements, painted in array order without automatic layout. */
+  drawing?: DrawingPrimitive[];
   /**
    * Flow subgraph containers / sequence note boxes, when the input declared any.
    * Absent for plain graphs with no groups/notes (renderers can skip the slot).
