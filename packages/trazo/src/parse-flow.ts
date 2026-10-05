@@ -25,7 +25,7 @@
  *                              sides above|below|left|right, with a leader arrow
  *                              pointing at that face. An optional trailing
  *                              `:role` tints the note chip. Excluded from ranking
- *                              (never moves a real node).
+ *                              (never changes a real node's rank).
  *
  * Subgraphs are single-level (no nesting). A node belongs to at most one group
  * (the first that declares it wins). Multi-line labels: a literal `\n` or `<br>`

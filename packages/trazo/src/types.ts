@@ -200,15 +200,17 @@ export type NoteSide = "above" | "below" | "left" | "right";
  * a leader arrow pointing at the target's near face. Unlike a {@link FlowNode},
  * a note is EXCLUDED from ranking: it never receives a rank, never generates a
  * dummy chain, and can never change which rank a real node lands in. The layout
- * places it in the gutter on `side` of the target after the main layout resolves.
+ * reserves room between same-rank siblings when a note occupies that gutter,
+ * then places it on `side` of the target after the main layout resolves.
  * It stays centered with a straight perpendicular leader when that position is
  * clear. If its box would cover a flow edge or another box, it slides along the
  * requested side and its leader attaches from an offset point on the note face
  * to an open point on the target face. The leader stays straight when those
  * points align, bending only when the note has moved too far for a straight run
  * (see {@link PositionedNode.kind} and the leader {@link PositionedEdge}).
- * A note that would spill off-canvas shifts the whole graph to stay in frame,
- * so real-node coordinates are preserved only when no such shift is needed.
+ * A note that would spill off-canvas shifts the whole graph to stay in frame.
+ * Sibling spacing and that origin shift can move real-node coordinates while
+ * preserving their ranks.
  */
 export interface FlowNote {
   /** Id of the {@link FlowNode} this note hangs off (declared anywhere in the graph). */
@@ -440,8 +442,10 @@ export interface PositionedEdge {
   color: string;
   /** Flow: optional edge label text. */
   label?: string;
-  /** Flow: point at which to anchor the edge label (polyline midpoint). */
+  /** Flow: center of the label badge (on or beside its edge). */
   labelPoint?: Point;
+  /** Flow: point on this edge reached by a short leader from a displaced badge. */
+  labelAnchor?: Point;
   /** Flow: measured pixel width of `label` (via `measure`). */
   labelWidth?: number;
   /**

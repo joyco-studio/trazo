@@ -916,7 +916,7 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
   it.each([
     { direction: "TD" as const, first: "server-side, one integration", second: "markdown index" },
     { direction: "LR" as const, first: "first\nmultiline label", second: "second\nmultiline label" },
-  ])("stacks a $direction pair when its actual badge sizes would overlap", ({ direction, first, second }) => {
+  ])("connects a crowded $direction pair's badges to separate lanes", ({ direction, first, second }) => {
     const g = layoutFlow({
       kind: "flow", direction,
       nodes: [{ id: "A", label: "Worker" }, { id: "B", label: "Notion" }],
@@ -926,6 +926,11 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
     expect(boxesOverlap(labelBox(forward!), labelBox(reverse!))).toBe(false);
     const main = direction === "TD" ? "y" : "x";
     expect(reverse!.labelPoint![main]).toBeGreaterThan(forward!.labelPoint![main]);
+    const cross = direction === "TD" ? "x" : "y";
+    expect(forward!.labelAnchor).toBeDefined();
+    expect(reverse!.labelAnchor).toBeDefined();
+    expect(forward!.labelPoint![cross]).toBeLessThan(forward!.labelAnchor![cross]);
+    expect(reverse!.labelPoint![cross]).toBeGreaterThan(reverse!.labelAnchor![cross]);
     for (const edge of [forward!, reverse!]) {
       const badge = labelBox(edge);
       for (const node of g.nodes) {
@@ -1056,6 +1061,17 @@ Agents --> Workers`;
     const clerkStore = g.edges.find((edge) => edge.from === "Clerk" && edge.to === "Store")!;
     const clerkCli = g.edges.find((edge) => edge.from === "Clerk" && edge.to === "CLI")!;
     expect(clerkStore.labelPoint!.y).not.toBeCloseTo(clerkCli.labelPoint!.y, 0);
+    const cliWorkers = g.edges.find((edge) => edge.from === "CLI" && edge.to === "Workers")!;
+    const storeAgents = g.edges.find((edge) => edge.from === "Store" && edge.to === "Agents")!;
+    expect(cliWorkers.labelPoint!.y).toBeGreaterThan(g.nodes.find((n) => n.id === "Agents")!.y);
+    expect(labelBox(cliWorkers).left).toBeGreaterThan(cliWorkers.labelAnchor!.x);
+    expect(labelBox(storeAgents).right).toBeLessThan(storeAgents.labelAnchor!.x);
+    for (const [from, to] of [["Workers", "Notion"], ["Notion", "Workers"]]) {
+      const edge = g.edges.find((candidate) => candidate.from === from && candidate.to === to)!;
+      expect(edge.labelAnchor).toBeDefined();
+      const box = labelBox(edge);
+      expect(edge.from === "Workers" ? box.right < edge.labelAnchor!.x : box.left > edge.labelAnchor!.x).toBe(true);
+    }
   });
 });
 
@@ -1129,6 +1145,48 @@ note decode below "must finish before reveal"`;
     const forwardCoords = forward.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
     expect(forwardCoords[0]).toBeCloseTo(node("demand").x + node("demand").w! / 2, 5);
     expect(forwardCoords.at(-2)).toBeCloseTo(node("transfer").x - node("transfer").w! / 2, 5);
+  });
+
+  it("reserves a clear gutter for a note between two LR branches", () => {
+    const source = `flow LR
+loaded["Loaded<br/>Encoded image bytes"]:info
+decoded["Decoded<br/>Bitmap ready for display"]:success
+presented["Presented<br/>Frame painted on screen"]:primary
+blocking["Decode at display time<br/>Presentation waits"]:error
+loaded --> decoded
+decoded --> presented
+loaded --> blocking
+blocking --> presented
+note loaded below "image.png, image.avif, image.webp"
+note decoded below "keep the next frames here"
+note blocking below "the page can miss its refresh"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    const options = { direction: "LR" as const, textCase: "none" as const, edgeGap: 0 };
+    const g = layoutFlow(parsed.graph, options);
+    expect(layoutFlow(parsed.graph, options)).toEqual(g);
+    const node = (id: string) => g.nodes.find((n) => n.id === id)!;
+    const decoded = node("decoded");
+    const blocking = node("blocking");
+    const note = g.nodes.find((n) => n.label === "keep the next frames here")!;
+    const box = (n: typeof note) => ({
+      left: n.x - n.w! / 2, right: n.x + n.w! / 2,
+      top: n.y - n.h! / 2, bottom: n.y + n.h! / 2,
+    });
+    expect(Math.abs(note.x - decoded.x)).toBeLessThan(24);
+    expect(box(note).top).toBeGreaterThan(box(decoded).bottom);
+    expect(box(note).bottom + 7).toBeLessThan(box(blocking).top);
+    for (const other of g.nodes) {
+      if (other.id !== note.id && other.id !== decoded.id) {
+        expect(boxesOverlap(box(note), box(other))).toBe(false);
+      }
+    }
+    const leader = g.edges.find((e) => e.from === note.id && e.to === decoded.id)!;
+    const points = leader.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    expect(points).toHaveLength(4);
+    expect(points[0]).toBeCloseTo(points[2]!, 5);
+    expect(points[1]).toBeCloseTo(box(note).top, 5);
+    expect(points[3]).toBeCloseTo(box(decoded).bottom, 5);
   });
 
   // The motivating case: a strictly linear pipeline plus one note below `layout`.

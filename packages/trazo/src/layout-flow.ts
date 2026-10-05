@@ -642,6 +642,27 @@ export function layoutFlow(
   // 2*GROUP_PAD between their member edges; nodeGap already covers part of it.
   const groupBoundaryGap = hasGroups ? Math.max(0, GROUP_PAD * 2 - nodeGap) : 0;
 
+  // A note placed between siblings needs cross-axis room before their flow
+  // routes are computed. Otherwise a centered note can cover the next branch
+  // node, forcing a long sideways leader through another rank's boxes.
+  const noteOutset = new Map<NodeId, { lead: number; trail: number }>();
+  if (graph.notes) {
+    for (const note of graph.notes) {
+      const target = vById.get(note.target);
+      if (target === undefined || target.isDummy) continue;
+      const trailing = direction === "LR" ? note.side === "below" : note.side === "right";
+      const leading = direction === "LR" ? note.side === "above" : note.side === "left";
+      if (!trailing && !leading) continue;
+      const label = wrapNodeLabel(note.label);
+      const { w, h } = sizeShape("box", label, sizeOpts);
+      const extent = direction === "LR" ? h : w;
+      const out = noteOutset.get(note.target) ?? { lead: 0, trail: 0 };
+      if (trailing) out.trail += calloutGap + extent;
+      else out.lead += calloutGap + extent;
+      noteOutset.set(note.target, out);
+    }
+  }
+
   let crossMax = 0;
   for (const layer of layers) {
     // Cross-axis pack: running cursor by order, gap + half-widths.
@@ -691,7 +712,9 @@ export function layoutFlow(
     const halfA = (direction === "TD" ? a.w : a.h) / 2;
     const halfB = (direction === "TD" ? b.w : b.h) / 2;
     const boundary = hasGroups && a.group !== b.group ? groupBoundaryGap : 0;
-    return halfA + a.loopPad + nodeGap + boundary + halfB;
+    const noteRoom = (noteOutset.get(a.id)?.trail ?? 0) +
+      (noteOutset.get(b.id)?.lead ?? 0) + NOTE_CLEARANCE;
+    return halfA + a.loopPad + Math.max(nodeGap, noteRoom) + boundary + halfB;
   };
 
   // Proper adjacency for BK: adjacent-rank segments only. A forward edge's
@@ -1091,12 +1114,13 @@ export function layoutFlow(
   // ── Annotations (`note`) ──────────────────────────────────────────────
   // Notes never participate in RANKING/ordering (they are not in `graph.nodes`,
   // so `assignRanks` never saw them and no dummy chain was built) — they can
-  // never change which rank a real node lands in. Placement is a post-pass over
-  // the already-resolved real-node centers.
+  // never change which rank a real node lands in. A note between same-rank
+  // siblings may reserve cross-axis space above; exact box placement is a
+  // post-pass over the already-resolved real-node centers.
   //
   // Each note starts centered in the gutter on its requested side. If that box
   // would cover a routed flow edge, slide it along the target's face to the
-  // nearest clear position. The requested side and the real-node layout stay
+  // nearest clear position. The requested side and routed flow edges stay
   // fixed. Multiple notes on the same side stack outward as before.
   //
   // The note chip + leader are appended to `nodes`/`positionedEdges`/`edgePoints`
@@ -1104,9 +1128,9 @@ export function layoutFlow(
   // canvas" pass that guards edge labels also grows the viewBox for a note and,
   // when one would spill past the top/left origin, SHIFTS the whole graph to keep
   // it in frame. That shift is a pure translation (relative layout unchanged) and
-  // keeps the note on its requested side. A note is only position-neutral for
-  // real nodes when no such shift is needed. Collision handling is limited to
-  // translating notes; it never changes ranks or reroutes the flow edges.
+  // keeps the note on its requested side. A note is position-neutral for real
+  // nodes unless sibling spacing was reserved or this origin shift is needed.
+  // Collision handling never changes ranks or reroutes the flow edges.
   const mainAxis = direction === "LR" ? "x" : "y";
   const flowSegments: Array<[Point, Point]> = [];
   for (const points of edgePoints) {
@@ -1306,8 +1330,9 @@ export function layoutFlow(
   }
 
   // Stagger only the parallel pairs whose full badge rectangles would collide.
-  // Their line offsets remain unchanged; each badge stays centered on its own
-  // straight run inside the enlarged inter-rank gap.
+  // Put their badges outside the two lanes and connect each badge to its own
+  // straight run. Centering wide badges on the lanes hides both arrows and
+  // makes it impossible to tell which label belongs to which direction.
   const stackedPositioned = new Set<PositionedEdge>();
   for (const pair of stackedPairs) {
     const forward = positionedEdges[edges.indexOf(pair.forward)] as PositionedEdge;
@@ -1318,31 +1343,54 @@ export function layoutFlow(
     const firstCenter = (gapStart + gapEnd - content) / 2 + pair.forwardMain / 2;
     const secondCenter = firstCenter + pair.forwardMain / 2 + LABEL_GAP + pair.reverseMain / 2;
     if (direction === "TD") {
-      forward.labelPoint = { x: (forward.labelPoint as Point).x, y: firstCenter };
-      reverse.labelPoint = { x: (reverse.labelPoint as Point).x, y: secondCenter };
+      const forwardLane = (forward.labelPoint as Point).x;
+      const reverseLane = (reverse.labelPoint as Point).x;
+      const forwardSide = forwardLane < reverseLane ? -1 : 1;
+      forward.labelAnchor = { x: forwardLane, y: firstCenter };
+      reverse.labelAnchor = { x: reverseLane, y: secondCenter };
+      forward.labelPoint = {
+        x: forwardLane + forwardSide * (badgeWidth(forward.labelWidth ?? 0) / 2 + LABEL_GAP),
+        y: firstCenter,
+      };
+      reverse.labelPoint = {
+        x: reverseLane - forwardSide * (badgeWidth(reverse.labelWidth ?? 0) / 2 + LABEL_GAP),
+        y: secondCenter,
+      };
     } else {
-      forward.labelPoint = { x: firstCenter, y: (forward.labelPoint as Point).y };
-      reverse.labelPoint = { x: secondCenter, y: (reverse.labelPoint as Point).y };
+      const forwardLane = (forward.labelPoint as Point).y;
+      const reverseLane = (reverse.labelPoint as Point).y;
+      const forwardSide = forwardLane < reverseLane ? -1 : 1;
+      forward.labelAnchor = { x: firstCenter, y: forwardLane };
+      reverse.labelAnchor = { x: secondCenter, y: reverseLane };
+      forward.labelPoint = {
+        x: firstCenter,
+        y: forwardLane + forwardSide * (badgeHeight(forward.labelHeight ?? 0) / 2 + LABEL_GAP),
+      };
+      reverse.labelPoint = {
+        x: secondCenter,
+        y: reverseLane - forwardSide * (badgeHeight(reverse.labelHeight ?? 0) / 2 + LABEL_GAP),
+      };
     }
     stackedPositioned.add(forward);
     stackedPositioned.add(reverse);
   }
 
   // ── Align sibling edge labels to a shared level ───────────────────────
-  // Labels on forward edges that fan out from the SAME source land on each
-  // edge's own diagonal. Those can sit at different main-axis depths: one high
-  // near the fork, one low near its target box. Snap every
+  // Labels on adjacent-rank forward edges that fan out from the SAME source
+  // land on each edge's own diagonal. Those can sit at different main-axis
+  // depths: one high near the fork, one low near its target box. Snap every
   // labeled sibling to the SHALLOWEST of the group's main-axis levels (TD: min y;
   // LR: min x) so a decision's branch labels read as one aligned row, clear of
-  // the downstream nodes. Each label keeps its own cross-axis position. Grouped
-  // by source id in input order; deterministic.
+  // the downstream nodes. A multi-rank edge keeps its own level so its label
+  // stays attached to its route. Each label keeps its own cross-axis position.
+  // Grouped by source id in input order; deterministic.
   const labeledBySource = new Map<NodeId, PositionedEdge[]>();
   for (const pe of positionedEdges) {
     if (pe.labelPoint === undefined) continue;
     // Back-edges and staggered pairs keep the level found on their own route.
     const fromV = vById.get(pe.from);
     const toV = vById.get(pe.to);
-    if (fromV === undefined || toV === undefined || fromV.rank >= toV.rank ||
+    if (fromV === undefined || toV === undefined || toV.rank !== fromV.rank + 1 ||
         stackedPositioned.has(pe)) continue;
     const list = labeledBySource.get(pe.from);
     if (list) list.push(pe);
@@ -1374,6 +1422,55 @@ export function layoutFlow(
     for (const pe of group) {
       const lp = pe.labelPoint as Point;
       pe.labelPoint = direction === "TD" ? { x: lp.x, y: level } : { x: level, y: lp.y };
+    }
+  }
+
+  // A long inline badge can hide a different arrow crossing beneath it. Move
+  // such badges to the nearest clear side of their own route and add a short
+  // leader back to that route. Parallel pairs were handled above. Keep an
+  // inline badge when neither side clears the surrounding boxes and paths.
+  for (let i = 0; i < positionedEdges.length; i++) {
+    const pe = positionedEdges[i] as PositionedEdge;
+    if (pe.labelPoint === undefined || pe.labelAnchor !== undefined) continue;
+    const halfW = badgeWidth(pe.labelWidth ?? 0) / 2;
+    const halfH = badgeHeight(pe.labelHeight ?? 0) / 2;
+    const badgeAt = (point: Point): Bounds => boxBounds(point.x, point.y, halfW * 2, halfH * 2);
+    const hitsAnotherRoute = (box: Bounds): boolean => positionedEdges.some((other, j) => {
+      if (j === i || other.kind !== "flow") return false;
+      const points = expandPath(edgePoints[j] as Point[], edgeStyle, mainAxis);
+      for (let k = 1; k < points.length; k++) {
+        if (segmentHitsBox(points[k - 1] as Point, points[k] as Point, box, 0)) return true;
+      }
+      return false;
+    });
+    if (!hitsAnotherRoute(badgeAt(pe.labelPoint))) continue;
+
+    const anchor = pe.labelPoint;
+    const ownPath = expandPath(edgePoints[i] as Point[], edgeStyle, mainAxis);
+    const anchorBox = boxBounds(anchor.x, anchor.y, 2, 2);
+    if (!ownPath.some((point, k) => k > 0 &&
+      segmentHitsBox(ownPath[k - 1] as Point, point, anchorBox, 0))) continue;
+    const crossHalf = direction === "TD" ? halfW : halfH;
+    const candidates = [-1, 1].map((side) => direction === "TD"
+      ? { x: anchor.x + side * (crossHalf + LABEL_GAP), y: anchor.y }
+      : { x: anchor.x, y: anchor.y + side * (crossHalf + LABEL_GAP) });
+    const clear = (point: Point): boolean => {
+      const box = badgeAt(point);
+      if (hitsAnotherRoute(box)) return false;
+      if (nodes.some((node) => boxesOverlap(box, boxBounds(node.x, node.y, node.w ?? 0, node.h ?? 0), LABEL_GAP / 2))) {
+        return false;
+      }
+      return positionedEdges.every((other, j) => j === i || other.labelPoint === undefined ||
+        !boxesOverlap(box, badgeAtOther(other), LABEL_GAP / 2));
+    };
+    const badgeAtOther = (other: PositionedEdge): Bounds => boxBounds(
+      (other.labelPoint as Point).x, (other.labelPoint as Point).y,
+      badgeWidth(other.labelWidth ?? 0), badgeHeight(other.labelHeight ?? 0),
+    );
+    const selected = candidates.find(clear);
+    if (selected !== undefined) {
+      pe.labelAnchor = anchor;
+      pe.labelPoint = selected;
     }
   }
 
@@ -1433,6 +1530,9 @@ export function layoutFlow(
     for (const pe of positionedEdges) {
       if (pe.labelPoint !== undefined) {
         pe.labelPoint = { x: pe.labelPoint.x + shiftX, y: pe.labelPoint.y + shiftY };
+      }
+      if (pe.labelAnchor !== undefined) {
+        pe.labelAnchor = { x: pe.labelAnchor.x + shiftX, y: pe.labelAnchor.y + shiftY };
       }
     }
     routeMaxX += shiftX;
