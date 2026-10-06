@@ -1042,9 +1042,10 @@ export function layoutFlow(
     // parallel corridor, so it never overlaps the forward edge between the same
     // pair. The corridor must clear EVERY node in the ranks it travels past
     // (a wide box on an intermediate rank would otherwise be sliced), so it
-    // offsets from the outermost cross extent across the spanned rank range. A
-    // parallel-pair reverse edge skips this — it already runs straight through
-    // the gap, offset from its forward twin.
+    // offsets from the outermost cross extent across the spanned rank range.
+    // Notes on that side occupy the same corridor, so include their reserved
+    // outset before choosing the detour. A parallel-pair reverse edge skips
+    // this — it already runs straight through the gap, offset from its twin.
     const backDetour: Point[] = [];
     if (isBackEdge && !parallel) {
       const goingEnd = exitFace === "cross-end";
@@ -1057,8 +1058,13 @@ export function layoutFlow(
         if (v.rank < rLo || v.rank > rHi) continue;
         const half = (direction === "TD" ? v.w : v.h) / 2;
         const cross = direction === "TD" ? v.center.x : v.center.y;
-        if (cross + half + v.loopPad > spanTrail) spanTrail = cross + half + v.loopPad;
-        if (cross - half < spanLead) spanLead = cross - half;
+        const notes = noteOutset.get(v.id);
+        if (cross + half + v.loopPad + (notes?.trail ?? 0) > spanTrail) {
+          spanTrail = cross + half + v.loopPad + (notes?.trail ?? 0);
+        }
+        if (cross - half - (notes?.lead ?? 0) < spanLead) {
+          spanLead = cross - half - (notes?.lead ?? 0);
+        }
       }
       if (direction === "TD") {
         const corridorX = goingEnd

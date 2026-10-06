@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layout, layoutFlow, parseFlow } from "../src/index.js";
+import { joycoTheme, layout, layoutFlow, parseFlow, themeFlowOptions } from "../src/index.js";
 import { badgeWidth, badgeHeight, BADGE_H, measurePlainMultiline, renderedSvgSegments } from "../src/geometry.js";
 import type { FlowGraph, NodeShape } from "../src/index.js";
 
@@ -1282,6 +1282,31 @@ note decode below "must finish before reveal"`;
     const forwardCoords = forward.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
     expect(forwardCoords[0]).toBeCloseTo(node("demand").x + node("demand").w! / 2, 5);
     expect(forwardCoords.at(-2)).toBeCloseTo(node("transfer").x - node("transfer").w! / 2, 5);
+
+    // The playground's compact JOYCO preset previously made the return lane
+    // touch the decoded note, sending that note left of the transfer note.
+    const themedOptions = themeFlowOptions(joycoTheme, { direction: "LR", maxNodeWidth: 260 });
+    const themed = layoutFlow(parsed.graph, themedOptions);
+    expect(layoutFlow(parsed.graph, themedOptions)).toEqual(themed);
+    const themedTransfer = themed.nodes.find((n) => n.label === "network or cache")!;
+    const themedDecode = themed.nodes.find((n) => n.label === "must finish before reveal")!;
+    expect(themedTransfer.x + themedTransfer.w! / 2).toBeLessThan(
+      themedDecode.x - themedDecode.w! / 2,
+    );
+    const themedReturn = themed.edges.find((e) => e.from === "evicted" && e.to === "decode")!;
+    const themedBox = {
+      left: themedDecode.x - themedDecode.w! / 2,
+      right: themedDecode.x + themedDecode.w! / 2,
+      top: themedDecode.y - themedDecode.h! / 2,
+      bottom: themedDecode.y + themedDecode.h! / 2,
+    };
+    expect(samplesHitBox(themedReturn.path, themedBox)).toBe(false);
+    const themedLeader = themed.edges.find((e) => e.from === themedDecode.id)!;
+    expect(themedLeader.path.match(/-?\d+(?:\.\d+)?/g)).toHaveLength(4);
+    const returnSamples = sampleSvg(themedReturn.path);
+    expect(sampleSvg(themedLeader.path).some((a) =>
+      returnSamples.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 1),
+    )).toBe(false);
   });
 
   it("reserves a clear gutter for a note between two LR branches", () => {
