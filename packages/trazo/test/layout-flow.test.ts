@@ -1307,6 +1307,49 @@ note decode below "must finish before reveal"`;
     expect(sampleSvg(themedLeader.path).some((a) =>
       returnSamples.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 1),
     )).toBe(false);
+
+    const curved = layoutFlow(parsed.graph, { ...themedOptions, edgeStyle: "bezier" });
+    const curvedTransfer = curved.nodes.find((n) => n.label === "network or cache")!;
+    const curvedDecode = curved.nodes.find((n) => n.label === "must finish before reveal")!;
+    expect(curvedTransfer.x + curvedTransfer.w! / 2).toBeLessThan(
+      curvedDecode.x - curvedDecode.w! / 2,
+    );
+    const curvedReturn = curved.edges.find((e) => e.from === "evicted" && e.to === "decode")!;
+    expect(samplesHitBox(curvedReturn.path, {
+      left: curvedDecode.x - curvedDecode.w! / 2,
+      right: curvedDecode.x + curvedDecode.w! / 2,
+      top: curvedDecode.y - curvedDecode.h! / 2,
+      bottom: curvedDecode.y + curvedDecode.h! / 2,
+    })).toBe(false);
+  });
+
+  it("keeps notes between nested return lanes in the JOYCO layout", () => {
+    const source = `flow LR\nstart["Start"]:primary\nfetch["Fetch bytes"]:info\nparse["Parse payload"]:warning\nrender["Render result"]:success\ndone["Done"]:success\nstart --> fetch\nfetch --> parse\nparse --> render\nrender --> done\nrender --> fetch\ndone --> parse\nnote fetch below "cache may respond"\nnote parse below "validate before display"\nnote render above "commit only complete output"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    for (const edgeStyle of ["elbow45", "bezier"] as const) {
+      const options = themeFlowOptions(joycoTheme, { direction: "LR", maxNodeWidth: 260, edgeStyle });
+      const g = layoutFlow(parsed.graph, options);
+      expect(layoutFlow(parsed.graph, options)).toEqual(g);
+      const fetchNote = g.nodes.find((n) => n.label === "cache may respond")!;
+      const parseNote = g.nodes.find((n) => n.label === "validate before display")!;
+      expect(fetchNote.x + fetchNote.w! / 2, edgeStyle).toBeLessThan(parseNote.x - parseNote.w! / 2);
+      for (const note of [fetchNote, parseNote]) {
+        const box = {
+          left: note.x - note.w! / 2, right: note.x + note.w! / 2,
+          top: note.y - note.h! / 2, bottom: note.y + note.h! / 2,
+        };
+        const leader = g.edges.find((e) => e.from === note.id)!;
+        const leaderSamples = sampleSvg(leader.path);
+        for (const edge of g.edges.filter((e) => e.kind === "flow")) {
+          expect(samplesHitBox(edge.path, box), `${edgeStyle}: ${note.label} / ${edge.from}->${edge.to}`).toBe(false);
+          const routeSamples = sampleSvg(edge.path);
+          expect(leaderSamples.some((a) => routeSamples.some((b) =>
+            Math.hypot(a.x - b.x, a.y - b.y) < 1,
+          )), `${edgeStyle}: ${note.label} leader / ${edge.from}->${edge.to}`).toBe(false);
+        }
+      }
+    }
   });
 
   it("reserves a clear gutter for a note between two LR branches", () => {

@@ -686,9 +686,53 @@ export function layoutFlow(
     stackedPairs.push({ forward, reverse, gapRank, forwardMain, reverseMain });
   }
 
+  // A note attached to a back-edge target must sit beside that edge's entry
+  // lane. Nested returns can put another vertical lane a few ranks later,
+  // leaving too little main-axis width for the note between them. Reserve
+  // enough room after the target rank for the chip to slide clear of both
+  // lanes. This is only needed on a side used by a non-parallel back-edge.
+  const noteGapAfter = Array.from({ length: layers.length }, () => 0);
+  if (graph.notes) {
+    const returns = edges.filter((e) => {
+      const fromV = vById.get(e.from) as Vertex;
+      const toV = vById.get(e.to) as Vertex;
+      return fromV.rank > toV.rank && !isParallelPair(fromV, toV, e);
+    });
+    const returnTargets = new Set(returns.map((e) => e.to));
+    const returnEndpoints = returns.flatMap((e) => [
+      vById.get(e.from) as Vertex, vById.get(e.to) as Vertex,
+    ]);
+    for (const note of graph.notes) {
+      if (!returnTargets.has(note.target)) continue;
+      if (direction === "LR" ? note.side !== "below" :
+          note.side !== "left" && note.side !== "right") continue;
+      const target = vById.get(note.target);
+      if (target === undefined) continue;
+      const later = returnEndpoints.filter((v) => v.rank > target.rank);
+      if (later.length === 0) continue;
+      const laneRank = Math.min(...later.map((v) => v.rank));
+      const { w, h } = sizeShape("box", wrapNodeLabel(note.label), sizeOpts);
+      const noteMain = direction === "LR" ? w : h;
+      const targetMain = direction === "LR" ? target.w : target.h;
+      const laneMain = Math.min(...later.filter((v) => v.rank === laneRank)
+        .map((v) => direction === "LR" ? v.w : v.h));
+      let laneDistance = (laneMain - targetMain) / 2;
+      for (let r = target.rank; r < laneRank; r++) {
+        laneDistance += (rankThickness[r] as number) +
+          Math.max(layerGap, labelGapAfter[r] as number);
+      }
+      const baseGap = Math.max(layerGap, labelGapAfter[target.rank] as number);
+      const needed = baseGap + Math.max(0,
+        noteMain + NOTE_CLEARANCE * 2 + 3 +
+          (edgeStyle === "bezier" ? stub + nodeGap : 0) - laneDistance,
+      );
+      noteGapAfter[target.rank] = Math.max(noteGapAfter[target.rank] as number, needed);
+    }
+  }
+
   // Main-axis origin per rank: padding + Σ(prev thickness + per-boundary gap) +
-  // half. The gap after rank r is the larger of the fixed `layerGap` and the
-  // room its crossing labels need, so unlabeled ranks keep tight spacing.
+  // half. The gap after rank r is the largest of the fixed `layerGap`, the
+  // room its crossing labels need, and the room for notes beside return lanes.
   const rankMainStart: number[] = [];
   {
     let acc = padding + mainLead;
@@ -697,7 +741,8 @@ export function layoutFlow(
       // lower box's title strip.
       if (hasGroups && crossesGroupBoundary(r)) acc += GROUP_PAD * 2 + GROUP_TITLE_H;
       rankMainStart[r] = acc;
-      acc += (rankThickness[r] as number) + Math.max(layerGap, labelGapAfter[r] as number);
+      acc += (rankThickness[r] as number) +
+        Math.max(layerGap, labelGapAfter[r] as number, noteGapAfter[r] as number);
     }
   }
 
@@ -1049,16 +1094,17 @@ export function layoutFlow(
     const backDetour: Point[] = [];
     if (isBackEdge && !parallel) {
       const goingEnd = exitFace === "cross-end";
-      const clearance = nodeGap;
       const rLo = Math.min(fromV.rank, toV.rank);
       const rHi = Math.max(fromV.rank, toV.rank);
       let spanTrail = -Infinity;
       let spanLead = Infinity;
+      let hasSideNote = false;
       for (const v of vById.values()) {
         if (v.rank < rLo || v.rank > rHi) continue;
         const half = (direction === "TD" ? v.w : v.h) / 2;
         const cross = direction === "TD" ? v.center.x : v.center.y;
         const notes = noteOutset.get(v.id);
+        if (goingEnd ? (notes?.trail ?? 0) > 0 : (notes?.lead ?? 0) > 0) hasSideNote = true;
         if (cross + half + v.loopPad + (notes?.trail ?? 0) > spanTrail) {
           spanTrail = cross + half + v.loopPad + (notes?.trail ?? 0);
         }
@@ -1066,6 +1112,10 @@ export function layoutFlow(
           spanLead = cross - half - (notes?.lead ?? 0);
         }
       }
+      // Bézier smoothing bows inward from the detour waypoints. Give it more
+      // cross-axis room only when a note occupies that side of the corridor.
+      const clearance = nodeGap +
+        (edgeStyle === "bezier" && hasSideNote ? calloutGap + NOTE_CLEARANCE : 0);
       if (direction === "TD") {
         const corridorX = goingEnd
           ? Math.max(exitStub.x, entryStub.x, spanTrail + stub) + clearance
