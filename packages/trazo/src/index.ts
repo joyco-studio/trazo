@@ -61,6 +61,7 @@ export type {
   EdgeStyle,
   LabelCase,
   PositionedGraph,
+  DrawingPrimitive,
   LayoutOptions,
   GitLayoutOptions,
   GitOrientation,
@@ -107,6 +108,8 @@ export { layoutGit } from "./layout-git.js";
 export { layoutFlow } from "./layout-flow.js";
 export { layoutSequence } from "./layout-sequence.js";
 export { layoutBlock } from "./layout-block.js";
+export { importExcalidraw } from "./import-excalidraw.js";
+export type { ExcalidrawDocument, ExcalidrawImportOptions } from "./import-excalidraw.js";
 export { measure } from "./measure.js";
 export { parseGit } from "./parse-git.js";
 export { parseFlow } from "./parse-flow.js";
