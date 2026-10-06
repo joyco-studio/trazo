@@ -57,10 +57,12 @@ import {
   measureMultiline,
   measurePlainMultiline,
   pathThrough,
+  renderedPathSegments,
   roleColorKey,
   sizeShape,
   wrapLabel,
   type AnchorFace,
+  type RenderedSegment,
 } from "./geometry.js";
 import { assignCross } from "./bk-align.js";
 
@@ -77,6 +79,113 @@ const DEFAULTS = {
 
 /** Fixed number of barycenter ordering sweeps (down + up counts as 2). */
 const ORDERING_SWEEPS = 4;
+
+/** Breathing room between an annotation and an unrelated edge or box. */
+const NOTE_CLEARANCE = 8;
+/** Minimum cross-axis separation for parallel badges that remain side by side. */
+const PARALLEL_LABEL_CLEARANCE = 4;
+
+interface Bounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function boxBounds(x: number, y: number, w: number, h: number): Bounds {
+  return { left: x - w / 2, top: y - h / 2, right: x + w / 2, bottom: y + h / 2 };
+}
+
+function boxesOverlap(a: Bounds, b: Bounds, gap: number): boolean {
+  return a.left < b.right + gap && a.right > b.left - gap &&
+    a.top < b.bottom + gap && a.bottom > b.top - gap;
+}
+
+/** Liang–Barsky clip: does a straight edge segment enter an inflated box? */
+function segmentHitsBox(a: Point, b: Point, box: Bounds, gap: number): boolean {
+  const left = box.left - gap;
+  const right = box.right + gap;
+  const top = box.top - gap;
+  const bottom = box.bottom + gap;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let enter = 0;
+  let leave = 1;
+  const limits: Array<[number, number]> = [
+    [-dx, a.x - left], [dx, right - a.x],
+    [-dy, a.y - top], [dy, bottom - a.y],
+  ];
+  for (const [p, q] of limits) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) enter = Math.max(enter, t);
+    else leave = Math.min(leave, t);
+    if (enter > leave) return false;
+  }
+  return true;
+}
+
+function pathHitsBox(path: RenderedSegment[], box: Bounds, gap: number): boolean {
+  return path.some(({ a, b, error }) => segmentHitsBox(a, b, box, gap + error));
+}
+
+function pointSegmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1,
+    ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq,
+  ));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
+
+function closestPointOnPath(point: Point, path: RenderedSegment[]): Point {
+  let closest = point;
+  let best = Infinity;
+  for (const { a, b } of path) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSq = dx * dx + dy * dy;
+    const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1,
+      ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq,
+    ));
+    const candidate = { x: a.x + t * dx, y: a.y + t * dy };
+    const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+    if (distance < best) {
+      best = distance;
+      closest = candidate;
+    }
+  }
+  return closest;
+}
+
+/** Minimum distance between two drawn segments, accounting for a crossing. */
+function segmentDistance(a: Point, b: Point, c: Point, d: Point): number {
+  const cross = (u: Point, v: Point): number => u.x * v.y - u.y * v.x;
+  const r = { x: b.x - a.x, y: b.y - a.y };
+  const s = { x: d.x - c.x, y: d.y - c.y };
+  const denom = cross(r, s);
+  if (Math.abs(denom) > 1e-9) {
+    const delta = { x: c.x - a.x, y: c.y - a.y };
+    const t = cross(delta, s) / denom;
+    const u = cross(delta, r) / denom;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return 0;
+  }
+  return Math.min(
+    pointSegmentDistance(a, c, d), pointSegmentDistance(b, c, d),
+    pointSegmentDistance(c, a, b), pointSegmentDistance(d, a, b),
+  );
+}
+
+function pathsTooClose(a: RenderedSegment[], b: RenderedSegment[], gap: number): boolean {
+  return a.some((first) => b.some((second) =>
+    segmentDistance(first.a, first.b, second.a, second.b) <=
+      gap + first.error + second.error,
+  ));
+}
 
 /**
  * A point `stub` px outward from `anchor` along the perpendicular of its face,
@@ -475,14 +584,15 @@ export function layoutFlow(
   // than the rank spacing can still graze an endpoint's box; that case is
   // inherent (no on-line placement clears a badge wider than the node spacing).
   // A "parallel pair": two nodes on ADJACENT ranks with edges in BOTH directions
-  // (a↔b), each the SOLE real node on its rank. That's a 1↔1 sync relationship
+  // (a↔b), each the SOLE vertex on its rank. That's a 1↔1 sync relationship
   // (e.g. commit / scroll-deltas between two threads) — Mermaid draws it as two
   // parallel lines with both labels centered BETWEEN the boxes. Both edges route
   // straight through the shared inter-rank gap (see edge routing below), offset to
   // opposite sides of centre, instead of arcing the reverse edge out on a lateral
   // corridor (which strands its label at the far edge). The "sole on rank" guard
   // keeps genuine branch/merge loops — a retry edge back to a decision that fans
-  // out, so its target rank has siblings — on the lateral arc. Deterministic.
+  // out, so its target rank has siblings — on the lateral arc. It also excludes
+  // dummy lanes carrying longer edges through this gap. Deterministic.
   const edgeDirs = new Set<string>();
   for (const e of edges) edgeDirs.add(`${e.from} ${e.to}`);
   const realPerRank: number[] = layers.map(
@@ -492,7 +602,18 @@ export function layoutFlow(
     Math.abs(fromV.rank - toV.rank) === 1 &&
     edgeDirs.has(`${e.to} ${e.from}`) &&
     (realPerRank[fromV.rank] as number) === 1 &&
-    (realPerRank[toV.rank] as number) === 1;
+    (realPerRank[toV.rank] as number) === 1 &&
+    // A dummy lane carries a spanning edge through this same gap. The pair's
+    // outer badges cannot safely straddle that extra route.
+    (layers[fromV.rank] as Vertex[]).length === 1 &&
+    (layers[toV.rank] as Vertex[]).length === 1;
+  const parallelOffset = (fromV: Vertex, toV: Vertex): number => {
+    const minHalf = Math.min(
+      direction === "TD" ? fromV.w : fromV.h,
+      direction === "TD" ? toV.w : toV.h,
+    ) / 2;
+    return Math.min(BADGE_H / 2 + 2, Math.max(0, minHalf - 4));
+  };
 
   const labelGapAfter: number[] = new Array(layers.length).fill(0);
   for (const e of edges) {
@@ -519,9 +640,99 @@ export function layoutFlow(
     if (need > (labelGapAfter[gapRank] as number)) labelGapAfter[gapRank] = need;
   }
 
+  // A labeled 1↔1 pair normally fits by offsetting its two lines across the
+  // flow. In TD, wide badges can overlap despite that offset (and in LR a tall
+  // multiline badge can do the same). Reserve room to stagger only those pairs
+  // along their lines, leaving already-clear pairs at their usual gap center.
+  const pairLabels = new Map<string, FlowEdge[]>();
+  for (const e of edges) {
+    if (e.label === undefined) continue;
+    const fromV = vById.get(e.from) as Vertex;
+    const toV = vById.get(e.to) as Vertex;
+    if (!isParallelPair(fromV, toV, e)) continue;
+    const key = [indexOf.get(e.from), indexOf.get(e.to)].sort((a, b) => (a as number) - (b as number)).join(":");
+    const list = pairLabels.get(key);
+    if (list) list.push(e);
+    else pairLabels.set(key, [e]);
+  }
+  const stackedPairs: Array<{
+    forward: FlowEdge;
+    reverse: FlowEdge;
+    gapRank: number;
+    forwardMain: number;
+    reverseMain: number;
+  }> = [];
+  for (const pair of pairLabels.values()) {
+    if (pair.length !== 2) continue;
+    const forward = pair.find((e) =>
+      (vById.get(e.from) as Vertex).rank < (vById.get(e.to) as Vertex).rank,
+    );
+    const reverse = pair.find((e) => e !== forward);
+    if (forward === undefined || reverse === undefined ||
+        forward.from !== reverse.to || forward.to !== reverse.from) continue;
+    const fromV = vById.get(forward.from) as Vertex;
+    const toV = vById.get(forward.to) as Vertex;
+    const f = measurePlainMultiline(forward.label as string, undefined, textCase);
+    const r = measurePlainMultiline(reverse.label as string, undefined, textCase);
+    const forwardCross = direction === "TD" ? badgeWidth(f.width) : badgeHeight(f.height);
+    const reverseCross = direction === "TD" ? badgeWidth(r.width) : badgeHeight(r.height);
+    const separation = 2 * parallelOffset(fromV, toV);
+    if (separation >= (forwardCross + reverseCross) / 2 + PARALLEL_LABEL_CLEARANCE) continue;
+    const forwardMain = direction === "TD" ? badgeHeight(f.height) : badgeWidth(f.width);
+    const reverseMain = direction === "TD" ? badgeHeight(r.height) : badgeWidth(r.width);
+    const gapRank = fromV.rank;
+    const need = forwardMain + reverseMain + LABEL_GAP * 3;
+    if (need > (labelGapAfter[gapRank] as number)) labelGapAfter[gapRank] = need;
+    stackedPairs.push({ forward, reverse, gapRank, forwardMain, reverseMain });
+  }
+
+  // A note attached to a back-edge target must sit beside that edge's entry
+  // lane. Nested returns can put another vertical lane a few ranks later,
+  // leaving too little main-axis width for the note between them. Reserve
+  // enough room after the target rank for the chip to slide clear of both
+  // lanes. This is only needed on a side used by a non-parallel back-edge.
+  const noteGapAfter = Array.from({ length: layers.length }, () => 0);
+  if (graph.notes) {
+    const returns = edges.filter((e) => {
+      const fromV = vById.get(e.from) as Vertex;
+      const toV = vById.get(e.to) as Vertex;
+      return fromV.rank > toV.rank && !isParallelPair(fromV, toV, e);
+    });
+    const returnTargets = new Set(returns.map((e) => e.to));
+    const returnEndpoints = returns.flatMap((e) => [
+      vById.get(e.from) as Vertex, vById.get(e.to) as Vertex,
+    ]);
+    for (const note of graph.notes) {
+      if (!returnTargets.has(note.target)) continue;
+      if (direction === "LR" ? note.side !== "below" :
+          note.side !== "left" && note.side !== "right") continue;
+      const target = vById.get(note.target);
+      if (target === undefined) continue;
+      const later = returnEndpoints.filter((v) => v.rank > target.rank);
+      if (later.length === 0) continue;
+      const laneRank = Math.min(...later.map((v) => v.rank));
+      const { w, h } = sizeShape("box", wrapNodeLabel(note.label), sizeOpts);
+      const noteMain = direction === "LR" ? w : h;
+      const targetMain = direction === "LR" ? target.w : target.h;
+      const laneMain = Math.min(...later.filter((v) => v.rank === laneRank)
+        .map((v) => direction === "LR" ? v.w : v.h));
+      let laneDistance = (laneMain - targetMain) / 2;
+      for (let r = target.rank; r < laneRank; r++) {
+        laneDistance += (rankThickness[r] as number) +
+          Math.max(layerGap, labelGapAfter[r] as number);
+      }
+      const baseGap = Math.max(layerGap, labelGapAfter[target.rank] as number);
+      const needed = baseGap + Math.max(0,
+        noteMain + NOTE_CLEARANCE * 2 + 3 +
+          (edgeStyle === "bezier" ? stub + nodeGap : 0) - laneDistance,
+      );
+      noteGapAfter[target.rank] = Math.max(noteGapAfter[target.rank] as number, needed);
+    }
+  }
+
   // Main-axis origin per rank: padding + Σ(prev thickness + per-boundary gap) +
-  // half. The gap after rank r is the larger of the fixed `layerGap` and the
-  // room its crossing labels need, so unlabeled ranks keep tight spacing.
+  // half. The gap after rank r is the largest of the fixed `layerGap`, the
+  // room its crossing labels need, and the room for notes beside return lanes.
   const rankMainStart: number[] = [];
   {
     let acc = padding + mainLead;
@@ -530,7 +741,8 @@ export function layoutFlow(
       // lower box's title strip.
       if (hasGroups && crossesGroupBoundary(r)) acc += GROUP_PAD * 2 + GROUP_TITLE_H;
       rankMainStart[r] = acc;
-      acc += (rankThickness[r] as number) + Math.max(layerGap, labelGapAfter[r] as number);
+      acc += (rankThickness[r] as number) +
+        Math.max(layerGap, labelGapAfter[r] as number, noteGapAfter[r] as number);
     }
   }
 
@@ -539,6 +751,27 @@ export function layoutFlow(
   // — each padded by GROUP_PAD — overlaps the other. Two abutting boxes need
   // 2*GROUP_PAD between their member edges; nodeGap already covers part of it.
   const groupBoundaryGap = hasGroups ? Math.max(0, GROUP_PAD * 2 - nodeGap) : 0;
+
+  // A note placed between siblings needs cross-axis room before their flow
+  // routes are computed. Otherwise a centered note can cover the next branch
+  // node, forcing a long sideways leader through another rank's boxes.
+  const noteOutset = new Map<NodeId, { lead: number; trail: number }>();
+  if (graph.notes) {
+    for (const note of graph.notes) {
+      const target = vById.get(note.target);
+      if (target === undefined || target.isDummy) continue;
+      const trailing = direction === "LR" ? note.side === "below" : note.side === "right";
+      const leading = direction === "LR" ? note.side === "above" : note.side === "left";
+      if (!trailing && !leading) continue;
+      const label = wrapNodeLabel(note.label);
+      const { w, h } = sizeShape("box", label, sizeOpts);
+      const extent = direction === "LR" ? h : w;
+      const out = noteOutset.get(note.target) ?? { lead: 0, trail: 0 };
+      if (trailing) out.trail += calloutGap + extent;
+      else out.lead += calloutGap + extent;
+      noteOutset.set(note.target, out);
+    }
+  }
 
   let crossMax = 0;
   for (const layer of layers) {
@@ -589,7 +822,9 @@ export function layoutFlow(
     const halfA = (direction === "TD" ? a.w : a.h) / 2;
     const halfB = (direction === "TD" ? b.w : b.h) / 2;
     const boundary = hasGroups && a.group !== b.group ? groupBoundaryGap : 0;
-    return halfA + a.loopPad + nodeGap + boundary + halfB;
+    const noteRoom = (noteOutset.get(a.id)?.trail ?? 0) +
+      (noteOutset.get(b.id)?.lead ?? 0) + NOTE_CLEARANCE;
+    return halfA + a.loopPad + Math.max(nodeGap, noteRoom) + boundary + halfB;
   };
 
   // Proper adjacency for BK: adjacent-rank segments only. A forward edge's
@@ -803,14 +1038,10 @@ export function layoutFlow(
     // — the low→high (forward) twin toward cross-start, the high→low (reverse)
     // toward cross-end — so the two lines run parallel with a clear gap and each
     // label centres on its own line, stacked between the boxes (Mermaid parity).
-    // The offset is half the label-badge height (so the two centred labels clear
-    // each other), clamped to stay on the node face.
+    // The base offset fits ordinary single-line badges; wider/taller pairs get
+    // their labels staggered along the routes after edge placement.
     if (parallel) {
-      const minHalf = Math.min(
-        direction === "TD" ? fromV.w : fromV.h,
-        direction === "TD" ? toV.w : toV.h,
-      ) / 2;
-      const halfOff = Math.min(BADGE_H / 2 + 2, Math.max(0, minHalf - 4));
+      const halfOff = parallelOffset(fromV, toV);
       const d = (fromV.rank < toV.rank ? -1 : 1) * halfOff;
       exitAnchor =
         direction === "TD"
@@ -856,24 +1087,35 @@ export function layoutFlow(
     // parallel corridor, so it never overlaps the forward edge between the same
     // pair. The corridor must clear EVERY node in the ranks it travels past
     // (a wide box on an intermediate rank would otherwise be sliced), so it
-    // offsets from the outermost cross extent across the spanned rank range. A
-    // parallel-pair reverse edge skips this — it already runs straight through
-    // the gap, offset from its forward twin.
+    // offsets from the outermost cross extent across the spanned rank range.
+    // Notes on that side occupy the same corridor, so include their reserved
+    // outset before choosing the detour. A parallel-pair reverse edge skips
+    // this — it already runs straight through the gap, offset from its twin.
     const backDetour: Point[] = [];
     if (isBackEdge && !parallel) {
       const goingEnd = exitFace === "cross-end";
-      const clearance = nodeGap;
       const rLo = Math.min(fromV.rank, toV.rank);
       const rHi = Math.max(fromV.rank, toV.rank);
       let spanTrail = -Infinity;
       let spanLead = Infinity;
+      let hasSideNote = false;
       for (const v of vById.values()) {
         if (v.rank < rLo || v.rank > rHi) continue;
         const half = (direction === "TD" ? v.w : v.h) / 2;
         const cross = direction === "TD" ? v.center.x : v.center.y;
-        if (cross + half + v.loopPad > spanTrail) spanTrail = cross + half + v.loopPad;
-        if (cross - half < spanLead) spanLead = cross - half;
+        const notes = noteOutset.get(v.id);
+        if (goingEnd ? (notes?.trail ?? 0) > 0 : (notes?.lead ?? 0) > 0) hasSideNote = true;
+        if (cross + half + v.loopPad + (notes?.trail ?? 0) > spanTrail) {
+          spanTrail = cross + half + v.loopPad + (notes?.trail ?? 0);
+        }
+        if (cross - half - (notes?.lead ?? 0) < spanLead) {
+          spanLead = cross - half - (notes?.lead ?? 0);
+        }
       }
+      // Bézier smoothing bows inward from the detour waypoints. Give it more
+      // cross-axis room only when a note occupies that side of the corridor.
+      const clearance = nodeGap +
+        (edgeStyle === "bezier" && hasSideNote ? calloutGap + NOTE_CLEARANCE : 0);
       if (direction === "TD") {
         const corridorX = goingEnd
           ? Math.max(exitStub.x, entryStub.x, spanTrail + stub) + clearance
@@ -993,28 +1235,31 @@ export function layoutFlow(
   // ── Annotations (`note`) ──────────────────────────────────────────────
   // Notes never participate in RANKING/ordering (they are not in `graph.nodes`,
   // so `assignRanks` never saw them and no dummy chain was built) — they can
-  // never change which rank a real node lands in. Placement is a post-pass over
-  // the already-resolved real-node centers.
+  // never change which rank a real node lands in. A note between same-rank
+  // siblings may reserve cross-axis space above; exact box placement is a
+  // post-pass over the already-resolved real-node centers.
   //
-  // Each note is a filled chip sized like a box node, sitting in the gutter on
-  // its `side`, offset from the target's near face by `calloutGap` and CENTERED
-  // on the target's cross-axis coordinate — so its leader is a straight
-  // PERPENDICULAR arrow (vertical for above/below, horizontal for left/right)
-  // and the chip reads as aligned with its node. Multiple notes on the same side
-  // stack outward (each beyond the previous).
+  // Each note starts centered in the gutter on its requested side. If that box
+  // would cover a routed flow edge, slide it along the target's face to the
+  // nearest clear position. The requested side and routed flow edges stay
+  // fixed. Multiple notes on the same side stack outward as before.
   //
   // The note chip + leader are appended to `nodes`/`positionedEdges`/`edgePoints`
   // BEFORE the label-bounds normalization below, so the same "labels grow the
   // canvas" pass that guards edge labels also grows the viewBox for a note and,
   // when one would spill past the top/left origin, SHIFTS the whole graph to keep
   // it in frame. That shift is a pure translation (relative layout unchanged) and
-  // keeps the note aligned; it's preferred over nudging the note off its target's
-  // axis. So a note never clips, but it is only position-neutral for real nodes
-  // when no such shift is needed (e.g. a below/right note with room, as in the
-  // canonical LR pipeline). No collision routing: a note placed where a real node
-  // already sits (e.g. `below` a mid-pipeline node in TD) may overlap it — put it
-  // on a side with room.
+  // keeps the note on its requested side. A note is position-neutral for real
+  // nodes unless sibling spacing was reserved or this origin shift is needed.
+  // Collision handling never changes ranks or reroutes the flow edges.
+  const mainAxis = direction === "LR" ? "x" : "y";
+  const needsClearance = (graph.notes?.length ?? 0) > 0 ||
+    positionedEdges.some((edge) => edge.labelPoint !== undefined);
+  const flowPaths = needsClearance
+    ? edgePoints.map((points) => renderedPathSegments(points, edgeStyle, mainAxis))
+    : [];
   const noteBoxes: PositionedNode[] = [];
+  const movedNoteEdges = new Set<number>();
   if (graph.notes && graph.notes.length > 0) {
     // Accumulated outward distance already consumed by prior notes on a side,
     // keyed `${target}|${side}`, so stacked notes step past each other.
@@ -1040,24 +1285,180 @@ export function layoutFlow(
       const centerDist = nearFaceDist + noteExtent / 2;
       stackOffset.set(key, consumed + noteExtent + calloutGap);
 
-      // Keep the note CENTERED on the target's cross-axis so the leader stays
-      // perpendicular (a straight vertical arrow for above/below, horizontal for
-      // left/right) and the chip reads as aligned with its node. A note that
-      // would spill past the top/left origin is NOT nudged off this axis — it
-      // folds into the same "labels grow the canvas" normalization below, which
-      // shifts the whole graph so the note is never clipped AND stays aligned.
-      // (Real nodes may translate as a result; alignment + no-clip is preferred.)
-      const nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
-      const ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+      let nx = vertical ? tv.center.x : tv.center.x + sign * centerDist;
+      let ny = vertical ? tv.center.y + sign * centerDist : tv.center.y;
+      const initialAlong = vertical ? nx : ny;
+      const halfAlong = (vertical ? nw : nh) / 2;
+      const fixedMin = vertical ? ny - nh / 2 : nx - nw / 2;
+      const fixedMax = vertical ? ny + nh / 2 : nx + nw / 2;
+      // The target itself defines the requested gutter. In particular,
+      // calloutGap: 0 may intentionally put the chip flush against its face.
+      const occupied = nodes
+        .filter((n) => n.id !== note.target)
+        .map((n) => boxBounds(n.x, n.y, n.w ?? 0, n.h ?? 0));
+      // A moved note can still have a straight leader: attach from the near
+      // third of its face, directly below/above (or beside) an open target-face
+      // point. Only a note too far aside needs a bent leader.
+      const targetCenterAlong = vertical ? tv.center.x : tv.center.y;
+      const targetHalfAlong = (vertical ? tv.w : tv.h) / 2;
+      const faceInset = Math.min(NOTE_CLEARANCE, targetHalfAlong);
+      const faceMin = targetCenterAlong - targetHalfAlong + faceInset;
+      const faceMax = targetCenterAlong + targetHalfAlong - faceInset;
+      const clampToFace = (value: number): number => Math.max(faceMin, Math.min(value, faceMax));
+      // Keep the leader tip off any flow arrow already using this face.
+      const used: number[] = [];
+      const faceNormal = vertical
+        ? tv.center.y + sign * targetHalf
+        : tv.center.x + sign * targetHalf;
+      for (let i = 0; i < positionedEdges.length; i++) {
+        const edge = positionedEdges[i] as PositionedEdge;
+        if (edge.kind !== "flow") continue;
+        const points = edgePoints[i] as Point[];
+        const endpoint = edge.to === note.target
+          ? points[points.length - 1]
+          : edge.from === note.target ? points[0] : undefined;
+        if (endpoint === undefined) continue;
+        const normal = vertical ? endpoint.y : endpoint.x;
+        if (Math.abs(normal - faceNormal) < edgeGap + 0.01) {
+          used.push(vertical ? endpoint.x : endpoint.y);
+        }
+      }
+      const buildLeader = (along: number) => {
+        const moved = Math.abs(along - initialAlong) > 0.001;
+        const x = vertical ? along : nx;
+        const y = vertical ? ny : along;
+        let targetAlong = moved ? clampToFace(along) : along;
+        let straightLeader = !moved;
+        if (moved) {
+          const openOnFace = (min: number, max: number): number | undefined => {
+            if (min > max) return undefined;
+            const clamp = (value: number): number => Math.max(min, Math.min(value, max));
+            const choices = [clamp(along), min, max];
+            for (const position of used) {
+              choices.push(clamp(position - NOTE_CLEARANCE - 1));
+              choices.push(clamp(position + NOTE_CLEARANCE + 1));
+            }
+            choices.sort((a, b) => Math.abs(a - along) - Math.abs(b - along) || b - a);
+            return choices.find((candidate) =>
+              used.every((position) => Math.abs(candidate - position) > NOTE_CLEARANCE),
+            );
+          };
+          const third = (halfAlong * 2) / 3;
+          const nearSide = along > targetCenterAlong;
+          const thirdMin = nearSide
+            ? along - halfAlong + NOTE_CLEARANCE
+            : along + halfAlong - third;
+          const thirdMax = nearSide
+            ? along - halfAlong + third
+            : along + halfAlong - NOTE_CLEARANCE;
+          const straightPoint = openOnFace(Math.max(faceMin, thirdMin), Math.min(faceMax, thirdMax));
+          if (straightPoint !== undefined) {
+            targetAlong = straightPoint;
+            straightLeader = true;
+          } else {
+            targetAlong = openOnFace(faceMin, faceMax) ?? targetAlong;
+          }
+        }
+        const noteFaceAlong = straightLeader ? targetAlong : along;
+        const noteFace: Point = vertical
+          ? { x: noteFaceAlong, y: y - sign * (nh / 2) }
+          : { x: x - sign * (nw / 2), y: noteFaceAlong };
+        const targetFace: Point = vertical
+          ? { x: targetAlong, y: tv.center.y + sign * targetHalf }
+          : { x: tv.center.x + sign * targetHalf, y: targetAlong };
+        const mid = vertical
+          ? (noteFace.y + targetFace.y) / 2
+          : (noteFace.x + targetFace.x) / 2;
+        const points: Point[] = moved && !straightLeader
+          ? vertical
+            ? [noteFace, { x, y: mid }, { x: targetAlong, y: mid }, targetFace]
+            : [noteFace, { x: mid, y }, { x: mid, y: targetAlong }, targetFace]
+          : [noteFace, targetFace];
+        return { x, y, moved, straightLeader, points };
+      };
+      // The note's normal-axis gutter is fixed. An edge elsewhere cannot meet
+      // either the chip or its leader, so omit it before searching sideways.
+      const normalMin = Math.min(fixedMin, faceNormal) - NOTE_CLEARANCE - 1;
+      const normalMax = Math.max(fixedMax, faceNormal) + NOTE_CLEARANCE + 1;
+      const alongBounds = ({ a, b, error }: RenderedSegment): [number, number] =>
+        vertical
+          ? [Math.min(a.x, b.x) - error, Math.max(a.x, b.x) + error]
+          : [Math.min(a.y, b.y) - error, Math.max(a.y, b.y) + error];
+      const crossesGutter = ({ a, b, error }: RenderedSegment): boolean =>
+        vertical
+          ? Math.max(a.y, b.y) + error >= normalMin && Math.min(a.y, b.y) - error <= normalMax
+          : Math.max(a.x, b.x) + error >= normalMin && Math.min(a.x, b.x) - error <= normalMax;
+      const gutterPaths = flowPaths
+        .map((path) => path.filter(crossesGutter))
+        .filter((path) => path.length > 0);
+      const gutterBoxes = occupied.filter((box) => vertical
+        ? box.bottom >= normalMin && box.top <= normalMax
+        : box.right >= normalMin && box.left <= normalMax);
+      let radius = Math.max(32, halfAlong, targetHalfAlong) + NOTE_CLEARANCE;
+      let maxRadius = radius;
+      const includeExtent = (min: number, max: number): void => {
+        maxRadius = Math.max(maxRadius,
+          Math.abs(min - initialAlong) + halfAlong + NOTE_CLEARANCE + 1,
+          Math.abs(max - initialAlong) + halfAlong + NOTE_CLEARANCE + 1);
+      };
+      for (const path of gutterPaths) {
+        for (const segment of path) includeExtent(...alongBounds(segment));
+      }
+      for (const box of gutterBoxes) includeExtent(
+        vertical ? box.left : box.top,
+        vertical ? box.right : box.bottom,
+      );
 
-      // Leader endpoints: the note's near face → the target's near face. `sign`
-      // aims the segment back at the target; the arrowhead lands on that face.
-      const noteFace: Point = vertical
-        ? { x: nx, y: ny - sign * (nh / 2) }
-        : { x: nx - sign * (nw / 2), y: ny };
-      const targetFace: Point = vertical
-        ? { x: tv.center.x, y: tv.center.y + sign * targetHalf }
-        : { x: tv.center.x + sign * targetHalf, y: tv.center.y };
+      let clearAlong: number | undefined;
+      while (clearAlong === undefined) {
+        // Widen only when every candidate in the current interval is blocked.
+        // This keeps distant routes out of both candidate sorting and the
+        // expensive segment-to-segment checks for nearby placements.
+        const reach = radius + Math.max(halfAlong, targetHalfAlong) + NOTE_CLEARANCE + 1;
+        const searchMin = initialAlong - reach;
+        const searchMax = initialAlong + reach;
+        const localPaths = gutterPaths
+          .map((path) => path.filter((segment) => {
+            const [min, max] = alongBounds(segment);
+            return max >= searchMin && min <= searchMax;
+          }))
+          .filter((path) => path.length > 0);
+        const localBoxes = gutterBoxes.filter((box) => vertical
+          ? box.right >= searchMin && box.left <= searchMax
+          : box.bottom >= searchMin && box.top <= searchMax);
+        const candidates = new Set<number>([initialAlong]);
+        const addCandidates = (min: number, max: number): void => {
+          candidates.add(min - halfAlong - NOTE_CLEARANCE - 1);
+          candidates.add(max + halfAlong + NOTE_CLEARANCE + 1);
+        };
+        for (const path of localPaths) {
+          for (const segment of path) addCandidates(...alongBounds(segment));
+        }
+        for (const box of localBoxes) addCandidates(
+          vertical ? box.left : box.top,
+          vertical ? box.right : box.bottom,
+        );
+        const clear = (along: number): boolean => {
+          const proposed = buildLeader(along);
+          const box = boxBounds(proposed.x, proposed.y, nw, nh);
+          if (localBoxes.some((other) => boxesOverlap(box, other, NOTE_CLEARANCE)) ||
+              localPaths.some((path) => pathHitsBox(path, box, NOTE_CLEARANCE))) return false;
+          const leaderStyle = proposed.moved && !proposed.straightLeader ? "orthogonal" : edgeStyle;
+          const leader = renderedPathSegments(proposed.points, leaderStyle, mainAxis);
+          return localBoxes.every((other) => !pathHitsBox(leader, other, NOTE_CLEARANCE / 2)) &&
+            localPaths.every((path) => !pathsTooClose(leader, path, NOTE_CLEARANCE / 2));
+        };
+        clearAlong = [...candidates]
+          .filter((candidate) => Math.abs(candidate - initialAlong) <= radius)
+          .sort((a, b) => Math.abs(a - initialAlong) - Math.abs(b - initialAlong) || b - a)
+          .find(clear);
+        if (clearAlong !== undefined || radius >= maxRadius) break;
+        radius = Math.min(maxRadius, radius * 2);
+      }
+      const along = clearAlong ?? initialAlong;
+      const { x, y, moved, straightLeader, points } = buildLeader(along);
+      nx = x;
+      ny = y;
 
       const noteId = `__note_${noteSeed++}`;
       const box: PositionedNode = {
@@ -1078,7 +1479,6 @@ export function layoutFlow(
       nodes.push(box);
       noteBoxes.push(box);
 
-      const points: Point[] = [noteFace, targetFace];
       for (const p of points) {
         if (p.x > routeMaxX) routeMaxX = p.x;
         if (p.y > routeMaxY) routeMaxY = p.y;
@@ -1086,6 +1486,7 @@ export function layoutFlow(
         if (p.y < routeMinY) routeMinY = p.y;
       }
       edgePoints.push(points);
+      if (moved && !straightLeader) movedNoteEdges.add(positionedEdges.length);
       positionedEdges.push({
         from: noteId,
         to: note.target,
@@ -1098,19 +1499,69 @@ export function layoutFlow(
     }
   }
 
+  // Stagger only the parallel pairs whose full badge rectangles would collide.
+  // Put their badges outside the two lanes and connect each badge to its own
+  // straight run. Centering wide badges on the lanes hides both arrows and
+  // makes it impossible to tell which label belongs to which direction.
+  const stackedPositioned = new Set<PositionedEdge>();
+  for (const pair of stackedPairs) {
+    const forward = positionedEdges[edges.indexOf(pair.forward)] as PositionedEdge;
+    const reverse = positionedEdges[edges.indexOf(pair.reverse)] as PositionedEdge;
+    const gapStart = (rankMainStart[pair.gapRank] as number) + (rankThickness[pair.gapRank] as number);
+    const gapEnd = rankMainStart[pair.gapRank + 1] as number;
+    const content = pair.forwardMain + pair.reverseMain + LABEL_GAP;
+    const firstCenter = (gapStart + gapEnd - content) / 2 + pair.forwardMain / 2;
+    const secondCenter = firstCenter + pair.forwardMain / 2 + LABEL_GAP + pair.reverseMain / 2;
+    if (direction === "TD") {
+      const forwardLane = (forward.labelPoint as Point).x;
+      const reverseLane = (reverse.labelPoint as Point).x;
+      const forwardSide = forwardLane < reverseLane ? -1 : 1;
+      forward.labelAnchor = { x: forwardLane, y: firstCenter };
+      reverse.labelAnchor = { x: reverseLane, y: secondCenter };
+      forward.labelPoint = {
+        x: forwardLane + forwardSide * (badgeWidth(forward.labelWidth ?? 0) / 2 + LABEL_GAP),
+        y: firstCenter,
+      };
+      reverse.labelPoint = {
+        x: reverseLane - forwardSide * (badgeWidth(reverse.labelWidth ?? 0) / 2 + LABEL_GAP),
+        y: secondCenter,
+      };
+    } else {
+      const forwardLane = (forward.labelPoint as Point).y;
+      const reverseLane = (reverse.labelPoint as Point).y;
+      const forwardSide = forwardLane < reverseLane ? -1 : 1;
+      forward.labelAnchor = { x: firstCenter, y: forwardLane };
+      reverse.labelAnchor = { x: secondCenter, y: reverseLane };
+      forward.labelPoint = {
+        x: firstCenter,
+        y: forwardLane + forwardSide * (badgeHeight(forward.labelHeight ?? 0) / 2 + LABEL_GAP),
+      };
+      reverse.labelPoint = {
+        x: secondCenter,
+        y: reverseLane - forwardSide * (badgeHeight(reverse.labelHeight ?? 0) / 2 + LABEL_GAP),
+      };
+    }
+    stackedPositioned.add(forward);
+    stackedPositioned.add(reverse);
+  }
+
   // ── Align sibling edge labels to a shared level ───────────────────────
-  // Labels on edges that fan out from the SAME source land on each edge's own
-  // diagonal, which can sit at different main-axis depths (one high near the
-  // fork, one low near its target box — where it can crowd that box). Snap every
+  // Labels on adjacent-rank forward edges that fan out from the SAME source
+  // land on each edge's own diagonal. Those can sit at different main-axis
+  // depths: one high near the fork, one low near its target box. Snap every
   // labeled sibling to the SHALLOWEST of the group's main-axis levels (TD: min y;
   // LR: min x) so a decision's branch labels read as one aligned row, clear of
-  // the downstream nodes. Each label keeps its own cross-axis position. Grouped
-  // by source id in input order; deterministic.
+  // the downstream nodes. A multi-rank edge keeps its own level so its label
+  // stays attached to its route. Each label keeps its own cross-axis position.
+  // Grouped by source id in input order; deterministic.
   const labeledBySource = new Map<NodeId, PositionedEdge[]>();
   for (const pe of positionedEdges) {
     if (pe.labelPoint === undefined) continue;
-    // Self-loop labels sit on their own corridor, not the fan-out row.
-    if (pe.from === pe.to) continue;
+    // Back-edges and staggered pairs keep the level found on their own route.
+    const fromV = vById.get(pe.from);
+    const toV = vById.get(pe.to);
+    if (fromV === undefined || toV === undefined || toV.rank !== fromV.rank + 1 ||
+        stackedPositioned.has(pe)) continue;
     const list = labeledBySource.get(pe.from);
     if (list) list.push(pe);
     else labeledBySource.set(pe.from, [pe]);
@@ -1144,6 +1595,57 @@ export function layoutFlow(
     }
   }
 
+  // A badge can hide a different arrow crossing beneath it, including a badge
+  // already displaced for a parallel pair. Move it to a clear side of its own
+  // route with a short connector. Check the connector as well as the badge.
+  for (let i = 0; i < positionedEdges.length; i++) {
+    const pe = positionedEdges[i] as PositionedEdge;
+    if (pe.labelPoint === undefined) continue;
+    const halfW = badgeWidth(pe.labelWidth ?? 0) / 2;
+    const halfH = badgeHeight(pe.labelHeight ?? 0) / 2;
+    const badgeAt = (point: Point): Bounds => boxBounds(point.x, point.y, halfW * 2, halfH * 2);
+    const hitsAnotherRoute = (box: Bounds): boolean => positionedEdges.some((other, j) => {
+      if (j === i || other.kind !== "flow") return false;
+      return pathHitsBox(flowPaths[j] as RenderedSegment[], box, 1);
+    });
+    if (!hitsAnotherRoute(badgeAt(pe.labelPoint))) continue;
+
+    // A Bézier label's waypoint midpoint may lie off the visible spline.
+    // Anchor the displaced badge to the actual rendered route.
+    const anchor = pe.labelAnchor ?? closestPointOnPath(
+      pe.labelPoint, flowPaths[i] as RenderedSegment[],
+    );
+    const crossHalf = direction === "TD" ? halfW : halfH;
+    const candidates = [-1, 1].map((side) => direction === "TD"
+      ? { x: anchor.x + side * (crossHalf + LABEL_GAP), y: anchor.y }
+      : { x: anchor.x, y: anchor.y + side * (crossHalf + LABEL_GAP) });
+    const clear = (point: Point): boolean => {
+      const box = badgeAt(point);
+      if (hitsAnotherRoute(box)) return false;
+      if (nodes.some((node) => boxesOverlap(box, boxBounds(node.x, node.y, node.w ?? 0, node.h ?? 0), LABEL_GAP / 2))) {
+        return false;
+      }
+      if (positionedEdges.some((other, j) => j !== i && other.labelPoint !== undefined &&
+          boxesOverlap(box, badgeAtOther(other), LABEL_GAP / 2))) return false;
+      const face: Point = direction === "TD"
+        ? { x: point.x < anchor.x ? box.right : box.left, y: point.y }
+        : { x: point.x, y: point.y < anchor.y ? box.bottom : box.top };
+      const connector: RenderedSegment[] = [{ a: face, b: anchor, error: 0 }];
+      return nodes.every((node) => !pathHitsBox(connector,
+        boxBounds(node.x, node.y, node.w ?? 0, node.h ?? 0), LABEL_GAP / 2)) &&
+        flowPaths.every((path, j) => j === i || !pathsTooClose(connector, path, 1));
+    };
+    const badgeAtOther = (other: PositionedEdge): Bounds => boxBounds(
+      (other.labelPoint as Point).x, (other.labelPoint as Point).y,
+      badgeWidth(other.labelWidth ?? 0), badgeHeight(other.labelHeight ?? 0),
+    );
+    const selected = candidates.find(clear);
+    if (selected !== undefined) {
+      pe.labelAnchor = anchor;
+      pe.labelPoint = selected;
+    }
+  }
+
   // ── Fold edge-label badges into the bounds ────────────────────────────
   // Edge labels render as a sliced badge centered on `labelPoint`
   // (badgeWidth × badgeHeight). A label wider than the graph spills past the
@@ -1165,11 +1667,9 @@ export function layoutFlow(
     if (pe.labelPoint.y + halfH > labelMaxY) labelMaxY = pe.labelPoint.y + halfH;
   }
   // Annotation chips ride the same normalization as edge labels: an `above`/
-  // `left` note spilling past the top/left origin drives a shift that translates
-  // the whole graph (so the note stays perfectly aligned with its target AND is
-  // never clipped), while a `below`/`right` note just grows the far canvas. The
-  // note keeps its target's cross-axis coordinate throughout, so its leader
-  // stays a straight perpendicular arrow.
+  // `left` note spilling past the top/left origin shifts the whole graph to
+  // remain visible; a `below`/`right` note can grow the far canvas. A note that
+  // slid along its target's face may extend either side of the canvas.
   for (const nb of noteBoxes) {
     const halfW = (nb.w ?? 0) / 2;
     const halfH = (nb.h ?? 0) / 2;
@@ -1203,6 +1703,9 @@ export function layoutFlow(
       if (pe.labelPoint !== undefined) {
         pe.labelPoint = { x: pe.labelPoint.x + shiftX, y: pe.labelPoint.y + shiftY };
       }
+      if (pe.labelAnchor !== undefined) {
+        pe.labelAnchor = { x: pe.labelAnchor.x + shiftX, y: pe.labelAnchor.y + shiftY };
+      }
     }
     routeMaxX += shiftX;
     routeMaxY += shiftY;
@@ -1223,9 +1726,10 @@ export function layoutFlow(
   void routeMinY;
 
   // Build the SVG path strings now that every waypoint is final.
-  const mainAxis = direction === "LR" ? "x" : "y";
   positionedEdges.forEach((pe, i) => {
-    pe.path = pathThrough(edgePoints[i] as Point[], edgeStyle, mainAxis);
+    pe.path = pathThrough(
+      edgePoints[i] as Point[], movedNoteEdges.has(i) ? "orthogonal" : edgeStyle, mainAxis,
+    );
   });
 
   const result: PositionedGraph = {

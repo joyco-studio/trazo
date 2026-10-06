@@ -905,20 +905,50 @@ export function Graph(props: GraphProps): JSX.Element {
               return null;
             }
             // Edge labels render as the same sliced-corner badge as git commit
-            // labels — a chip centered ON the edge's midpoint so it sits aligned
-            // with the arrow line (the line passes through the chip's center). A
+            // labels — ordinarily a chip centered on the edge's midpoint.
+            // Crowded parallel pairs move their chips beside the lanes and
+            // carry a short leader to the matching line. A
             // multi-line label (`\n`/`<br>`) stacks into per-line rows and grows
             // the badge height to match (engine reserves the same via badgeHeight).
             const badgeW = badgeWidth(edge.labelWidth ?? 0);
             const badgeH = badgeHeight(edge.labelHeight ?? 0);
             const badgeX = edge.labelPoint.x - badgeW / 2;
             const badgeY = edge.labelPoint.y - badgeH / 2;
+            const anchor = edge.labelAnchor;
+            const leaderStart = anchor === undefined ? undefined :
+              Math.abs(anchor.x - edge.labelPoint.x) > Math.abs(anchor.y - edge.labelPoint.y)
+                ? { x: anchor.x < edge.labelPoint.x ? badgeX : badgeX + badgeW, y: edge.labelPoint.y }
+                : { x: edge.labelPoint.x, y: anchor.y < edge.labelPoint.y ? badgeY : badgeY + badgeH };
             return (
               <g
                 key={`${edge.from}->${edge.to}:label:${i}`}
                 data-slot="edge-label"
                 className={classNames?.edgeLabel}
               >
+                {anchor !== undefined && leaderStart !== undefined ? (
+                  <>
+                    <line
+                      data-slot="edge-label-leader"
+                      x1={leaderStart.x}
+                      y1={leaderStart.y}
+                      x2={anchor.x}
+                      y2={anchor.y}
+                      stroke={nodeColor(edge.color)}
+                      strokeWidth={EDGE_WIDTH}
+                    />
+                    {/* Match node roundness: JOYCO's zero radius makes this a square. */}
+                    <rect
+                      data-slot="edge-label-anchor"
+                      x={anchor.x - 2.5}
+                      y={anchor.y - 2.5}
+                      width={5}
+                      height={5}
+                      rx={Math.min(paint.cornerRadius, 2.5)}
+                      ry={Math.min(paint.cornerRadius, 2.5)}
+                      fill={nodeColor(edge.color)}
+                    />
+                  </>
+                ) : null}
                 <path
                   data-slot="edge-label-badge"
                   d={badgePath(badgeX, badgeY, badgeW, badgeH)}

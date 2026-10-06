@@ -1,7 +1,73 @@
 import { describe, it, expect } from "vitest";
-import { layout, layoutFlow } from "../src/index.js";
-import { badgeWidth, badgeHeight, BADGE_H, measurePlainMultiline } from "../src/geometry.js";
+import { joycoTheme, layout, layoutFlow, parseFlow, themeFlowOptions } from "../src/index.js";
+import { badgeWidth, badgeHeight, BADGE_H, measurePlainMultiline, renderedSvgSegments } from "../src/geometry.js";
 import type { FlowGraph, NodeShape } from "../src/index.js";
+
+const labelBox = (edge: { labelPoint?: { x: number; y: number }; labelWidth?: number; labelHeight?: number }) => {
+  const p = edge.labelPoint!;
+  const halfW = badgeWidth(edge.labelWidth ?? 0) / 2;
+  const halfH = badgeHeight(edge.labelHeight ?? 0) / 2;
+  return { left: p.x - halfW, right: p.x + halfW, top: p.y - halfH, bottom: p.y + halfH };
+};
+const boxesOverlap = (a: ReturnType<typeof labelBox>, b: ReturnType<typeof labelBox>) =>
+  a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+/** Independent numerical samples of the emitted SVG, including Bézier spans. */
+const sampleSvg = (path: string): Array<{ x: number; y: number }> => {
+  const out: Array<{ x: number; y: number }> = [];
+  let current = { x: 0, y: 0 };
+  for (const match of path.matchAll(/([MLQC])([^MLQC]*)/g)) {
+    const values = (match[2] as string).trim().split(/[\s,]+/).map(Number);
+    const p = (at: number) => ({ x: values[at]!, y: values[at + 1]! });
+    if (match[1] === "M") {
+      current = p(0);
+      out.push(current);
+      continue;
+    }
+    const start = current;
+    const end = p(match[1] === "C" ? 4 : match[1] === "Q" ? 2 : 0);
+    const control1 = p(0);
+    const control2 = match[1] === "C" ? p(2) : control1;
+    const steps = Math.max(40, Math.ceil(
+      Math.hypot(end.x - start.x, end.y - start.y) +
+      (match[1] === "L" ? 0 : Math.hypot(control1.x - start.x, control1.y - start.y)),
+    ));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const u = 1 - t;
+      out.push(match[1] === "L"
+        ? { x: u * start.x + t * end.x, y: u * start.y + t * end.y }
+        : match[1] === "Q"
+          ? { x: u * u * start.x + 2 * u * t * control1.x + t * t * end.x,
+            y: u * u * start.y + 2 * u * t * control1.y + t * t * end.y }
+          : { x: u ** 3 * start.x + 3 * u * u * t * control1.x + 3 * u * t * t * control2.x + t ** 3 * end.x,
+            y: u ** 3 * start.y + 3 * u * u * t * control1.y + 3 * u * t * t * control2.y + t ** 3 * end.y });
+    }
+    current = end;
+  }
+  return out;
+};
+const samplesHitBox = (path: string, box: ReturnType<typeof labelBox>) =>
+  sampleSvg(path).some((p) => p.x > box.left && p.x < box.right && p.y > box.top && p.y < box.bottom);
+
+describe("rendered path clearance geometry", () => {
+  it("bounds a visibly bowed cubic rather than using its endpoint chord", () => {
+    const path = "M 0 0 C 0 150 150 150 150 0";
+    const segments = renderedSvgSegments(path);
+    expect(segments.length).toBeGreaterThan(1);
+    for (const sample of sampleSvg(path)) {
+      const nearest = Math.min(...segments.map(({ a, b, error }) => {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const t = Math.max(0, Math.min(1,
+          ((sample.x - a.x) * dx + (sample.y - a.y) * dy) / (dx * dx + dy * dy),
+        ));
+        return Math.hypot(sample.x - a.x - t * dx, sample.y - a.y - t * dy) - error;
+      }));
+      expect(nearest).toBeLessThan(0.01);
+    }
+  });
+});
 
 /**
  * Fixture flow: a diamond (fan-out then fan-in) plus a long edge that spans two
@@ -904,6 +970,36 @@ describe("layoutFlow() — reversed arrows", () => {
 // ── parallel bidirectional pairs ─────────────────────────────────────────────
 
 describe("layoutFlow() — parallel bidirectional pairs", () => {
+  it.each([
+    { direction: "TD" as const, first: "server-side, one integration", second: "markdown index" },
+    { direction: "LR" as const, first: "first\nmultiline label", second: "second\nmultiline label" },
+  ])("connects a crowded $direction pair's badges to separate lanes", ({ direction, first, second }) => {
+    const g = layoutFlow({
+      kind: "flow", direction,
+      nodes: [{ id: "A", label: "Worker" }, { id: "B", label: "Notion" }],
+      edges: [{ from: "A", to: "B", label: first }, { from: "B", to: "A", label: second }],
+    });
+    const [forward, reverse] = g.edges;
+    expect(boxesOverlap(labelBox(forward!), labelBox(reverse!))).toBe(false);
+    const main = direction === "TD" ? "y" : "x";
+    expect(reverse!.labelPoint![main]).toBeGreaterThan(forward!.labelPoint![main]);
+    const cross = direction === "TD" ? "x" : "y";
+    expect(forward!.labelAnchor).toBeDefined();
+    expect(reverse!.labelAnchor).toBeDefined();
+    expect(forward!.labelPoint![cross]).toBeLessThan(forward!.labelAnchor![cross]);
+    expect(reverse!.labelPoint![cross]).toBeGreaterThan(reverse!.labelAnchor![cross]);
+    for (const edge of [forward!, reverse!]) {
+      const badge = labelBox(edge);
+      for (const node of g.nodes) {
+        const box = {
+          left: node.x - node.w! / 2, right: node.x + node.w! / 2,
+          top: node.y - node.h! / 2, bottom: node.y + node.h! / 2,
+        };
+        expect(boxesOverlap(badge, box)).toBe(false);
+      }
+    }
+  });
+
   it("routes a 1↔1 pair as two parallel lines with both labels centered", () => {
     // A↔B, each the sole node on its rank: Mermaid draws two parallel lines with
     // both labels stacked BETWEEN the boxes. The reverse edge must run through the
@@ -961,6 +1057,25 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
     }
   });
 
+  it("keeps bidirectional badges clear of a spanning dummy lane", () => {
+    const g = layoutFlow({
+      kind: "flow", direction: "TD",
+      nodes: ["X", "A", "B", "Y"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "X", to: "A" },
+        { from: "A", to: "B", label: "server-side, one integration" },
+        { from: "B", to: "A", label: "markdown index" },
+        { from: "B", to: "Y" },
+        { from: "X", to: "Y" },
+      ],
+    }, { textCase: "none" });
+    const span = g.edges.find((e) => e.from === "X" && e.to === "Y")!;
+    const reverse = g.edges.find((e) => e.from === "B" && e.to === "A")!;
+    expect(reverse.labelAnchor).toBeDefined();
+    expect(samplesHitBox(span.path, labelBox(reverse))).toBe(false);
+    expect(g.edges.find((e) => e.from === "A" && e.to === "B")!.labelAnchor).toBeDefined();
+  });
+
   it("keeps a retry loop into a fanned-out decision on the lateral arc", () => {
     // B(decision) → {C, D}, D → B. D's rank has a sibling (C), so the pair is NOT
     // sole-on-rank: the back-edge keeps its outward lateral corridor (loop look).
@@ -987,9 +1102,316 @@ describe("layoutFlow() — parallel bidirectional pairs", () => {
   });
 });
 
+describe("layoutFlow() — labeled reverse paths", () => {
+  it("moves a badge clear of a rendered Bézier route", () => {
+    const g = layoutFlow({
+      kind: "flow", direction: "TD",
+      nodes: ["A", "B", "C", "D", "E"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "A", to: "B" }, { from: "B", to: "C" },
+        { from: "C", to: "D" }, { from: "A", to: "C" },
+        { from: "A", to: "D" },
+        { from: "E", to: "B", label: "A long label for this relationship" },
+      ],
+    }, { textCase: "none", edgeStyle: "bezier" });
+    const labeled = g.edges.find((e) => e.from === "E" && e.to === "B")!;
+    expect(labeled.labelAnchor).toBeDefined();
+    for (const edge of g.edges.filter((e) => e.kind === "flow" && e !== labeled)) {
+      expect(samplesHitBox(edge.path, labelBox(labeled))).toBe(false);
+    }
+  });
+
+  it("keeps the Clerk/Workers diagram's badges clear of one another and of nodes", () => {
+    const source = `flow TD
+CLI(["joyco CLI (dev box)"]):primary --> Store
+CLI -->|"1 · clerk sign-in"| Clerk{"Clerk (*.joyco.studio)"}
+Clerk -->|"session / refresh handle"| Store[("stored refresh handle")]:success
+Store -->|"2 · mint short-lived JWT (~60s)"| Clerk
+Clerk -->|"clerk session JWT"| CLI
+CLI -->|"3 · GET /knowledge (Bearer: clerk JWT)"| Workers["workers.joyco.studio"]
+Workers -->|"server-side, one integration"| Notion[("Notion knowledge DB (private)")]
+Notion -->|"markdown index"| Workers
+Agents(["agents (any repo)"]) --> Store
+Store -->|"4 · read handle, mint JWT, fetch /knowledge"| Agents
+Agents --> Workers`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    const g = layoutFlow(parsed.graph);
+    expect(layoutFlow(parsed.graph)).toEqual(g);
+    const labeled = g.edges.filter((edge) => edge.labelPoint !== undefined);
+    for (let i = 0; i < labeled.length; i++) {
+      const badge = labelBox(labeled[i]!);
+      for (let j = i + 1; j < labeled.length; j++) {
+        expect(boxesOverlap(badge, labelBox(labeled[j]!))).toBe(false);
+      }
+      for (const node of g.nodes) {
+        const box = {
+          left: node.x - node.w! / 2, right: node.x + node.w! / 2,
+          top: node.y - node.h! / 2, bottom: node.y + node.h! / 2,
+        };
+        expect(boxesOverlap(badge, box)).toBe(false);
+      }
+    }
+    const clerkStore = g.edges.find((edge) => edge.from === "Clerk" && edge.to === "Store")!;
+    const clerkCli = g.edges.find((edge) => edge.from === "Clerk" && edge.to === "CLI")!;
+    expect(clerkStore.labelPoint!.y).not.toBeCloseTo(clerkCli.labelPoint!.y, 0);
+    const cliWorkers = g.edges.find((edge) => edge.from === "CLI" && edge.to === "Workers")!;
+    const storeAgents = g.edges.find((edge) => edge.from === "Store" && edge.to === "Agents")!;
+    expect(cliWorkers.labelPoint!.y).toBeGreaterThan(g.nodes.find((n) => n.id === "Agents")!.y);
+    expect(labelBox(cliWorkers).left).toBeGreaterThan(cliWorkers.labelAnchor!.x);
+    expect(labelBox(storeAgents).right).toBeLessThan(storeAgents.labelAnchor!.x);
+    for (const [from, to] of [["Workers", "Notion"], ["Notion", "Workers"]]) {
+      const edge = g.edges.find((candidate) => candidate.from === from && candidate.to === to)!;
+      expect(edge.labelAnchor).toBeDefined();
+      const box = labelBox(edge);
+      expect(edge.from === "Workers" ? box.right < edge.labelAnchor!.x : box.left > edge.labelAnchor!.x).toBe(true);
+    }
+  });
+});
+
 // ── notes (annotations) ─────────────────────────────────────────────────────
 
 describe("layoutFlow() — notes", () => {
+  it("moves a note until its leader clears an unrelated arrow", () => {
+    const graph: FlowGraph = {
+      kind: "flow", direction: "LR",
+      nodes: ["A", "B", "C", "D", "E"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "A", to: "B" }, { from: "B", to: "C" },
+        { from: "C", to: "D" }, { from: "A", to: "C" },
+      ],
+      notes: [{ target: "B", side: "below", label: "A long annotation for this target" }],
+    };
+    const options = { textCase: "none" as const };
+    const g = layoutFlow(graph, options);
+    expect(layoutFlow(graph, options)).toEqual(g);
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    const leader = g.edges.find((e) => e.from === note.id)!;
+    const leaderSamples = sampleSvg(leader.path);
+    for (const edge of g.edges.filter((e) => e.kind === "flow")) {
+      const route = sampleSvg(edge.path);
+      expect(leaderSamples.some((a) => route.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 1))).toBe(false);
+    }
+    expect(note.y).toBeGreaterThan(g.nodes.find((n) => n.id === "B")!.y);
+  });
+
+  it("keeps a note box clear of the visible Bézier spline", () => {
+    const graph: FlowGraph = {
+      kind: "flow", direction: "TD",
+      nodes: ["A", "B", "C", "D", "E"].map((id) => ({ id, label: id })),
+      edges: [
+        { from: "A", to: "B" }, { from: "B", to: "C" },
+        { from: "C", to: "D" }, { from: "D", to: "A" },
+      ],
+      notes: [{ target: "A", side: "right", label: "A long annotation for this target" }],
+    };
+    const g = layoutFlow(graph, { textCase: "none", edgeStyle: "bezier" });
+    const note = g.nodes.find((n) => n.kind === "note")!;
+    const box = { left: note.x - note.w! / 2, right: note.x + note.w! / 2,
+      top: note.y - note.h! / 2, bottom: note.y + note.h! / 2 };
+    for (const edge of g.edges.filter((e) => e.kind === "flow")) {
+      expect(samplesHitBox(edge.path, box)).toBe(false);
+    }
+  });
+
+  it("moves a note clear of the sequence-frame return arrow and reconnects its leader", () => {
+    const source = `flow LR
+demand["Frame is demanded"]:primary
+transfer["Encoded bytes"]:info
+decode["Decoded pixels"]:warning
+ready["Ready frame"]:success
+present["Presented surface"]:success
+evicted["Decoded pixels evicted"]:error
+demand --> transfer
+transfer --> decode
+decode --> ready
+ready --> present
+ready --> evicted
+evicted --> decode
+note transfer below "network or cache"
+note decode below "must finish before reveal"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    const options = { direction: "LR" as const, textCase: "none" as const, edgeGap: 0 };
+    const g = layoutFlow(parsed.graph, options);
+    expect(layoutFlow(parsed.graph, options)).toEqual(g);
+    const withoutNotes = layoutFlow({ ...parsed.graph, notes: [] }, options);
+    expect(g.nodes.filter((n) => n.kind !== "note")).toEqual(withoutNotes.nodes);
+
+    const node = (id: string) => g.nodes.find((n) => n.id === id)!;
+    const transferNote = g.nodes.find((n) => n.label === "network or cache")!;
+    const decodeNote = g.nodes.find((n) => n.label === "must finish before reveal")!;
+    expect(transferNote.x).toBeCloseTo(node("transfer").x, 5);
+    expect(decodeNote.y).toBeGreaterThan(node("decode").y);
+    expect(decodeNote.x - decodeNote.w! / 2).toBeGreaterThan(node("decode").x);
+    expect(transferNote.x + transferNote.w! / 2).toBeLessThan(decodeNote.x - decodeNote.w! / 2);
+
+    const route = g.edges.find((e) => e.from === "evicted" && e.to === "decode")!;
+    const coords = route.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    for (const note of [transferNote, decodeNote]) {
+      const box = {
+        left: note.x - note.w! / 2,
+        right: note.x + note.w! / 2,
+        top: note.y - note.h! / 2,
+        bottom: note.y + note.h! / 2,
+      };
+      for (let i = 2; i < coords.length; i += 2) {
+        const [x0, y0, x1, y1] = [coords[i - 2]!, coords[i - 1]!, coords[i]!, coords[i + 1]!];
+        const crosses = x0 === x1
+          ? x0 > box.left && x0 < box.right && Math.max(y0, y1) > box.top && Math.min(y0, y1) < box.bottom
+          : y0 === y1 && y0 > box.top && y0 < box.bottom && Math.max(x0, x1) > box.left && Math.min(x0, x1) < box.right;
+        expect(crosses).toBe(false);
+      }
+    }
+    for (const [note, target] of [[transferNote, node("transfer")], [decodeNote, node("decode")]] as const) {
+      const leader = g.edges.find((e) => e.from === note.id && e.to === target.id)!;
+      const end = leader.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number).slice(-2);
+      expect(end[1]).toBeCloseTo(target.y + target.h! / 2, 5);
+      expect(end[0]).toBeGreaterThanOrEqual(target.x - target.w! / 2);
+      expect(end[0]).toBeLessThanOrEqual(target.x + target.w! / 2);
+      if (target.id === "decode") {
+        const points = leader.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+        expect(points).toHaveLength(4); // one uninterrupted vertical segment
+        expect(points[0]).toBeCloseTo(points[2]!, 5);
+        expect(points[0]).toBeGreaterThan(note.x - note.w! / 2);
+        expect(points[0]).toBeLessThan(note.x - note.w! / 6); // near third of the note box
+        expect(Math.abs(end[0]! - target.x)).toBeGreaterThan(8);
+      }
+    }
+    const forward = g.edges.find((e) => e.from === "demand" && e.to === "transfer")!;
+    const forwardCoords = forward.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    expect(forwardCoords[0]).toBeCloseTo(node("demand").x + node("demand").w! / 2, 5);
+    expect(forwardCoords.at(-2)).toBeCloseTo(node("transfer").x - node("transfer").w! / 2, 5);
+
+    // The playground's compact JOYCO preset previously made the return lane
+    // touch the decoded note, sending that note left of the transfer note.
+    const themedOptions = themeFlowOptions(joycoTheme, { direction: "LR", maxNodeWidth: 260 });
+    const themed = layoutFlow(parsed.graph, themedOptions);
+    expect(layoutFlow(parsed.graph, themedOptions)).toEqual(themed);
+    const themedTransfer = themed.nodes.find((n) => n.label === "network or cache")!;
+    const themedDecode = themed.nodes.find((n) => n.label === "must finish before reveal")!;
+    expect(themedTransfer.x + themedTransfer.w! / 2).toBeLessThan(
+      themedDecode.x - themedDecode.w! / 2,
+    );
+    const themedReturn = themed.edges.find((e) => e.from === "evicted" && e.to === "decode")!;
+    const themedBox = {
+      left: themedDecode.x - themedDecode.w! / 2,
+      right: themedDecode.x + themedDecode.w! / 2,
+      top: themedDecode.y - themedDecode.h! / 2,
+      bottom: themedDecode.y + themedDecode.h! / 2,
+    };
+    expect(samplesHitBox(themedReturn.path, themedBox)).toBe(false);
+    const themedLeader = themed.edges.find((e) => e.from === themedDecode.id)!;
+    expect(themedLeader.path.match(/-?\d+(?:\.\d+)?/g)).toHaveLength(4);
+    const returnSamples = sampleSvg(themedReturn.path);
+    expect(sampleSvg(themedLeader.path).some((a) =>
+      returnSamples.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 1),
+    )).toBe(false);
+
+    const curved = layoutFlow(parsed.graph, { ...themedOptions, edgeStyle: "bezier" });
+    const curvedTransfer = curved.nodes.find((n) => n.label === "network or cache")!;
+    const curvedDecode = curved.nodes.find((n) => n.label === "must finish before reveal")!;
+    expect(curvedTransfer.x + curvedTransfer.w! / 2).toBeLessThan(
+      curvedDecode.x - curvedDecode.w! / 2,
+    );
+    const curvedReturn = curved.edges.find((e) => e.from === "evicted" && e.to === "decode")!;
+    expect(samplesHitBox(curvedReturn.path, {
+      left: curvedDecode.x - curvedDecode.w! / 2,
+      right: curvedDecode.x + curvedDecode.w! / 2,
+      top: curvedDecode.y - curvedDecode.h! / 2,
+      bottom: curvedDecode.y + curvedDecode.h! / 2,
+    })).toBe(false);
+  });
+
+  it("keeps notes between nested return lanes in the JOYCO layout", () => {
+    const source = `flow LR\nstart["Start"]:primary\nfetch["Fetch bytes"]:info\nparse["Parse payload"]:warning\nrender["Render result"]:success\ndone["Done"]:success\nstart --> fetch\nfetch --> parse\nparse --> render\nrender --> done\nrender --> fetch\ndone --> parse\nnote fetch below "cache may respond"\nnote parse below "validate before display"\nnote render above "commit only complete output"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    for (const edgeStyle of ["elbow45", "bezier"] as const) {
+      const options = themeFlowOptions(joycoTheme, { direction: "LR", maxNodeWidth: 260, edgeStyle });
+      const g = layoutFlow(parsed.graph, options);
+      expect(layoutFlow(parsed.graph, options)).toEqual(g);
+      const fetchNote = g.nodes.find((n) => n.label === "cache may respond")!;
+      const parseNote = g.nodes.find((n) => n.label === "validate before display")!;
+      expect(fetchNote.x + fetchNote.w! / 2, edgeStyle).toBeLessThan(parseNote.x - parseNote.w! / 2);
+      for (const note of [fetchNote, parseNote]) {
+        const box = {
+          left: note.x - note.w! / 2, right: note.x + note.w! / 2,
+          top: note.y - note.h! / 2, bottom: note.y + note.h! / 2,
+        };
+        const leader = g.edges.find((e) => e.from === note.id)!;
+        const leaderSamples = sampleSvg(leader.path);
+        for (const edge of g.edges.filter((e) => e.kind === "flow")) {
+          expect(samplesHitBox(edge.path, box), `${edgeStyle}: ${note.label} / ${edge.from}->${edge.to}`).toBe(false);
+          const routeSamples = sampleSvg(edge.path);
+          expect(leaderSamples.some((a) => routeSamples.some((b) =>
+            Math.hypot(a.x - b.x, a.y - b.y) < 1,
+          )), `${edgeStyle}: ${note.label} leader / ${edge.from}->${edge.to}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("reserves a clear gutter for a note between two LR branches", () => {
+    const source = `flow LR
+loaded["Loaded<br/>Encoded image bytes"]:info
+decoded["Decoded<br/>Bitmap ready for display"]:success
+presented["Presented<br/>Frame painted on screen"]:primary
+blocking["Decode at display time<br/>Presentation waits"]:error
+loaded --> decoded
+decoded --> presented
+loaded --> blocking
+blocking --> presented
+note loaded below "image.png, image.avif, image.webp"
+note decoded below "keep the next frames here"
+note blocking below "the page can miss its refresh"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    const options = { direction: "LR" as const, textCase: "none" as const, edgeGap: 0 };
+    const g = layoutFlow(parsed.graph, options);
+    expect(layoutFlow(parsed.graph, options)).toEqual(g);
+    const node = (id: string) => g.nodes.find((n) => n.id === id)!;
+    const decoded = node("decoded");
+    const blocking = node("blocking");
+    const note = g.nodes.find((n) => n.label === "keep the next frames here")!;
+    const box = (n: typeof note) => ({
+      left: n.x - n.w! / 2, right: n.x + n.w! / 2,
+      top: n.y - n.h! / 2, bottom: n.y + n.h! / 2,
+    });
+    expect(Math.abs(note.x - decoded.x)).toBeLessThan(24);
+    expect(box(note).top).toBeGreaterThan(box(decoded).bottom);
+    expect(box(note).bottom + 7).toBeLessThan(box(blocking).top);
+    for (const other of g.nodes) {
+      if (other.id !== note.id && other.id !== decoded.id) {
+        expect(boxesOverlap(box(note), box(other))).toBe(false);
+      }
+    }
+    const leader = g.edges.find((e) => e.from === note.id && e.to === decoded.id)!;
+    const points = leader.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    expect(points).toHaveLength(4);
+    expect(points[0]).toBeCloseTo(points[2]!, 5);
+    expect(points[1]).toBeCloseTo(box(note).top, 5);
+    expect(points[3]).toBeCloseTo(box(decoded).bottom, 5);
+  });
+
+  it("places an above note over the whole loading flow when requested", () => {
+    const source = `flow LR\nloaded["Loaded<br/>Encoded image bytes"]:info\ndecoded["Decoded<br/>Bitmap ready for display"]:success\npresented["Presented<br/>Frame painted on screen"]:primary\nblocking["Decode at display time<br/>Presentation waits"]:error\nloaded --> decoded\ndecoded --> presented\nloaded --> blocking\nblocking --> presented\nnote loaded below "image.png, image.avif, image.webp"\nnote decoded above "keep the next frames here"\nnote blocking below "the page can miss its refresh"`;
+    const parsed = parseFlow(source);
+    expect(parsed.error).toBeNull();
+    const g = layoutFlow(parsed.graph, { textCase: "none", edgeGap: 0 });
+    const note = g.nodes.find((n) => n.label === "keep the next frames here")!;
+    const decoded = g.nodes.find((n) => n.id === "decoded")!;
+    expect(note.x).toBeCloseTo(decoded.x);
+    expect(note.y + note.h! / 2).toBeLessThan(Math.min(
+      ...g.nodes.filter((n) => n.kind !== "note").map((n) => n.y - n.h! / 2),
+    ));
+    const leader = g.edges.find((e) => e.from === note.id && e.to === decoded.id)!;
+    const points = leader.path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    expect(points).toHaveLength(4);
+    expect(points[0]).toBeCloseTo(points[2]!);
+    expect(points[3]).toBeCloseTo(decoded.y - decoded.h! / 2);
+  });
+
   // The motivating case: a strictly linear pipeline plus one note below `layout`.
   const pipeline = (withNote: boolean): FlowGraph => {
     const g: FlowGraph = {
@@ -1089,12 +1511,13 @@ describe("layoutFlow() — notes", () => {
         const b = g.nodes.find((n) => n.id === "b")!;
         const note = g.nodes.find((n) => n.kind === "note")!;
         if (axis === "y") {
-          // Cross/main position on x is shared with the target; y is offset.
-          expect(note.x).toBeCloseTo(b.x, 0);
+          // An above note in TD shares the incoming edge's corridor and slides
+          // sideways; the other placements remain centered when clear.
+          if (direction !== "TD" || side !== "above") expect(note.x).toBeCloseTo(b.x, 0);
           if (dir < 0) expect(note.y).toBeLessThan(b.y);
           else expect(note.y).toBeGreaterThan(b.y);
         } else {
-          expect(note.y).toBeCloseTo(b.y, 0);
+          if (direction !== "LR" || side !== "left") expect(note.y).toBeCloseTo(b.y, 0);
           if (dir < 0) expect(note.x).toBeLessThan(b.x);
           else expect(note.x).toBeGreaterThan(b.x);
         }

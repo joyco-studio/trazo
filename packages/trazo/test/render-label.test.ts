@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { layoutFlow } from "../src/index.js";
+import { joycoTheme, layoutFlow } from "../src/index.js";
 import type { FlowGraph, TrazoTheme } from "../src/index.js";
 import { Graph } from "../src/react/index.js";
 
@@ -90,6 +90,24 @@ describe("<Graph> inline code", () => {
     const html = render(g);
     expect(html).toContain("`fn`");
     expect(html).not.toContain('data-slot="label-code"');
+  });
+
+  it("draws theme-shaped attachment markers for displaced parallel badges", () => {
+    const g: FlowGraph = {
+      kind: "flow", direction: "TD",
+      nodes: [{ id: "a", label: "Worker" }, { id: "b", label: "Notion" }],
+      edges: [
+        { from: "a", to: "b", label: "server-side, one integration" },
+        { from: "b", to: "a", label: "markdown index" },
+      ],
+    };
+    const square = render(g, joycoTheme);
+    expect(square.match(/data-slot="edge-label-leader"/g)).toHaveLength(2);
+    expect(square.match(/data-slot="edge-label-anchor"/g)).toHaveLength(2);
+    expect(square).toMatch(/<rect data-slot="edge-label-anchor"[^>]*rx="0"[^>]*ry="0"/);
+    expect(square).not.toContain('<circle data-slot="edge-label-anchor"');
+    const rounded = render(g, { roundness: "lg" });
+    expect(rounded).toMatch(/<rect data-slot="edge-label-anchor"[^>]*rx="2.5"[^>]*ry="2.5"/);
   });
 });
 
