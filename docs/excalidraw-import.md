@@ -7,10 +7,11 @@ other connector points keep their authored coordinates. It does not run the
 flowchart layout engine.
 
 ```tsx
+import { readFileSync } from "node:fs";
 import { importExcalidraw, joycoTheme } from "@joycostudio/trazo";
 import { Graph } from "@joycostudio/trazo/react";
-import drawing from "./frame-buffer.excalidraw.json";
 
+const drawing = readFileSync(new URL("./frame-buffer.excalidraw", import.meta.url), "utf8");
 const graph = importExcalidraw(drawing);
 
 export function FrameBufferDiagram() {
@@ -25,10 +26,11 @@ export function FrameBufferDiagram() {
 }
 ```
 
-The [reference JSON](../examples/frame-buffer.excalidraw.json) comes from the
-frame buffer illustration for a JOYCO log. Render `<Graph>` inline so it can
-inherit `--trazo-*` CSS variables from the hub. An external SVG `<img>` cannot
-inherit the page's theme variables.
+The [reference drawing](../examples/frame-buffer.excalidraw) is a normal
+Excalidraw export for a JOYCO log. Read it as text in a server component or
+build step; no filename change or JSON conversion is needed. Render `<Graph>`
+inline so it can inherit `--trazo-*` CSS variables from the hub. An external SVG
+`<img>` cannot inherit the page's theme variables.
 
 `joycoTheme` supplies the dark textured canvas and Trazo's house geometry.
 Pass the hub's selected `TrazoTheme` to `<Graph theme={...}>` when its exact

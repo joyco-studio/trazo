@@ -6,7 +6,7 @@ import { importExcalidraw, joycoTheme } from "../src/index.js";
 import type { DrawingPrimitive } from "../src/index.js";
 import { Graph } from "../src/react/index.js";
 
-const source = readFileSync(new URL("../../../examples/frame-buffer.excalidraw.json", import.meta.url), "utf8");
+const source = readFileSync(new URL("../../../examples/frame-buffer.excalidraw", import.meta.url), "utf8");
 
 describe("importExcalidraw", () => {
   it("imports the reference drawing without deleted history or re-layout", () => {
