@@ -1,5 +1,11 @@
 # @joycostudio/trazo
 
+## 0.12.0
+
+### Minor Changes
+
+- cfaee0e: Add a themeable Excalidraw importer for positioned rectangles, text, lines, and arrows.
+
 ## 0.11.1
 
 ### Patch Changes
